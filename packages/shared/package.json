@@ -1,0 +1,16 @@
+{
+  "name": "@farmflow/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared types and utilities for the FarmFlow monorepo",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "typescript": "5.7.3"
+  }
+}

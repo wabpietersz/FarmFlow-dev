@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Docker
+docker-data/
+
+# Firebase
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+
+# GCS
+gcs-service-account.json
+
+# Claude Code
+.claude/
+
+# Local notes
+important.md
+
+# Misc
+*.tgz
+.cache/
+test.txt

@@ -1,0 +1,65 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/backend/**'
+      - 'packages/shared/**'
+      - 'package.json'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/backend/**'
+      - 'packages/shared/**'
+
+jobs:
+  lint-build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: farmflow
+          POSTGRES_PASSWORD: farmflow_test
+          POSTGRES_DB: farmflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U farmflow -d farmflow_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build:shared
+
+      - name: Lint backend
+        run: npm run lint -w packages/backend
+
+      - name: Build backend
+        run: npm run build:backend
+
+      - name: Run backend tests
+        run: npm run test:backend
+        env:
+          DATABASE_URL: postgresql://farmflow:farmflow_test@localhost:5432/farmflow_test
+          NODE_ENV: test
+          PORT: 3001
+          CORS_ORIGIN: http://localhost:5173
+          COOKIE_DOMAIN: localhost
+          SESSION_SECRET: test-secret
