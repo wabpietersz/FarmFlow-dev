@@ -1,27 +1,42 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useAuthStore } from '@/store/authStore';
 
 export default function LoginPage() {
+  const { login, isAuthenticated, isLoading, error, clearError } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    setLoading(true);
+    clearError();
+    setSubmitting(true);
 
     try {
-      // TODO: Wire up Firebase authentication in Week 3-4
-      console.log('Login attempt:', { email });
-      setError('Authentication not yet configured. Coming in Week 3.');
+      await login(email, password);
     } catch {
-      setError('Login failed. Please check your credentials.');
+      // Error is already set in the store
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary border-r-transparent" />
+          <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted px-4">
@@ -70,10 +85,10 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={submitting}
             className="w-full bg-primary text-primary-foreground rounded-md py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {submitting ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
       </div>

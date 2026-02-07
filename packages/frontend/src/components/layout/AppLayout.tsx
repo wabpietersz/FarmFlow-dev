@@ -1,6 +1,13 @@
 import { Outlet } from 'react-router-dom';
+import { useAuthStore } from '@/store/authStore';
 
 export default function AppLayout() {
+  const { currentUser, logout } = useAuthStore();
+
+  const handleLogout = async () => {
+    await logout();
+  };
+
   return (
     <div className="min-h-screen bg-muted">
       <header className="bg-card border-b border-border sticky top-0 z-50">
@@ -10,8 +17,13 @@ export default function AppLayout() {
               <h1 className="text-lg font-bold text-foreground">FarmFlow</h1>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">Welcome</span>
-              <button className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <span className="text-sm text-muted-foreground">
+                {currentUser?.fullName || 'Welcome'}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
                 Logout
               </button>
             </div>

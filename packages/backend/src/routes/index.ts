@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import authRoutes from './auth';
 
 const router = Router();
 
@@ -11,8 +12,10 @@ router.get('/health', (_req, res) => {
   });
 });
 
+// Auth routes
+router.use('/auth', authRoutes);
+
 // Future route mounts:
-// router.use('/auth', authRoutes);
 // router.use('/users', userRoutes);
 // router.use('/employees', employeeRoutes);
 // router.use('/sites', siteRoutes);

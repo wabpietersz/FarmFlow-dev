@@ -13,7 +13,7 @@
     "declaration": true,
     "sourceMap": true,
     "paths": {
-      "@farmflow/shared": ["../shared/src"]
+      "@farmflow/shared": ["../shared/dist"]
     }
   },
   "include": ["src/**/*"],
