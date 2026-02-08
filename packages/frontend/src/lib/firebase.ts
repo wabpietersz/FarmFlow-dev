@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   type User,
   type Unsubscribe,
 } from 'firebase/auth';
@@ -37,4 +38,8 @@ export async function getIdToken(): Promise<string | null> {
   const user = firebaseAuth.currentUser;
   if (!user) return null;
   return user.getIdToken();
+}
+
+export async function sendPasswordResetEmailToUser(email: string): Promise<void> {
+  await firebaseSendPasswordResetEmail(firebaseAuth, email);
 }

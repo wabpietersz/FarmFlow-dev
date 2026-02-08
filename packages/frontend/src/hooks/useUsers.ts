@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost } from '@/lib/api';
-import type { CreateUserRequest } from '@farmflow/shared';
+import { apiGet, apiPost, apiPut } from '@/lib/api';
+import type { CreateUserRequest, UserRole } from '@farmflow/shared';
 
-interface UserListItem {
+export interface UserListItem {
   id: number;
   email: string;
   fullName: string;
@@ -12,6 +12,13 @@ interface UserListItem {
   isActive: boolean;
   lastLogin: string | null;
   createdAt: string;
+}
+
+export interface UpdateUserRequest {
+  fullName?: string;
+  userRole?: UserRole;
+  siteId?: number | null;
+  isActive?: boolean;
 }
 
 export function useUsers() {
@@ -29,5 +36,23 @@ export function useCreateUser() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
     },
+  });
+}
+
+export function useUpdateUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateUserRequest }) =>
+      apiPut<unknown>(`/auth/users/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  });
+}
+
+export function useResendResetLink() {
+  return useMutation({
+    mutationFn: (userId: number) =>
+      apiPost<{ passwordResetLink: string }>(`/auth/users/${userId}/reset-password`, {}),
   });
 }

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
-import { useUsers, useCreateUser } from '@/hooks/useUsers';
+import { useUsers, useCreateUser, useUpdateUser, useResendResetLink } from '@/hooks/useUsers';
+import type { UserListItem, UpdateUserRequest } from '@/hooks/useUsers';
 import { useSites } from '@/hooks/useSites';
 import { UserRole } from '@farmflow/shared';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Form,
   FormControl,
   FormField,
@@ -42,8 +50,22 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, UserPlus, Shield, Search, Copy, Check } from 'lucide-react';
+import {
+  Plus,
+  UserPlus,
+  Shield,
+  Search,
+  Copy,
+  Check,
+  MoreHorizontal,
+  Pencil,
+  KeyRound,
+  UserX,
+  UserCheck,
+  Mail,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { sendPasswordResetEmailToUser } from '@/lib/firebase';
 
 const createUserSchema = z.object({
   email: z.string().email('Valid email is required'),
@@ -53,6 +75,14 @@ const createUserSchema = z.object({
 });
 
 type CreateUserFormValues = z.infer<typeof createUserSchema>;
+
+const editUserSchema = z.object({
+  fullName: z.string().min(1, 'Full name is required').max(255),
+  userRole: z.nativeEnum(UserRole, { errorMap: () => ({ message: 'Select a role' }) }),
+  siteId: z.coerce.number().int().positive().optional(),
+});
+
+type EditUserFormValues = z.infer<typeof editUserSchema>;
 
 const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.SystemAdmin]: 'System Admin',
@@ -75,15 +105,22 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export default function UserManagementPage() {
-  const { hasPermission } = useAuthStore();
+  const { hasPermission, currentUser } = useAuthStore();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [search, setSearch] = useState('');
   const [resetLink, setResetLink] = useState<string | null>(null);
+  const [resetLinkDialogTitle, setResetLinkDialogTitle] = useState('User Created Successfully');
+  const [resetLinkDialogDesc, setResetLinkDialogDesc] = useState(
+    'Share this password reset link with the new user so they can set their password and log in.',
+  );
   const [copiedLink, setCopiedLink] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
 
   const { data: usersData, isLoading } = useUsers();
   const { data: sitesResponse } = useSites();
   const createUserMutation = useCreateUser();
+  const updateUserMutation = useUpdateUser();
+  const resendResetMutation = useResendResetLink();
 
   const sites = sitesResponse?.data ?? [];
   const allUsers = usersData?.data ?? [];
@@ -95,7 +132,8 @@ export default function UserManagementPage() {
       )
     : allUsers;
 
-  const form = useForm<CreateUserFormValues>({
+  // Create form
+  const createForm = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema),
     defaultValues: {
       email: '',
@@ -105,16 +143,115 @@ export default function UserManagementPage() {
     },
   });
 
+  // Edit form
+  const editForm = useForm<EditUserFormValues>({
+    resolver: zodResolver(editUserSchema),
+    defaultValues: {
+      fullName: '',
+      userRole: undefined,
+      siteId: undefined,
+    },
+  });
+
+  // Reset edit form when editingUser changes
+  useEffect(() => {
+    if (editingUser) {
+      editForm.reset({
+        fullName: editingUser.fullName,
+        userRole: editingUser.userRole as UserRole,
+        siteId: editingUser.siteId ?? undefined,
+      });
+    }
+  }, [editingUser, editForm]);
+
   const handleCreate = async (values: CreateUserFormValues) => {
     try {
       const result = await createUserMutation.mutateAsync(values);
       const data = result.data as { user: unknown; passwordResetLink: string };
+
+      // Send password reset email via Firebase (uses Firebase's own email infrastructure)
+      try {
+        await sendPasswordResetEmailToUser(values.email);
+        toast.success('User created! Password reset email sent.');
+      } catch {
+        toast.success('User created! Email sending failed — share the link manually.');
+      }
+
+      setResetLinkDialogTitle('User Created Successfully');
+      setResetLinkDialogDesc(
+        'A password reset email has been sent to the user via Firebase. You can also share this link manually.',
+      );
       setResetLink(data.passwordResetLink);
-      toast.success('User created successfully');
-      form.reset();
+      createForm.reset();
       setShowCreateDialog(false);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to create user';
+      const axiosErr = error as { response?: { data?: { error?: string } } };
+      const message =
+        axiosErr.response?.data?.error ||
+        (error instanceof Error ? error.message : 'Failed to create user');
+      toast.error(message);
+    }
+  };
+
+  const handleEdit = async (values: EditUserFormValues) => {
+    if (!editingUser) return;
+    try {
+      const data: UpdateUserRequest = {
+        fullName: values.fullName,
+        userRole: values.userRole,
+        siteId: values.siteId ?? null,
+      };
+      await updateUserMutation.mutateAsync({ id: editingUser.id, data });
+      toast.success('User updated successfully');
+      setEditingUser(null);
+    } catch (error: unknown) {
+      const axiosErr = error as { response?: { data?: { error?: string } } };
+      const message =
+        axiosErr.response?.data?.error ||
+        (error instanceof Error ? error.message : 'Failed to update user');
+      toast.error(message);
+    }
+  };
+
+  const handleToggleActive = async (user: UserListItem) => {
+    try {
+      await updateUserMutation.mutateAsync({
+        id: user.id,
+        data: { isActive: !user.isActive },
+      });
+      toast.success(user.isActive ? 'User deactivated' : 'User activated');
+    } catch (error: unknown) {
+      const axiosErr = error as { response?: { data?: { error?: string } } };
+      const message =
+        axiosErr.response?.data?.error ||
+        (error instanceof Error ? error.message : 'Failed to update user status');
+      toast.error(message);
+    }
+  };
+
+  const handleResendResetLink = async (user: UserListItem) => {
+    try {
+      const result = await resendResetMutation.mutateAsync(user.id);
+      const data = result.data as { passwordResetLink: string };
+
+      // Send password reset email via Firebase
+      try {
+        await sendPasswordResetEmailToUser(user.email);
+        toast.success(`Password reset email sent to ${user.email}`);
+      } catch {
+        toast.success('Reset link generated — email sending failed. Share the link manually.');
+      }
+
+      setResetLinkDialogTitle('Password Reset Link Sent');
+      setResetLinkDialogDesc(
+        `A password reset email has been sent to ${user.email}. You can also share this link manually.`,
+      );
+      setResetLink(data.passwordResetLink);
+    } catch (error: unknown) {
+      const axiosErr = error as { response?: { data?: { error?: string } } };
+      const message =
+        axiosErr.response?.data?.error ||
+        (error instanceof Error ? error.message : 'Failed to send reset link');
       toast.error(message);
     }
   };
@@ -174,7 +311,9 @@ export default function UserManagementPage() {
               <UserPlus className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-medium text-foreground mb-1">No users found</h3>
               <p className="text-sm text-muted-foreground">
-                {search ? 'Try adjusting your search.' : 'Register your first user to get started.'}
+                {search
+                  ? 'Try adjusting your search.'
+                  : 'Register your first user to get started.'}
               </p>
             </div>
           ) : (
@@ -187,6 +326,7 @@ export default function UserManagementPage() {
                   <TableHead className="hidden sm:table-cell">Site</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Last Login</TableHead>
+                  <TableHead className="w-[50px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -195,7 +335,9 @@ export default function UserManagementPage() {
                     <TableCell className="font-medium">{user.fullName}</TableCell>
                     <TableCell className="text-muted-foreground">{user.email}</TableCell>
                     <TableCell>
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[user.userRole] ?? ''}`}>
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[user.userRole] ?? ''}`}
+                      >
                         {ROLE_LABELS[user.userRole as UserRole] ?? user.userRole}
                       </span>
                     </TableCell>
@@ -212,6 +354,48 @@ export default function UserManagementPage() {
                         ? new Date(user.lastLogin).toLocaleDateString()
                         : 'Never'}
                     </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setEditingUser(user)}>
+                            <Pencil className="h-4 w-4 mr-2" />
+                            Edit User
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleResendResetLink(user)}>
+                            <KeyRound className="h-4 w-4 mr-2" />
+                            Send Password Reset
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {user.id !== currentUser?.id && (
+                            <DropdownMenuItem
+                              onClick={() => handleToggleActive(user)}
+                              className={
+                                user.isActive
+                                  ? 'text-destructive focus:text-destructive'
+                                  : 'text-green-600 focus:text-green-600'
+                              }
+                            >
+                              {user.isActive ? (
+                                <>
+                                  <UserX className="h-4 w-4 mr-2" />
+                                  Deactivate
+                                </>
+                              ) : (
+                                <>
+                                  <UserCheck className="h-4 w-4 mr-2" />
+                                  Activate
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -226,13 +410,14 @@ export default function UserManagementPage() {
           <DialogHeader>
             <DialogTitle>Register New User</DialogTitle>
             <DialogDescription>
-              Create a new system user. They will receive a password reset link to set their password.
+              Create a new system user. They will receive a welcome email with a password reset
+              link.
             </DialogDescription>
           </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleCreate)} className="space-y-4">
+          <Form {...createForm}>
+            <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="fullName"
                 render={({ field }) => (
                   <FormItem>
@@ -245,7 +430,7 @@ export default function UserManagementPage() {
                 )}
               />
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="email"
                 render={({ field }) => (
                   <FormItem>
@@ -258,7 +443,7 @@ export default function UserManagementPage() {
                 )}
               />
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="userRole"
                 render={({ field }) => (
                   <FormItem>
@@ -282,14 +467,115 @@ export default function UserManagementPage() {
                 )}
               />
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="siteId"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Assigned Site (Optional)</FormLabel>
                     <Select
                       value={field.value ? String(field.value) : 'none'}
-                      onValueChange={(v) => field.onChange(v === 'none' ? undefined : Number(v))}
+                      onValueChange={(v) =>
+                        field.onChange(v === 'none' ? undefined : Number(v))
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All sites (no restriction)" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">All Sites</SelectItem>
+                        {sites.map((site) => (
+                          <SelectItem key={site.id} value={String(site.id)}>
+                            {site.siteName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="flex items-center gap-2 rounded-md bg-blue-50 p-3 text-sm text-blue-800">
+                <Mail className="h-4 w-4 shrink-0" />
+                <span>A welcome email with password setup link will be sent automatically.</span>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowCreateDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createUserMutation.isPending}>
+                  {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit User Dialog */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>
+              Update user details for {editingUser?.email}.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit(handleEdit)} className="space-y-4">
+              <FormField
+                control={editForm.control}
+                name="fullName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Full Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter full name" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="userRole"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role</FormLabel>
+                    <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a role" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editForm.control}
+                name="siteId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Assigned Site (Optional)</FormLabel>
+                    <Select
+                      value={field.value ? String(field.value) : 'none'}
+                      onValueChange={(v) =>
+                        field.onChange(v === 'none' ? undefined : Number(v))
+                      }
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -310,11 +596,15 @@ export default function UserManagementPage() {
                 )}
               />
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingUser(null)}
+                >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createUserMutation.isPending}>
-                  {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+                <Button type="submit" disabled={updateUserMutation.isPending}>
+                  {updateUserMutation.isPending ? 'Saving...' : 'Save Changes'}
                 </Button>
               </DialogFooter>
             </form>
@@ -326,13 +616,13 @@ export default function UserManagementPage() {
       <Dialog open={!!resetLink} onOpenChange={(open) => !open && setResetLink(null)}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>User Created Successfully</DialogTitle>
-            <DialogDescription>
-              Share this password reset link with the new user so they can set their password and log in.
-            </DialogDescription>
+            <DialogTitle>{resetLinkDialogTitle}</DialogTitle>
+            <DialogDescription>{resetLinkDialogDesc}</DialogDescription>
           </DialogHeader>
           <div className="bg-muted p-3 rounded-md">
-            <p className="text-xs text-muted-foreground mb-1 font-medium">Password Reset Link:</p>
+            <p className="text-xs text-muted-foreground mb-1 font-medium">
+              Password Reset Link:
+            </p>
             <p className="text-sm break-all font-mono">{resetLink}</p>
           </div>
           <DialogFooter>

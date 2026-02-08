@@ -34,7 +34,7 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar } from 'lucide-react';
+import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 const dailyRecordSchema = z.object({
@@ -57,8 +57,15 @@ const vaccinationSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+const editBatchSchema = z.object({
+  expectedDeliveryDate: z.string().optional(),
+  actualDeliveryDate: z.string().optional(),
+  notes: z.string().max(1000).optional(),
+});
+
 type DailyRecordFormValues = z.infer<typeof dailyRecordSchema>;
 type VaccinationFormValues = z.infer<typeof vaccinationSchema>;
+type EditBatchFormValues = z.infer<typeof editBatchSchema>;
 
 const BATCH_STATUS_COLORS: Record<string, string> = {
   placement: 'bg-blue-100 text-blue-800',
@@ -79,6 +86,7 @@ export default function BatchDetailPage() {
   const [showAddRecord, setShowAddRecord] = useState(false);
   const [showAddVax, setShowAddVax] = useState(false);
   const [showStatusChange, setShowStatusChange] = useState(false);
+  const [showEditBatch, setShowEditBatch] = useState(false);
 
   const batchData = data?.data;
   const batch = batchData?.batch;
@@ -102,6 +110,15 @@ export default function BatchDetailPage() {
     defaultValues: {
       vaccineType: '',
       vaccinationDate: new Date().toISOString().split('T')[0],
+      notes: '',
+    },
+  });
+
+  const editBatchForm = useForm<EditBatchFormValues>({
+    resolver: zodResolver(editBatchSchema),
+    defaultValues: {
+      expectedDeliveryDate: '',
+      actualDeliveryDate: '',
       notes: '',
     },
   });
@@ -152,6 +169,30 @@ export default function BatchDetailPage() {
     }
   };
 
+  const handleOpenEditBatch = () => {
+    if (!batch) return;
+    editBatchForm.reset({
+      expectedDeliveryDate: batch.expectedDeliveryDate ? String(batch.expectedDeliveryDate).split('T')[0] : '',
+      actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate).split('T')[0] : '',
+      notes: batch.notes ?? '',
+    });
+    setShowEditBatch(true);
+  };
+
+  const handleUpdateBatch = async (values: EditBatchFormValues) => {
+    try {
+      await updateMutation.mutateAsync({
+        expectedDeliveryDate: values.expectedDeliveryDate || undefined,
+        actualDeliveryDate: values.actualDeliveryDate || undefined,
+        notes: values.notes || undefined,
+      });
+      toast.success('Batch updated');
+      setShowEditBatch(false);
+    } catch {
+      toast.error('Failed to update batch');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -187,6 +228,12 @@ export default function BatchDetailPage() {
           </span>
         </div>
         <div className="flex gap-2">
+          {hasPermission('batches:update') && (
+            <Button variant="outline" onClick={handleOpenEditBatch}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )}
           {isActive && hasPermission('batches:update') && (
             <Button variant="outline" onClick={() => setShowStatusChange(true)}>Change Status</Button>
           )}
@@ -204,6 +251,37 @@ export default function BatchDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Batch Info */}
+      <Card>
+        <CardHeader><CardTitle>Batch Information</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-muted-foreground">Placement Date</p>
+              <p className="font-medium">{new Date(batch.placementDate).toLocaleDateString()}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Chicks Placed</p>
+              <p className="font-medium">{batch.chicksPlaced.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Expected Delivery</p>
+              <p className="font-medium">{batch.expectedDeliveryDate ? new Date(batch.expectedDeliveryDate).toLocaleDateString() : '--'}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Actual Delivery</p>
+              <p className="font-medium">{batch.actualDeliveryDate ? new Date(batch.actualDeliveryDate).toLocaleDateString() : '--'}</p>
+            </div>
+            {batch.notes && (
+              <div className="col-span-full">
+                <p className="text-muted-foreground">Notes</p>
+                <p className="font-medium">{batch.notes}</p>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
@@ -444,6 +522,59 @@ export default function BatchDetailPage() {
             )}
             <Button className="w-full" variant="destructive" onClick={() => handleStatusChange('culled')}>Mark as Culled</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Batch Dialog */}
+      <Dialog open={showEditBatch} onOpenChange={setShowEditBatch}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle>Edit Batch</DialogTitle>
+            <DialogDescription>Update batch details for {batch.batchCode}.</DialogDescription>
+          </DialogHeader>
+          <Form {...editBatchForm}>
+            <form onSubmit={editBatchForm.handleSubmit(handleUpdateBatch)} className="space-y-4">
+              <FormField
+                control={editBatchForm.control}
+                name="expectedDeliveryDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expected Delivery Date</FormLabel>
+                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editBatchForm.control}
+                name="actualDeliveryDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Actual Delivery Date</FormLabel>
+                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={editBatchForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl><Textarea placeholder="Additional notes..." {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowEditBatch(false)}>Cancel</Button>
+                <Button type="submit" disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
     </div>

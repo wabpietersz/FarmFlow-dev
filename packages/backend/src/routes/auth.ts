@@ -8,6 +8,7 @@ import { db } from '../db';
 import { users, sites } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import logger from '../lib/logger';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -63,7 +64,7 @@ router.post(
         })
         .returning();
 
-      // Generate password reset link (Firebase sends the email)
+      // Generate password reset link (frontend will trigger Firebase email via client SDK)
       const resetLink = await firebaseAuth.generatePasswordResetLink(email);
 
       logger.info('User created', {
@@ -89,13 +90,23 @@ router.post(
         },
         timestamp: new Date().toISOString(),
       });
-    } catch (error) {
+    } catch (error: unknown) {
       logger.error('Failed to create user', { error });
-      res.status(500).json({
+      const firebaseError = error as { code?: string; message?: string };
+      let errorMessage = 'Failed to create user';
+      let statusCode = 500;
+      if (firebaseError.code === 'auth/email-already-exists') {
+        errorMessage = 'A Firebase account with this email already exists';
+        statusCode = 409;
+      } else if (firebaseError.code === 'auth/invalid-email') {
+        errorMessage = 'Invalid email address';
+        statusCode = 400;
+      }
+      res.status(statusCode).json({
         success: false,
-        error: 'Failed to create user',
+        error: errorMessage,
         code: 'CREATE_USER_FAILED',
-        statusCode: 500,
+        statusCode,
         timestamp: new Date().toISOString(),
       });
     }
@@ -236,6 +247,197 @@ router.get(
         success: false,
         error: 'Failed to fetch users',
         code: 'FETCH_USERS_FAILED',
+        statusCode: 500,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  },
+);
+
+// PUT /api/auth/users/:id — admin-only update user
+const updateUserSchema = z.object({
+  fullName: z.string().min(1).max(255).optional(),
+  userRole: z.nativeEnum(UserRole).optional(),
+  siteId: z.number().int().positive().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+router.put(
+  '/users/:id',
+  authenticate,
+  requireRole(UserRole.SystemAdmin),
+  validate(updateUserSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = parseInt(req.params.id as string, 10);
+      if (isNaN(userId)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid user ID',
+          statusCode: 400,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Find existing user
+      const [existing] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!existing) {
+        res.status(404).json({
+          success: false,
+          error: 'User not found',
+          code: 'USER_NOT_FOUND',
+          statusCode: 404,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const { fullName, userRole, siteId, isActive } = req.body;
+
+      // Build update object
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (fullName !== undefined) updateData.fullName = fullName;
+      if (userRole !== undefined) updateData.userRole = userRole;
+      if (siteId !== undefined) updateData.siteId = siteId;
+      if (isActive !== undefined) updateData.isActive = isActive;
+
+      // Update our DB
+      const [updated] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, userId))
+        .returning();
+
+      // Sync Firebase custom claims if role or site changed
+      if (userRole !== undefined || siteId !== undefined) {
+        try {
+          await firebaseAuth.setCustomUserClaims(existing.firebaseUid, {
+            role: userRole || existing.userRole,
+            siteId: siteId !== undefined ? siteId : existing.siteId,
+          });
+        } catch (fbErr) {
+          logger.error('Failed to update Firebase claims', { error: fbErr, userId });
+        }
+      }
+
+      // Update Firebase display name if fullName changed
+      if (fullName !== undefined) {
+        try {
+          await firebaseAuth.updateUser(existing.firebaseUid, {
+            displayName: fullName,
+          });
+        } catch (fbErr) {
+          logger.error('Failed to update Firebase display name', { error: fbErr, userId });
+        }
+      }
+
+      // Disable/enable Firebase account if isActive changed
+      if (isActive !== undefined) {
+        try {
+          await firebaseAuth.updateUser(existing.firebaseUid, {
+            disabled: !isActive,
+          });
+        } catch (fbErr) {
+          logger.error('Failed to update Firebase account status', { error: fbErr, userId });
+        }
+      }
+
+      logger.info('User updated', {
+        updatedBy: req.user!.id,
+        userId,
+        changes: req.body,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          id: updated.id,
+          email: updated.email,
+          fullName: updated.fullName,
+          userRole: updated.userRole,
+          siteId: updated.siteId,
+          isActive: updated.isActive,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error('Failed to update user', { error });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update user',
+        code: 'UPDATE_USER_FAILED',
+        statusCode: 500,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  },
+);
+
+// POST /api/auth/users/:id/reset-password — resend password reset link
+router.post(
+  '/users/:id/reset-password',
+  authenticate,
+  requireRole(UserRole.SystemAdmin),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = parseInt(req.params.id as string, 10);
+      if (isNaN(userId)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid user ID',
+          statusCode: 400,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          error: 'User not found',
+          code: 'USER_NOT_FOUND',
+          statusCode: 404,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Generate new password reset link (frontend will trigger Firebase email via client SDK)
+      const resetLink = await firebaseAuth.generatePasswordResetLink(user.email);
+
+      logger.info('Password reset link resent', {
+        requestedBy: req.user!.id,
+        userId,
+        email: user.email,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          passwordResetLink: resetLink,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error('Failed to generate reset link', { error });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to generate password reset link',
+        code: 'RESET_LINK_FAILED',
         statusCode: 500,
         timestamp: new Date().toISOString(),
       });

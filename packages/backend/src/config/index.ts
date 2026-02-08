@@ -17,6 +17,13 @@ export const config = {
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
     privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
   },
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || 'FarmFlow <noreply@farmflow.com>',
+  },
 };
 
 export function validateConfig(): void {

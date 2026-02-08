@@ -15,6 +15,10 @@ import SiteDetailPage from '@/pages/SiteDetailPage';
 import BatchesPage from '@/pages/BatchesPage';
 import BatchDetailPage from '@/pages/BatchDetailPage';
 import SalesPage from '@/pages/SalesPage';
+import SaleDetailPage from '@/pages/SaleDetailPage';
+import ReportsPage from '@/pages/ReportsPage';
+import FeedPage from '@/pages/FeedPage';
+import SettingsPage from '@/pages/SettingsPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import UnauthorizedPage from '@/pages/UnauthorizedPage';
@@ -48,6 +52,10 @@ export default function App() {
                 <Route path="/batches" element={<BatchesPage />} />
                 <Route path="/batches/:id" element={<BatchDetailPage />} />
                 <Route path="/sales" element={<SalesPage />} />
+                <Route path="/sales/:id" element={<SaleDetailPage />} />
+                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/feed" element={<FeedPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/users" element={<UserManagementPage />} />
                 <Route path="/unauthorized" element={<UnauthorizedPage />} />
               </Route>

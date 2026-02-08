@@ -1,0 +1,74 @@
+# Render.com Blueprint — deploy with https://render.com/deploy
+# This file defines all services needed for FarmFlow
+
+databases:
+  - name: farmflow-db
+    plan: free
+    databaseName: farmflow_prod
+    user: farmflow
+    postgresMajorVersion: '15'
+
+services:
+  # Backend API
+  - type: web
+    name: farmflow-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build:shared && npm run build:backend
+    startCommand: node packages/backend/dist/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        fromDatabase:
+          name: farmflow-db
+          property: connectionString
+      - key: CORS_ORIGIN
+        value: https://farmflow-app.onrender.com
+      - key: COOKIE_DOMAIN
+        value: .onrender.com
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+
+  # Frontend (static site)
+  - type: web
+    name: farmflow-app
+    runtime: static
+    plan: free
+    buildCommand: npm ci && npm run build:shared && npm run build:frontend
+    staticPublishPath: packages/frontend/dist
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://farmflow-api.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://farmflow-api.onrender.com/api
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
