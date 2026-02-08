@@ -22,6 +22,8 @@
     "db:migrate": "npm run db:migrate -w packages/backend",
     "db:seed": "npm run db:seed -w packages/backend",
     "db:reset": "npm run db:reset -w packages/backend",
+    "start": "./start-dev.sh",
+    "dev": "npm run build:shared && concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
   },
   "engines": {
