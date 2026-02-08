@@ -20,3 +20,15 @@ export interface PaginationParams {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
 }
+
+export interface DashboardSummary {
+  activeBatches: number;
+  averageFcr: number;
+  mortalityLast7Days: number;
+  outstandingPayments: number;
+  totalEmployees: number;
+  recentSales: {
+    count: number;
+    totalAmount: number;
+  };
+}

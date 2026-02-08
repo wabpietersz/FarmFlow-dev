@@ -7,7 +7,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
-      const { fetchCurrentUser, setLoading } = useAuthStore.getState();
+      const { fetchCurrentUser } = useAuthStore.getState();
 
       if (firebaseUser) {
         await fetchCurrentUser();

@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import authRoutes from './auth';
+import dashboardRoutes from './dashboard';
+import employeeRoutes from './employees';
+import siteRoutes from './sites';
 
 const router = Router();
 
@@ -15,10 +18,17 @@ router.get('/health', (_req, res) => {
 // Auth routes
 router.use('/auth', authRoutes);
 
+// Dashboard
+router.use('/dashboard', dashboardRoutes);
+
+// Employees
+router.use('/employees', employeeRoutes);
+
+// Sites
+router.use('/sites', siteRoutes);
+
 // Future route mounts:
 // router.use('/users', userRoutes);
-// router.use('/employees', employeeRoutes);
-// router.use('/sites', siteRoutes);
 // router.use('/cages', cageRoutes);
 // router.use('/batches', batchRoutes);
 // router.use('/daily-records', dailyRecordRoutes);
