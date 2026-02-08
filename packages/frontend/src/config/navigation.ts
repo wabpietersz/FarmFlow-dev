@@ -4,6 +4,7 @@ import {
   Building2,
   Egg,
   ShoppingCart,
+  UserPlus,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -20,4 +21,5 @@ export const navigationItems: NavItem[] = [
   { label: 'Sites', href: '/sites', icon: Building2, requiredPermission: 'sites:read' },
   { label: 'Batches', href: '/batches', icon: Egg, requiredPermission: 'batches:read' },
   { label: 'Sales', href: '/sales', icon: ShoppingCart, requiredPermission: 'sales:read' },
+  { label: 'Users', href: '/users', icon: UserPlus, requiredPermission: 'users:create' },
 ];

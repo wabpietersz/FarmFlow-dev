@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/form';
 import { ArrowLeft, Pencil, Plus, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import DocumentList from '@/components/documents/DocumentList';
 
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -260,6 +261,8 @@ export default function EmployeeDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <DocumentList entityType="employee" entityId={employee.id} title="Employee Documents" />
 
       <Dialog open={contactDialogOpen} onOpenChange={setContactDialogOpen}>
         <DialogContent>

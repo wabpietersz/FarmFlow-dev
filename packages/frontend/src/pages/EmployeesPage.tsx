@@ -36,8 +36,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, MoreHorizontal, Eye, Pencil, Trash2, Search, Users } from 'lucide-react';
+import { Plus, MoreHorizontal, Eye, Pencil, Trash2, Search, Users, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { getIdToken } from '@/lib/firebase';
 
 export default function EmployeesPage() {
   const { hasPermission } = useAuthStore();
@@ -78,6 +79,27 @@ export default function EmployeesPage() {
     }
   };
 
+  const handleExportCSV = async () => {
+    try {
+      const token = await getIdToken();
+      const baseUrl = import.meta.env.VITE_API_URL || '/api';
+      const response = await fetch(`${baseUrl}/employees/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Export failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `employees-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('CSV exported successfully');
+    } catch {
+      toast.error('Failed to export employees');
+    }
+  };
+
   const employees = data?.data ?? [];
   const totalPages = data?.totalPages ?? 0;
   const total = data?.total ?? 0;
@@ -95,14 +117,20 @@ export default function EmployeesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Employees</h1>
-        {hasPermission('employees:create') && (
-          <Button asChild>
-            <Link to="/employees/new">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Employee
-            </Link>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExportCSV}>
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
           </Button>
-        )}
+          {hasPermission('employees:create') && (
+            <Button asChild>
+              <Link to="/employees/new">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Employee
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>

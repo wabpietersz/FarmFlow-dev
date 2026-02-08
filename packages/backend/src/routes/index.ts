@@ -3,6 +3,8 @@ import authRoutes from './auth';
 import dashboardRoutes from './dashboard';
 import employeeRoutes from './employees';
 import siteRoutes from './sites';
+import batchRoutes from './batches';
+import documentRoutes from './documents';
 
 const router = Router();
 
@@ -24,20 +26,20 @@ router.use('/dashboard', dashboardRoutes);
 // Employees
 router.use('/employees', employeeRoutes);
 
-// Sites
+// Sites & Cages
 router.use('/sites', siteRoutes);
 
+// Batches, Daily Records, Vaccinations
+router.use('/batches', batchRoutes);
+
+// Documents (file upload/download)
+router.use('/documents', documentRoutes);
+
 // Future route mounts:
-// router.use('/users', userRoutes);
-// router.use('/cages', cageRoutes);
-// router.use('/batches', batchRoutes);
-// router.use('/daily-records', dailyRecordRoutes);
-// router.use('/vaccinations', vaccinationRoutes);
 // router.use('/buyers', buyerRoutes);
 // router.use('/sales', saleRoutes);
 // router.use('/payments', paymentRoutes);
 // router.use('/system-config', systemConfigRoutes);
 // router.use('/notifications', notificationRoutes);
-// router.use('/documents', documentRoutes);
 
 export default router;

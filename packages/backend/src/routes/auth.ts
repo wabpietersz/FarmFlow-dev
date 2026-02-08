@@ -5,8 +5,8 @@ import { authenticate, requireRole } from '../middleware/auth';
 import { validate, registerSchema, loginSchema } from '../validators/auth';
 import { getUserPermissions } from '../lib/permissions';
 import { db } from '../db';
-import { users } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { users, sites } from '../db/schema';
+import { eq, sql } from 'drizzle-orm';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -201,6 +201,47 @@ router.post('/logout', authenticate, async (req: Request, res: Response) => {
     });
   }
 });
+
+// GET /api/auth/users — admin-only list all users
+router.get(
+  '/users',
+  authenticate,
+  requireRole(UserRole.SystemAdmin),
+  async (_req: Request, res: Response) => {
+    try {
+      const allUsers = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          fullName: users.fullName,
+          userRole: users.userRole,
+          siteId: users.siteId,
+          siteName: sql<string | null>`${sites.siteName}`,
+          isActive: users.isActive,
+          lastLogin: users.lastLogin,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .leftJoin(sites, eq(users.siteId, sites.id))
+        .orderBy(users.fullName);
+
+      res.json({
+        success: true,
+        data: allUsers,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error('Failed to fetch users', { error });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch users',
+        code: 'FETCH_USERS_FAILED',
+        statusCode: 500,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  },
+);
 
 // GET /api/auth/me — get current user profile
 router.get('/me', authenticate, (req: Request, res: Response) => {

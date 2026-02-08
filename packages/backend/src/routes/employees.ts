@@ -132,6 +132,66 @@ router.get(
   },
 );
 
+// GET /api/employees/export — CSV export
+router.get(
+  '/export',
+  authenticate,
+  requirePermission('employees:read'),
+  async (req: Request, res: Response) => {
+    try {
+      const userSiteId = req.user?.siteId;
+      const where = userSiteId ? eq(employees.siteId, userSiteId) : undefined;
+
+      const rows = await db
+        .select({
+          id: employees.id,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+          designation: employees.designation,
+          siteName: sites.siteName,
+          employmentType: employees.employmentType,
+          joinDate: employees.joinDate,
+          status: employees.status,
+          phone: employees.phone,
+        })
+        .from(employees)
+        .leftJoin(sites, eq(employees.siteId, sites.id))
+        .where(where)
+        .orderBy(asc(employees.firstName));
+
+      const header = 'ID,First Name,Last Name,Designation,Site,Employment Type,Join Date,Status,Phone';
+      const csvRows = rows.map((r) =>
+        [
+          r.id,
+          `"${(r.firstName ?? '').replace(/"/g, '""')}"`,
+          `"${(r.lastName ?? '').replace(/"/g, '""')}"`,
+          `"${(r.designation ?? '').replace(/"/g, '""')}"`,
+          `"${(r.siteName ?? '').replace(/"/g, '""')}"`,
+          r.employmentType,
+          r.joinDate,
+          r.status,
+          r.phone ?? '',
+        ].join(','),
+      );
+
+      const csv = [header, ...csvRows].join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="employees-${new Date().toISOString().split('T')[0]}.csv"`);
+      res.send(csv);
+    } catch (error) {
+      logger.error('Failed to export employees', { error });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to export employees',
+        code: 'EXPORT_FAILED',
+        statusCode: 500,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  },
+);
+
 // GET /api/employees/:id - detail with related data
 router.get(
   '/:id',
