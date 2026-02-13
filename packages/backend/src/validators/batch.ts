@@ -33,6 +33,26 @@ export const createDailyRecordSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+export const updateDailyRecordSchema = z.object({
+  birdCount: z.number().int().positive('Bird count must be positive').optional(),
+  mortalityCount: z.number().int().min(0).optional(),
+  mortalityCause: z.string().max(100).nullable().optional(),
+  waterConsumption: z.number().min(0).nullable().optional(),
+  feedConsumption: z.number().min(0).optional(),
+  averageWeight: z.number().min(0).nullable().optional(),
+  temperature: z.number().nullable().optional(),
+  humidity: z.number().int().min(0).max(100).nullable().optional(),
+  ammoniaLevel: z.number().min(0).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+});
+
+export const recordMortalitySchema = z.object({
+  batchId: z.number().int().positive('Batch is required'),
+  count: z.number().int().positive('Mortality count must be at least 1'),
+  cause: z.string().max(100).optional(),
+  notes: z.string().max(1000).optional(),
+});
+
 export const createVaccinationSchema = z.object({
   batchId: z.number().int().positive('Batch is required'),
   vaccineType: z.string().min(1, 'Vaccine type is required').max(100),

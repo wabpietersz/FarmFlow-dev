@@ -26,7 +26,8 @@ export const createSaleSchema = z.object({
   buyerId: z.number().int().positive('Buyer is required'),
   saleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
   totalBirds: z.number().int().positive('Number of birds must be positive'),
-  pricePerBird: z.number().positive('Price per bird must be positive'),
+  totalWeight: z.number().positive('Total weight must be positive'),
+  pricePerKg: z.number().positive('Price per kg must be positive'),
   notes: z.string().max(1000).optional(),
 });
 

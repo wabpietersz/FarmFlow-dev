@@ -53,7 +53,7 @@ export const bankDetailsSchema = z.object({
 
 export const employeeQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(500).default(20),
   sortBy: z
     .enum(['firstName', 'lastName', 'designation', 'joinDate', 'status'])
     .default('firstName'),

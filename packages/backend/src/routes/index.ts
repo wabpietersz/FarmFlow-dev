@@ -11,17 +11,20 @@ import paymentRoutes from './payments';
 import reportRoutes from './reports';
 import feedRoutes from './feed';
 import systemConfigRoutes from './systemConfig';
+import shiftRoutes from './shifts';
+import attendanceRoutes from './attendance';
+import leaveBalanceRoutes from './leave-balances';
+import payrollRoutes from './payroll';
+import { healthCheckHandler, metricsHandler } from '../middleware/monitoring';
+import { authenticate, requirePermission } from '../middleware/auth';
 
 const router = Router();
 
-// Health check
-router.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-  });
-});
+// Health check (with dependency status)
+router.get('/health', healthCheckHandler);
+
+// Metrics endpoint (admin only)
+router.get('/metrics', authenticate, requirePermission('system:read'), metricsHandler);
 
 // Auth routes
 router.use('/auth', authRoutes);
@@ -54,5 +57,11 @@ router.use('/feed', feedRoutes);
 
 // System Configuration
 router.use('/system-config', systemConfigRoutes);
+
+// Attendance & Payroll
+router.use('/shifts', shiftRoutes);
+router.use('/attendance', attendanceRoutes);
+router.use('/leave-balances', leaveBalanceRoutes);
+router.use('/payroll', payrollRoutes);
 
 export default router;

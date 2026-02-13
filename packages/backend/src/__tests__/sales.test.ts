@@ -130,7 +130,8 @@ const mockSale = {
   buyerId: 1,
   saleDate: '2026-02-01',
   totalBirds: 500,
-  pricePerBird: '25.00',
+  totalWeight: '250.00',
+  pricePerKg: '50.00',
   totalAmount: '12500.00',
   status: 'pending',
   notes: null,
@@ -214,7 +215,8 @@ describe('Sales Module Routes', () => {
         buyerId: 1,
         saleDate: '2026-02-01',
         totalBirds: 500,
-        pricePerBird: 25,
+        totalWeight: 250,
+        pricePerKg: 50,
       });
       expect(res.status).toBe(403);
     });
@@ -423,7 +425,8 @@ describe('Sales Module Routes', () => {
         buyerId: 1,
         saleDate: '2026-02-01',
         totalBirds: 500,
-        pricePerBird: 25,
+        totalWeight: 250,
+        pricePerKg: 50,
       };
 
       it('should create sale with auto-generated code', async () => {

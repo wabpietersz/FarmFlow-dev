@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
-import { createBatchSchema, updateBatchSchema, createDailyRecordSchema, createVaccinationSchema } from '../validators/batch';
+import { createBatchSchema, updateBatchSchema, createDailyRecordSchema, updateDailyRecordSchema, recordMortalitySchema, createVaccinationSchema } from '../validators/batch';
 import { db } from '../db';
 import { batches, cages, sites, dailyRecords, vaccinations } from '../db/schema';
 import { eq, sql, and, desc } from 'drizzle-orm';
@@ -324,6 +324,151 @@ router.post('/:id/daily-records', authenticate, requirePermission('daily_records
   } catch (error) {
     logger.error('Failed to create daily record', { error });
     res.status(500).json({ success: false, error: 'Failed to create daily record', code: 'CREATE_RECORD_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+
+// PUT /api/batches/:id/daily-records/:recordId — update a daily record
+router.put('/:id/daily-records/:recordId', authenticate, requirePermission('daily_records:update'), validate(updateDailyRecordSchema), async (req: Request, res: Response) => {
+  try {
+    const batchId = Number(req.params.id as string);
+    const recordId = Number(req.params.recordId as string);
+
+    // Verify batch exists
+    const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
+    if (!batch) {
+      res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    // Verify record exists and belongs to batch
+    const [existingRecord] = await db
+      .select()
+      .from(dailyRecords)
+      .where(and(eq(dailyRecords.id, recordId), eq(dailyRecords.batchId, batchId)))
+      .limit(1);
+
+    if (!existingRecord) {
+      res.status(404).json({ success: false, error: 'Daily record not found', code: 'RECORD_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
+    const body = req.body;
+
+    if (body.birdCount !== undefined) updateData.birdCount = body.birdCount;
+    if (body.mortalityCount !== undefined) updateData.mortalityCount = body.mortalityCount;
+    if (body.mortalityCause !== undefined) updateData.mortalityCause = body.mortalityCause;
+    if (body.waterConsumption !== undefined) updateData.waterConsumption = body.waterConsumption?.toString() ?? null;
+    if (body.feedConsumption !== undefined) updateData.feedConsumption = body.feedConsumption.toString();
+    if (body.averageWeight !== undefined) updateData.averageWeight = body.averageWeight?.toString() ?? null;
+    if (body.temperature !== undefined) updateData.temperature = body.temperature?.toString() ?? null;
+    if (body.humidity !== undefined) updateData.humidity = body.humidity;
+    if (body.ammoniaLevel !== undefined) updateData.ammoniaLevel = body.ammoniaLevel?.toString() ?? null;
+    if (body.notes !== undefined) updateData.notes = body.notes;
+
+    const [updated] = await db
+      .update(dailyRecords)
+      .set(updateData)
+      .where(eq(dailyRecords.id, recordId))
+      .returning();
+
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'daily_record_updated',
+      entityType: 'daily_record',
+      entityId: recordId,
+      changes: { batchId, ...req.body },
+    });
+
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to update daily record', { error });
+    res.status(500).json({ success: false, error: 'Failed to update daily record', code: 'UPDATE_RECORD_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// POST /api/batches/:id/mortality — quick mortality recording
+router.post('/:id/mortality', authenticate, requirePermission('daily_records:create'), validate(recordMortalitySchema), async (req: Request, res: Response) => {
+  try {
+    const batchId = Number(req.params.id as string);
+    const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
+    if (!batch) {
+      res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    const { count, cause, notes } = req.body;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Calculate current age from placement date
+    const placementDate = new Date(batch.placementDate);
+    const now = new Date();
+    const currentAge = Math.floor((now.getTime() - placementDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    // Get latest record to determine current bird count
+    const [latestRecord] = await db
+      .select()
+      .from(dailyRecords)
+      .where(eq(dailyRecords.batchId, batchId))
+      .orderBy(desc(dailyRecords.recordDate))
+      .limit(1);
+
+    const previousBirdCount = latestRecord?.birdCount ?? batch.chicksPlaced;
+    const newBirdCount = Math.max(0, previousBirdCount - count);
+
+    // Check if a record already exists for today
+    const [existingRecord] = await db
+      .select()
+      .from(dailyRecords)
+      .where(and(eq(dailyRecords.batchId, batchId), eq(dailyRecords.recordDate, today)))
+      .limit(1);
+
+    if (existingRecord) {
+      // Update the existing record — add to mortality count, update bird count
+      const updatedMortality = existingRecord.mortalityCount + count;
+      const updatedBirdCount = Math.max(0, existingRecord.birdCount - count);
+      const [updated] = await db
+        .update(dailyRecords)
+        .set({
+          mortalityCount: updatedMortality,
+          birdCount: updatedBirdCount,
+          mortalityCause: cause || existingRecord.mortalityCause,
+          notes: notes ? (existingRecord.notes ? `${existingRecord.notes}; ${notes}` : notes) : existingRecord.notes,
+          updatedAt: new Date(),
+        })
+        .where(eq(dailyRecords.id, existingRecord.id))
+        .returning();
+
+      res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    // Create a new daily record with mortality data and sensible defaults
+    const [record] = await db
+      .insert(dailyRecords)
+      .values({
+        batchId,
+        recordDate: today,
+        currentAge,
+        birdCount: newBirdCount,
+        mortalityCount: count,
+        mortalityCause: cause || null,
+        feedConsumption: '0',
+        recordedBy: req.user!.id,
+        notes: notes || null,
+      })
+      .returning();
+
+    // Auto-transition batch to 'growing' if still in 'placement'
+    if (batch.status === 'placement') {
+      await db.update(batches).set({ status: 'growing', updatedAt: new Date() }).where(eq(batches.id, batchId));
+    }
+
+    res.status(201).json({ success: true, data: record, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to record mortality', { error });
+    res.status(500).json({ success: false, error: 'Failed to record mortality', code: 'RECORD_MORTALITY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 

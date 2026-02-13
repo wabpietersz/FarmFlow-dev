@@ -28,7 +28,8 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
         buyerName: buyers.buyerName,
         saleDate: sales.saleDate,
         totalBirds: sales.totalBirds,
-        pricePerBird: sales.pricePerBird,
+        totalWeight: sales.totalWeight,
+        pricePerKg: sales.pricePerKg,
         totalAmount: sales.totalAmount,
         status: sales.status,
         notes: sales.notes,
@@ -113,7 +114,8 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
         buyerName: buyers.buyerName,
         saleDate: sales.saleDate,
         totalBirds: sales.totalBirds,
-        pricePerBird: sales.pricePerBird,
+        totalWeight: sales.totalWeight,
+        pricePerKg: sales.pricePerKg,
         totalAmount: sales.totalAmount,
         status: sales.status,
         notes: sales.notes,
@@ -168,7 +170,7 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
 // POST /api/sales — create sale with auto-generated saleCode
 router.post('/', authenticate, requirePermission('sales:create'), validate(createSaleSchema), async (req: Request, res: Response) => {
   try {
-    const { batchId, buyerId, saleDate, totalBirds, pricePerBird, notes } = req.body;
+    const { batchId, buyerId, saleDate, totalBirds, totalWeight, pricePerKg, notes } = req.body;
 
     // Validate batch exists and is ready
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
@@ -208,7 +210,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
     const saleCode = `SALE-${dateStr}-${seq}`;
 
     // Calculate totalAmount
-    const totalAmount = (totalBirds * pricePerBird).toFixed(2);
+    const totalAmount = (totalWeight * pricePerKg).toFixed(2);
 
     const [newSale] = await db
       .insert(sales)
@@ -218,7 +220,8 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
         buyerId,
         saleDate,
         totalBirds,
-        pricePerBird: pricePerBird.toFixed(2),
+        totalWeight: totalWeight.toFixed(2),
+        pricePerKg: pricePerKg.toFixed(2),
         totalAmount,
         status: 'pending',
         notes: notes || null,
@@ -230,7 +233,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
       action: 'sale_created',
       entityType: 'sale',
       entityId: newSale.id,
-      changes: { saleCode, batchId, buyerId, totalBirds, pricePerBird, totalAmount },
+      changes: { saleCode, batchId, buyerId, totalBirds, totalWeight, pricePerKg, totalAmount },
     });
 
     res.status(201).json({ success: true, data: newSale, timestamp: new Date().toISOString() });
