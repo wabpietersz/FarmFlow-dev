@@ -43,6 +43,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { paymentFormSchema, type PaymentFormValues } from '@/lib/validations/sales';
 import { ArrowLeft, Plus, DollarSign, CreditCard, Banknote, Receipt } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency } from '@/lib/utils';
 import { generateInvoicePDF } from '@/lib/generateInvoice';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
@@ -149,7 +150,8 @@ export default function SaleDetailPage() {
       batchCode: sale.batchCode ?? '',
       siteName: sale.siteName ?? '',
       totalBirds: sale.totalBirds,
-      pricePerBird: Number(sale.pricePerBird),
+      totalWeight: Number(sale.totalWeight),
+      pricePerKg: Number(sale.pricePerKg),
       totalAmount: Number(sale.totalAmount),
       payments: payments.map((p) => ({
         paymentDate: String(p.paymentDate),
@@ -223,7 +225,7 @@ export default function SaleDetailPage() {
             <div className="flex items-center gap-2">
               <DollarSign className="h-5 w-5 text-blue-600" />
               <div>
-                <p className="text-2xl font-bold">R{Number(sale.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-bold">{formatCurrency(Number(sale.totalAmount))}</p>
                 <p className="text-xs text-muted-foreground">Total Amount</p>
               </div>
             </div>
@@ -234,7 +236,7 @@ export default function SaleDetailPage() {
             <div className="flex items-center gap-2">
               <CreditCard className="h-5 w-5 text-green-600" />
               <div>
-                <p className="text-2xl font-bold">R{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-bold">{formatCurrency(totalPaid)}</p>
                 <p className="text-xs text-muted-foreground">Total Paid</p>
               </div>
             </div>
@@ -246,7 +248,7 @@ export default function SaleDetailPage() {
               <Banknote className={`h-5 w-5 ${outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`} />
               <div>
                 <p className={`text-2xl font-bold ${outstandingBalance > 0 ? 'text-red-600' : ''}`}>
-                  R{outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {formatCurrency(outstandingBalance)}
                 </p>
                 <p className="text-xs text-muted-foreground">Outstanding</p>
               </div>
@@ -288,12 +290,16 @@ export default function SaleDetailPage() {
               <p className="font-medium">{buyer?.buyerName ?? '--'}</p>
             </div>
             <div>
+              <p className="text-muted-foreground">Total Weight</p>
+              <p className="font-medium">{Number(sale.totalWeight).toLocaleString(undefined, { minimumFractionDigits: 2 })} kg</p>
+            </div>
+            <div>
               <p className="text-muted-foreground">Contact</p>
               <p className="font-medium">{buyer?.contactPerson ?? '--'}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">Price per Bird</p>
-              <p className="font-medium">R{Number(sale.pricePerBird).toFixed(2)}</p>
+              <p className="text-muted-foreground">Price per kg</p>
+              <p className="font-medium">Rs. {Number(sale.pricePerKg).toFixed(2)}</p>
             </div>
             {sale.notes && (
               <div className="col-span-full">
@@ -330,7 +336,7 @@ export default function SaleDetailPage() {
                   {payments.map((payment) => (
                     <TableRow key={payment.id}>
                       <TableCell>{new Date(payment.paymentDate).toLocaleDateString()}</TableCell>
-                      <TableCell className="font-medium">R{Number(payment.paymentAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="font-medium">{formatCurrency(Number(payment.paymentAmount))}</TableCell>
                       <TableCell>{PAYMENT_METHOD_LABELS[payment.paymentMethod] ?? payment.paymentMethod}</TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">{payment.chequeNumber ?? '--'}</TableCell>
                       <TableCell>
@@ -379,7 +385,7 @@ export default function SaleDetailPage() {
           <DialogHeader>
             <DialogTitle>Add Payment</DialogTitle>
             <DialogDescription>
-              Outstanding balance: R{outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              Outstanding balance: {formatCurrency(outstandingBalance)}
             </DialogDescription>
           </DialogHeader>
           <Form {...paymentForm}>
@@ -390,7 +396,7 @@ export default function SaleDetailPage() {
                   name="paymentAmount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Amount (R)</FormLabel>
+                      <FormLabel>Amount (Rs.)</FormLabel>
                       <FormControl><Input type="number" step="0.01" max={outstandingBalance} placeholder="0.00" {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>

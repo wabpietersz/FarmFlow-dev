@@ -12,7 +12,8 @@ interface InvoiceData {
   batchCode: string;
   siteName: string;
   totalBirds: number;
-  pricePerBird: number;
+  totalWeight: number;
+  pricePerKg: number;
   totalAmount: number;
   payments: {
     paymentDate: string;
@@ -107,17 +108,17 @@ export function generateInvoicePDF(data: InvoiceData) {
   doc.setFillColor(245, 245, 245);
   doc.rect(14, y - 4, pageWidth - 28, 8, 'F');
   doc.text('Description', 16, y);
-  doc.text('Qty', 100, y, { align: 'right' });
-  doc.text('Unit Price', 140, y, { align: 'right' });
+  doc.text('Qty / Weight', 100, y, { align: 'right' });
+  doc.text('Price/kg', 140, y, { align: 'right' });
   doc.text('Amount', pageWidth - 16, y, { align: 'right' });
   y += 8;
 
   // --- Line Item ---
   doc.setFont('helvetica', 'normal');
   doc.text(`Broiler chickens (${data.batchCode})`, 16, y);
-  doc.text(data.totalBirds.toLocaleString(), 100, y, { align: 'right' });
-  doc.text(`R${data.pricePerBird.toFixed(2)}`, 140, y, { align: 'right' });
-  doc.text(`R${data.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
+  doc.text(`${data.totalBirds.toLocaleString()} birds / ${data.totalWeight.toFixed(1)} kg`, 100, y, { align: 'right' });
+  doc.text(`Rs. ${data.pricePerKg.toFixed(2)}/kg`, 140, y, { align: 'right' });
+  doc.text(`Rs. ${data.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
   y += 8;
 
   // --- Separator ---
@@ -127,7 +128,7 @@ export function generateInvoicePDF(data: InvoiceData) {
   // --- Total ---
   doc.setFont('helvetica', 'bold');
   doc.text('Total:', 140, y, { align: 'right' });
-  doc.text(`R${data.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
+  doc.text(`Rs. ${data.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
   y += 12;
 
   // --- Payments Section ---
@@ -156,7 +157,7 @@ export function generateInvoicePDF(data: InvoiceData) {
       doc.text(methodLabel, 70, y);
       doc.text(payment.paymentStatus.charAt(0).toUpperCase() + payment.paymentStatus.slice(1), 120, y);
       doc.text(
-        `R${payment.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        `Rs. ${payment.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         pageWidth - 16,
         y,
         { align: 'right' },
@@ -171,7 +172,7 @@ export function generateInvoicePDF(data: InvoiceData) {
     // Payment summary
     doc.setFont('helvetica', 'normal');
     doc.text('Total Paid:', 140, y, { align: 'right' });
-    doc.text(`R${data.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
+    doc.text(`Rs. ${data.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
     y += 6;
 
     doc.setFont('helvetica', 'bold');
@@ -181,7 +182,7 @@ export function generateInvoicePDF(data: InvoiceData) {
       doc.setTextColor(34, 139, 34);
     }
     doc.text('Outstanding:', 140, y, { align: 'right' });
-    doc.text(`R${data.outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
+    doc.text(`Rs. ${data.outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
     doc.setTextColor(0, 0, 0);
   }
 

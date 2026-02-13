@@ -45,6 +45,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { saleFormSchema, buyerFormSchema, type SaleFormValues, type BuyerFormValues } from '@/lib/validations/sales';
 import { Plus, Eye, ShoppingCart, Users2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency } from '@/lib/utils';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
   pending: 'bg-blue-100 text-blue-800',
@@ -107,14 +108,15 @@ export default function SalesPage() {
       buyerId: undefined,
       saleDate: new Date().toISOString().split('T')[0],
       totalBirds: 0,
-      pricePerBird: 0,
+      totalWeight: 0,
+      pricePerKg: 0,
       notes: '',
     },
   });
 
-  const watchedBirds = saleForm.watch('totalBirds');
-  const watchedPrice = saleForm.watch('pricePerBird');
-  const calculatedTotal = (watchedBirds ?? 0) * (watchedPrice ?? 0);
+  const watchedWeight = saleForm.watch('totalWeight');
+  const watchedPriceKg = saleForm.watch('pricePerKg');
+  const calculatedTotal = (watchedWeight ?? 0) * (watchedPriceKg ?? 0);
 
   // Buyer form
   const buyerForm = useForm<BuyerFormValues>({
@@ -280,7 +282,7 @@ export default function SalesPage() {
                           <TableCell className="text-muted-foreground">{sale.batchCode ?? '--'}</TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">{sale.buyerName ?? '--'}</TableCell>
                           <TableCell>{sale.totalBirds.toLocaleString()}</TableCell>
-                          <TableCell className="font-medium">R{Number(sale.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="font-medium">{formatCurrency(Number(sale.totalAmount))}</TableCell>
                           <TableCell className="text-muted-foreground">
                             {new Date(sale.saleDate).toLocaleDateString()}
                           </TableCell>
@@ -481,7 +483,7 @@ export default function SalesPage() {
                   </FormItem>
                 )}
               />
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <FormField
                   control={saleForm.control}
                   name="totalBirds"
@@ -495,11 +497,22 @@ export default function SalesPage() {
                 />
                 <FormField
                   control={saleForm.control}
-                  name="pricePerBird"
+                  name="totalWeight"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Price per Bird (R)</FormLabel>
-                      <FormControl><Input type="number" step="0.01" placeholder="e.g. 25.00" {...field} /></FormControl>
+                      <FormLabel>Total Weight (kg)</FormLabel>
+                      <FormControl><Input type="number" step="0.01" placeholder="e.g. 750.00" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={saleForm.control}
+                  name="pricePerKg"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Price per kg (Rs.)</FormLabel>
+                      <FormControl><Input type="number" step="0.01" placeholder="e.g. 35.00" {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -508,7 +521,7 @@ export default function SalesPage() {
               {calculatedTotal > 0 && (
                 <div className="p-3 bg-muted rounded-lg text-sm">
                   <span className="text-muted-foreground">Total Amount: </span>
-                  <span className="font-bold text-foreground">R{calculatedTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-bold text-foreground">{formatCurrency(calculatedTotal)}</span>
                 </div>
               )}
               <FormField

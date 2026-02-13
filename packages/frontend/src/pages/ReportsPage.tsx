@@ -13,6 +13,10 @@ import {
 import { useSites } from '@/hooks/useSites';
 import { useBatches } from '@/hooks/useBatches';
 import { useBuyers } from '@/hooks/useSales';
+import BatchComparisonTab from '@/components/reports/BatchComparisonTab';
+import BatchProfitabilityTab from '@/components/reports/BatchProfitabilityTab';
+import HRAnalyticsTab from '@/components/reports/HRAnalyticsTab';
+import FeedAnalyticsTab from '@/components/reports/FeedAnalyticsTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -48,8 +52,20 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { Download, TrendingUp, TrendingDown, DollarSign, BarChart3, Activity } from 'lucide-react';
+import {
+  Download,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  BarChart3,
+  Activity,
+  Layers,
+  CircleDollarSign,
+  Users,
+  Wheat,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrency, formatCurrencyCompact } from '@/lib/utils';
 
 const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#ca8a04', '#7c3aed', '#06b6d4'];
 
@@ -73,9 +89,6 @@ function getDefaultDateRange() {
     endDate: end.toISOString().split('T')[0],
   };
 }
-
-const formatCurrency = (v: number) =>
-  `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const formatNumber = (v: number) => v.toLocaleString();
 
@@ -187,7 +200,6 @@ function BatchPerformanceTab() {
 
   const { data: reportData, isLoading } = useBatchPerformance(filters);
 
-  // The API wraps in ApiResponse with success/data, unwrap appropriately
   const batchData = (reportData as unknown as { data?: BatchPerformanceItem[] })?.data ?? (reportData as unknown as BatchPerformanceItem[]) ?? [];
   const batches: BatchPerformanceItem[] = Array.isArray(batchData) ? batchData : [];
 
@@ -234,7 +246,6 @@ function BatchPerformanceTab() {
         </Button>
       </FilterRow>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard title="Total Batches" value={formatNumber(totalBatches)} icon={BarChart3} loading={isLoading} />
         <MetricCard title="Avg FCR" value={avgFcr ? avgFcr.toFixed(2) : '--'} icon={TrendingUp} loading={isLoading} />
@@ -242,7 +253,6 @@ function BatchPerformanceTab() {
         <MetricCard title="Total Birds" value={formatNumber(totalBirds)} icon={BarChart3} loading={isLoading} />
       </div>
 
-      {/* Batch Table */}
       <Card>
         <CardHeader>
           <CardTitle>Batch Details</CardTitle>
@@ -318,8 +328,6 @@ function SalesSummaryTab() {
   };
 
   const { data: reportData, isLoading } = useSalesSummary(filters);
-
-  // Unwrap ApiResponse wrapper
   const salesSummary = reportData?.data;
 
   const totalSales = salesSummary?.totalSales ?? 0;
@@ -329,7 +337,6 @@ function SalesSummaryTab() {
   const byMonth = salesSummary?.byMonth ?? [];
   const byBuyer = salesSummary?.byBuyer ?? [];
 
-  // Prepare pie chart data: top 5 buyers + "Other"
   const pieData = useMemo(() => {
     if (byBuyer.length === 0) return [];
     const sorted = [...byBuyer].sort((a, b) => b.revenue - a.revenue);
@@ -345,7 +352,6 @@ function SalesSummaryTab() {
     return result;
   }, [byBuyer]);
 
-  // Prepare bar chart data
   const barData = useMemo(() => {
     return byMonth.map((item) => ({
       month: item.month,
@@ -365,12 +371,7 @@ function SalesSummaryTab() {
 
   return (
     <div className="space-y-6">
-      <FilterRow
-        startDate={startDate}
-        endDate={endDate}
-        onStartDateChange={setStartDate}
-        onEndDateChange={setEndDate}
-      >
+      <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
         <Select value={buyerId || 'all'} onValueChange={(v) => setBuyerId(v === 'all' ? '' : v)}>
           <SelectTrigger className="w-[180px]">
             <SelectValue placeholder="All Buyers" />
@@ -378,9 +379,7 @@ function SalesSummaryTab() {
           <SelectContent>
             <SelectItem value="all">All Buyers</SelectItem>
             {buyers.map((buyer) => (
-              <SelectItem key={buyer.id} value={String(buyer.id)}>
-                {buyer.buyerName}
-              </SelectItem>
+              <SelectItem key={buyer.id} value={String(buyer.id)}>{buyer.buyerName}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -390,7 +389,6 @@ function SalesSummaryTab() {
         </Button>
       </FilterRow>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard title="Total Sales" value={formatNumber(totalSales)} icon={BarChart3} loading={isLoading} />
         <MetricCard title="Total Revenue" value={formatCurrency(totalRevenue)} icon={DollarSign} loading={isLoading} />
@@ -398,33 +396,19 @@ function SalesSummaryTab() {
         <MetricCard title="Outstanding Balance" value={formatCurrency(outstanding)} icon={DollarSign} loading={isLoading} />
       </div>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Revenue by Month Bar Chart */}
         <Card>
-          <CardHeader>
-            <CardTitle>Revenue by Month</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Revenue by Month</CardTitle></CardHeader>
           <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : barData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No sales data for this period
-              </div>
+            {isLoading ? <Skeleton className="h-[300px] w-full" /> : barData.length === 0 ? (
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground">No sales data for this period</div>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={barData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" fontSize={12} />
-                  <YAxis
-                    fontSize={12}
-                    tickFormatter={(v: unknown) => `R${(Number(v) / 1000).toFixed(0)}k`}
-                  />
-                  <Tooltip
-                    formatter={(value: unknown) => [formatCurrency(Number(value)), 'Revenue']}
-                    labelStyle={{ fontWeight: 'bold' }}
-                  />
+                  <YAxis fontSize={12} tickFormatter={(v: unknown) => formatCurrencyCompact(Number(v))} />
+                  <Tooltip formatter={(value: unknown) => [formatCurrency(Number(value)), 'Revenue']} labelStyle={{ fontWeight: 'bold' }} />
                   <Legend />
                   <Bar dataKey="revenue" name="Revenue" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -433,36 +417,17 @@ function SalesSummaryTab() {
           </CardContent>
         </Card>
 
-        {/* Revenue by Buyer Pie Chart */}
         <Card>
-          <CardHeader>
-            <CardTitle>Revenue by Buyer</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Revenue by Buyer</CardTitle></CardHeader>
           <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : pieData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No buyer data for this period
-              </div>
+            {isLoading ? <Skeleton className="h-[300px] w-full" /> : pieData.length === 0 ? (
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground">No buyer data for this period</div>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    dataKey="value"
-                    label={({ name, percent }: { name?: string; percent?: number }) =>
-                      `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)`
-                    }
-                    labelLine={true}
-                  >
-                    {pieData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value"
+                    label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)`} labelLine>
+                    {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}
                   </Pie>
                   <Tooltip formatter={(value: unknown) => [formatCurrency(Number(value)), 'Revenue']} />
                 </PieChart>
@@ -491,19 +456,15 @@ function MortalityTrendsTab() {
   const batchesList = batchesData?.data ?? [];
 
   const filters = {
-    startDate,
-    endDate,
+    startDate, endDate,
     ...(siteId ? { siteId: Number(siteId) } : {}),
     ...(batchId ? { batchId: Number(batchId) } : {}),
   };
 
   const { data: reportData, isLoading } = useMortalityTrends(filters);
-
-  // Unwrap ApiResponse wrapper
   const rawData = (reportData as unknown as { data?: MortalityTrendPoint[] })?.data ?? (reportData as unknown as MortalityTrendPoint[]) ?? [];
   const trendData: MortalityTrendPoint[] = Array.isArray(rawData) ? rawData : [];
 
-  // Build chart data
   const chartData = useMemo(() => {
     return trendData.map((point) => ({
       date: new Date(point.date).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' }),
@@ -512,86 +473,47 @@ function MortalityTrendsTab() {
     }));
   }, [trendData]);
 
-  const totalMortality = trendData.length > 0
-    ? trendData[trendData.length - 1].cumulativeMortality
-    : 0;
-  const avgDailyMortality = trendData.length > 0
-    ? trendData.reduce((sum, p) => sum + p.totalMortality, 0) / trendData.length
-    : 0;
+  const totalMortality = trendData.length > 0 ? trendData[trendData.length - 1].cumulativeMortality : 0;
+  const avgDailyMortality = trendData.length > 0 ? trendData.reduce((sum, p) => sum + p.totalMortality, 0) / trendData.length : 0;
 
   const handleExport = async () => {
     try {
-      await exportReportCsv('mortality-trends', {
-        startDate,
-        endDate,
-        ...(siteId ? { siteId } : {}),
-        ...(batchId ? { batchId } : {}),
-      });
+      await exportReportCsv('mortality-trends', { startDate, endDate, ...(siteId ? { siteId } : {}), ...(batchId ? { batchId } : {}) });
       toast.success('Report exported successfully');
-    } catch {
-      toast.error('Failed to export report');
-    }
+    } catch { toast.error('Failed to export report'); }
   };
 
   return (
     <div className="space-y-6">
-      <FilterRow
-        startDate={startDate}
-        endDate={endDate}
-        onStartDateChange={setStartDate}
-        onEndDateChange={setEndDate}
-      >
+      <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
         <Select value={siteId || 'all'} onValueChange={(v) => { setSiteId(v === 'all' ? '' : v); setBatchId(''); }}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All Sites" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Sites" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Sites</SelectItem>
-            {sites.map((site) => (
-              <SelectItem key={site.id} value={String(site.id)}>
-                {site.siteName}
-              </SelectItem>
-            ))}
+            {sites.map((site) => <SelectItem key={site.id} value={String(site.id)}>{site.siteName}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={batchId || 'all'} onValueChange={(v) => setBatchId(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All Batches" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Batches" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Batches</SelectItem>
-            {batchesList.map((batch) => (
-              <SelectItem key={batch.id} value={String(batch.id)}>
-                {batch.batchCode}
-              </SelectItem>
-            ))}
+            {batchesList.map((batch) => <SelectItem key={batch.id} value={String(batch.id)}>{batch.batchCode}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2"><Download className="h-4 w-4" />Export CSV</Button>
       </FilterRow>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <MetricCard title="Total Mortality" value={formatNumber(totalMortality)} icon={Activity} loading={isLoading} />
         <MetricCard title="Avg Daily Mortality" value={avgDailyMortality.toFixed(1)} icon={TrendingDown} loading={isLoading} />
         <MetricCard title="Days Tracked" value={formatNumber(trendData.length)} icon={BarChart3} loading={isLoading} />
       </div>
 
-      {/* Mortality Line Chart */}
       <Card>
-        <CardHeader>
-          <CardTitle>Daily Mortality Trend</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Daily Mortality Trend</CardTitle></CardHeader>
         <CardContent>
-          {isLoading ? (
-            <Skeleton className="h-[400px] w-full" />
-          ) : chartData.length === 0 ? (
-            <div className="flex items-center justify-center h-[400px] text-muted-foreground">
-              No mortality data for this period
-            </div>
+          {isLoading ? <Skeleton className="h-[400px] w-full" /> : chartData.length === 0 ? (
+            <div className="flex items-center justify-center h-[400px] text-muted-foreground">No mortality data for this period</div>
           ) : (
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={chartData}>
@@ -599,27 +521,9 @@ function MortalityTrendsTab() {
                 <XAxis dataKey="date" fontSize={12} />
                 <YAxis yAxisId="daily" fontSize={12} />
                 <YAxis yAxisId="cumulative" orientation="right" fontSize={12} />
-                <Tooltip />
-                <Legend />
-                <Line
-                  yAxisId="daily"
-                  type="monotone"
-                  dataKey="mortality"
-                  name="Daily Mortality"
-                  stroke={CHART_COLORS[2]}
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  yAxisId="cumulative"
-                  type="monotone"
-                  dataKey="cumulative"
-                  name="Cumulative"
-                  stroke={CHART_COLORS[0]}
-                  strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={false}
-                />
+                <Tooltip /><Legend />
+                <Line yAxisId="daily" type="monotone" dataKey="mortality" name="Daily Mortality" stroke={CHART_COLORS[2]} strokeWidth={2} dot={false} />
+                <Line yAxisId="cumulative" type="monotone" dataKey="cumulative" name="Cumulative" stroke={CHART_COLORS[0]} strokeWidth={2} strokeDasharray="5 5" dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -636,11 +540,7 @@ function FinancialOverviewTab() {
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
 
-  const filters = { startDate, endDate };
-
-  const { data: reportData, isLoading } = useFinancialOverview(filters);
-
-  // Unwrap ApiResponse wrapper — reportData is ApiResponse<FinancialOverviewData>
+  const { data: reportData, isLoading } = useFinancialOverview({ startDate, endDate });
   const fin = reportData?.data as unknown as FinancialOverviewData | undefined;
 
   const totalRevenue = fin?.totalRevenue ?? 0;
@@ -650,84 +550,42 @@ function FinancialOverviewTab() {
   const recentTransactions = fin?.recentTransactions ?? [];
   const collectionRate = totalRevenue > 0 ? (totalPaid / totalRevenue) * 100 : 0;
 
-  // Prepare pie chart data from payments by method
   const pieData = useMemo(() => {
     if (paymentsByMethod.length === 0) {
       if (totalPaid > 0 || totalOutstanding > 0) {
-        return [
-          { name: 'Paid', value: totalPaid },
-          { name: 'Outstanding', value: totalOutstanding },
-        ];
+        return [{ name: 'Paid', value: totalPaid }, { name: 'Outstanding', value: totalOutstanding }];
       }
       return [];
     }
-    return paymentsByMethod.map((item) => ({
-      name: item.method.replace(/_/g, ' '),
-      value: item.total,
-    }));
+    return paymentsByMethod.map((item) => ({ name: item.method.replace(/_/g, ' '), value: item.total }));
   }, [paymentsByMethod, totalPaid, totalOutstanding]);
 
   const handleExport = async () => {
     try {
       await exportReportCsv('financial-overview', { startDate, endDate });
       toast.success('Report exported successfully');
-    } catch {
-      toast.error('Failed to export report');
-    }
+    } catch { toast.error('Failed to export report'); }
   };
 
   return (
     <div className="space-y-6">
-      <FilterRow
-        startDate={startDate}
-        endDate={endDate}
-        onStartDateChange={setStartDate}
-        onEndDateChange={setEndDate}
-      >
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+      <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
+        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2"><Download className="h-4 w-4" />Export CSV</Button>
       </FilterRow>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard title="Total Revenue" value={formatCurrency(totalRevenue)} icon={DollarSign} loading={isLoading} />
-        <MetricCard
-          title="Total Paid"
-          value={formatCurrency(totalPaid)}
-          icon={TrendingUp}
-          trend="up"
-          loading={isLoading}
-        />
-        <MetricCard
-          title="Outstanding"
-          value={formatCurrency(totalOutstanding)}
-          icon={TrendingDown}
-          trend={totalOutstanding > 0 ? 'down' : null}
-          loading={isLoading}
-        />
-        <MetricCard
-          title="Collection Rate"
-          value={formatPercent(collectionRate)}
-          icon={Activity}
-          loading={isLoading}
-        />
+        <MetricCard title="Total Paid" value={formatCurrency(totalPaid)} icon={TrendingUp} trend="up" loading={isLoading} />
+        <MetricCard title="Outstanding" value={formatCurrency(totalOutstanding)} icon={TrendingDown} trend={totalOutstanding > 0 ? 'down' : null} loading={isLoading} />
+        <MetricCard title="Collection Rate" value={formatPercent(collectionRate)} icon={Activity} loading={isLoading} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Transactions */}
         <Card>
-          <CardHeader>
-            <CardTitle>Recent Transactions</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Recent Transactions</CardTitle></CardHeader>
           <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : recentTransactions.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No transactions for this period
-              </div>
+            {isLoading ? <Skeleton className="h-[300px] w-full" /> : recentTransactions.length === 0 ? (
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground">No transactions for this period</div>
             ) : (
               <div className="space-y-3">
                 {recentTransactions.map((tx) => (
@@ -747,36 +605,17 @@ function FinancialOverviewTab() {
           </CardContent>
         </Card>
 
-        {/* Payment Breakdown Pie Chart */}
         <Card>
-          <CardHeader>
-            <CardTitle>{paymentsByMethod.length > 0 ? 'Payments by Method' : 'Payment Status'}</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>{paymentsByMethod.length > 0 ? 'Payments by Method' : 'Payment Status'}</CardTitle></CardHeader>
           <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-[300px] w-full" />
-            ) : pieData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No data for this period
-              </div>
+            {isLoading ? <Skeleton className="h-[300px] w-full" /> : pieData.length === 0 ? (
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground">No data for this period</div>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    dataKey="value"
-                    label={({ name, percent }: { name?: string; percent?: number }) =>
-                      `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)`
-                    }
-                    labelLine={true}
-                  >
-                    {pieData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value"
+                    label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)`} labelLine>
+                    {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}
                   </Pie>
                   <Tooltip formatter={(value: unknown) => [formatCurrency(Number(value))]} />
                 </PieChart>
@@ -786,18 +625,11 @@ function FinancialOverviewTab() {
         </Card>
       </div>
 
-      {/* Revenue Summary */}
       <Card>
-        <CardHeader>
-          <CardTitle>Revenue Summary</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Revenue Summary</CardTitle></CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-8 w-full" />
-              ))}
-            </div>
+            <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
               <div className="text-center p-4 bg-muted rounded-lg">
@@ -810,9 +642,7 @@ function FinancialOverviewTab() {
               </div>
               <div className="text-center p-4 bg-muted rounded-lg">
                 <p className="text-sm text-muted-foreground mb-1">Outstanding ({formatPercent(100 - collectionRate)})</p>
-                <p className={`text-xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : 'text-foreground'}`}>
-                  {formatCurrency(totalOutstanding)}
-                </p>
+                <p className={`text-xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : 'text-foreground'}`}>{formatCurrency(totalOutstanding)}</p>
               </div>
             </div>
           )}
@@ -845,24 +675,44 @@ export default function ReportsPage() {
       </div>
 
       <Tabs defaultValue="batch-performance">
-        <TabsList>
-          <TabsTrigger value="batch-performance" className="gap-2">
-            <BarChart3 className="h-4 w-4" />
-            Batch Performance
-          </TabsTrigger>
-          <TabsTrigger value="sales" className="gap-2">
-            <DollarSign className="h-4 w-4" />
-            Sales
-          </TabsTrigger>
-          <TabsTrigger value="mortality" className="gap-2">
-            <Activity className="h-4 w-4" />
-            Mortality
-          </TabsTrigger>
-          <TabsTrigger value="financial" className="gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Financial
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto">
+          <TabsList className="flex w-max">
+            <TabsTrigger value="batch-performance" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Batch Performance
+            </TabsTrigger>
+            <TabsTrigger value="sales" className="gap-2">
+              <DollarSign className="h-4 w-4" />
+              Sales
+            </TabsTrigger>
+            <TabsTrigger value="mortality" className="gap-2">
+              <Activity className="h-4 w-4" />
+              Mortality
+            </TabsTrigger>
+            <TabsTrigger value="financial" className="gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Financial
+            </TabsTrigger>
+            <TabsTrigger value="batch-comparison" className="gap-2">
+              <Layers className="h-4 w-4" />
+              Comparison
+            </TabsTrigger>
+            {hasPermission('reports:financial:read') && (
+              <TabsTrigger value="profitability" className="gap-2">
+                <CircleDollarSign className="h-4 w-4" />
+                Profitability
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="hr-analytics" className="gap-2">
+              <Users className="h-4 w-4" />
+              HR & Attendance
+            </TabsTrigger>
+            <TabsTrigger value="feed-analytics" className="gap-2">
+              <Wheat className="h-4 w-4" />
+              Feed Analytics
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="batch-performance">
           <BatchPerformanceTab />
@@ -878,6 +728,24 @@ export default function ReportsPage() {
 
         <TabsContent value="financial">
           <FinancialOverviewTab />
+        </TabsContent>
+
+        <TabsContent value="batch-comparison">
+          <BatchComparisonTab />
+        </TabsContent>
+
+        {hasPermission('reports:financial:read') && (
+          <TabsContent value="profitability">
+            <BatchProfitabilityTab />
+          </TabsContent>
+        )}
+
+        <TabsContent value="hr-analytics">
+          <HRAnalyticsTab />
+        </TabsContent>
+
+        <TabsContent value="feed-analytics">
+          <FeedAnalyticsTab />
         </TabsContent>
       </Tabs>
     </div>

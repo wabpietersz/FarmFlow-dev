@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import {
   useSuppliers,
@@ -6,14 +6,31 @@ import {
   useUpdateSupplier,
   useDeleteSupplier,
   useRecipes,
+  useRecipe,
   useCreateRecipe,
   useUpdateRecipe,
+  useToggleRecipeStatus,
   useDeleteRecipe,
   useInventory,
   useCreateInventory,
   useUpdateInventory,
   useRestockInventory,
+  useProductions,
+  useProduction,
+  useCreateProduction,
+  useCompleteProduction,
+  useDeleteProduction,
+  useDistributions,
+  useCreateDistribution,
+  useDeleteDistribution,
+  usePurchaseOrders,
+  useCreatePurchaseOrder,
+  useDeletePurchaseOrder,
+  useUpdatePurchaseOrderStatus,
+  useReceivePurchaseOrder,
+  usePurchaseOrder,
 } from '@/hooks/useFeed';
+import { useBatches } from '@/hooks/useBatches';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -53,8 +70,17 @@ import {
   Warehouse,
   RefreshCw,
   AlertTriangle,
+  Factory,
+  Truck,
+  Play,
+  CheckCircle,
+  XCircle,
+  ShoppingCart,
+  Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiPut, parseApiError } from '@/lib/api';
+import { useQueryClient } from '@tanstack/react-query';
 import type { FeedType } from '@farmflow/shared';
 
 // --- Types ---
@@ -68,7 +94,7 @@ interface SupplierForm {
 }
 
 interface RecipeIngredient {
-  ingredientName: string;
+  inventoryItemId: string;
   proportion: string;
   unit: string;
 }
@@ -77,11 +103,13 @@ interface RecipeForm {
   recipeName: string;
   feedType: string;
   cost: string;
+  status: string;
   ingredients: RecipeIngredient[];
 }
 
 interface InventoryForm {
   ingredientName: string;
+  supplierId: string;
   quantity: string;
   unit: string;
   costPerUnit: string;
@@ -113,21 +141,154 @@ const EMPTY_RECIPE_FORM: RecipeForm = {
   recipeName: '',
   feedType: '',
   cost: '',
-  ingredients: [{ ingredientName: '', proportion: '', unit: 'kg' }],
+  status: 'active',
+  ingredients: [{ inventoryItemId: '', proportion: '', unit: 'kg' }],
 };
 
 const EMPTY_INVENTORY_FORM: InventoryForm = {
   ingredientName: '',
+  supplierId: '',
   quantity: '',
   unit: 'kg',
   costPerUnit: '',
   reorderLevel: '',
 };
 
+interface ProductionForm {
+  recipeId: string;
+  plannedQuantity: string;
+  unit: string;
+  productionDate: string;
+  notes: string;
+}
+
+interface DistributionForm {
+  productionBatchId: string;
+  farmBatchId: string;
+  feedType: string;
+  quantity: string;
+  unit: string;
+  distributionDate: string;
+  notes: string;
+}
+
+const PRODUCTION_STATUS_COLORS: Record<string, string> = {
+  planned: 'bg-blue-100 text-blue-800',
+  in_progress: 'bg-yellow-100 text-yellow-800',
+  completed: 'bg-green-100 text-green-800',
+  cancelled: 'bg-gray-100 text-gray-800',
+};
+
+const EMPTY_PRODUCTION_FORM: ProductionForm = {
+  recipeId: '',
+  plannedQuantity: '',
+  unit: 'kg',
+  productionDate: new Date().toISOString().split('T')[0],
+  notes: '',
+};
+
+const EMPTY_DISTRIBUTION_FORM: DistributionForm = {
+  productionBatchId: '',
+  farmBatchId: '',
+  feedType: '',
+  quantity: '',
+  unit: 'kg',
+  distributionDate: new Date().toISOString().split('T')[0],
+  notes: '',
+};
+
+// --- Helper Component ---
+
+function ReceivePOContent({ poId, onClose, receivePOMutation }: { poId: number; onClose: () => void; receivePOMutation: ReturnType<typeof useReceivePurchaseOrder> }) {
+  const { data: poDetailData } = usePurchaseOrder(poId);
+  const poDetail = poDetailData as unknown as { data?: { purchaseOrder: { orderCode: string; status: string }; items: { id: number; ingredientName?: string; orderedQuantity: string; receivedQuantity: string; unit: string }[] } };
+  const items = poDetail?.data?.items ?? [];
+  const [receiveAmounts, setReceiveAmounts] = useState<Record<number, string>>({});
+
+  const handleReceive = async () => {
+    const receiveItems = items
+      .filter((item) => Number(receiveAmounts[item.id] || 0) > 0)
+      .map((item) => ({
+        itemId: item.id,
+        receivedQuantity: Number(receiveAmounts[item.id]),
+      }));
+
+    if (receiveItems.length === 0) {
+      toast.error('Enter at least one received quantity');
+      return;
+    }
+
+    try {
+      await receivePOMutation.mutateAsync({ id: poId, items: receiveItems });
+      toast.success('Items received and inventory updated');
+      onClose();
+    } catch (error) {
+      parseApiError(error, 'Failed to receive items');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Loading items...</p>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">PO: {poDetail?.data?.purchaseOrder?.orderCode}</p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Item</TableHead>
+                <TableHead className="text-right">Ordered</TableHead>
+                <TableHead className="text-right">Already Rcvd</TableHead>
+                <TableHead className="text-right">Receive Now</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((item) => {
+                const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell className="text-sm">{item.ingredientName ?? `Item #${item.id}`}</TableCell>
+                    <TableCell className="text-right text-sm">{Number(item.orderedQuantity)} {item.unit}</TableCell>
+                    <TableCell className="text-right text-sm">{Number(item.receivedQuantity)} {item.unit}</TableCell>
+                    <TableCell className="text-right">
+                      {remaining > 0 ? (
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max={remaining}
+                          placeholder="0"
+                          className="w-20 ml-auto text-right"
+                          value={receiveAmounts[item.id] || ''}
+                          onChange={(e) => setReceiveAmounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        />
+                      ) : (
+                        <span className="text-xs text-green-600">Fully received</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </>
+      )}
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button onClick={handleReceive} disabled={receivePOMutation.isPending}>
+          {receivePOMutation.isPending ? 'Receiving...' : 'Confirm Receipt'}
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
 // --- Component ---
 
 export default function FeedPage() {
   const { hasPermission } = useAuthStore();
+  const queryClient = useQueryClient();
 
   // =====================
   // SUPPLIERS STATE
@@ -150,6 +311,15 @@ export default function FeedPage() {
   const [editingRecipe, setEditingRecipe] = useState<{ id: number } | null>(null);
   const [recipeForm, setRecipeForm] = useState<RecipeForm>(EMPTY_RECIPE_FORM);
   const [showDeleteRecipeConfirm, setShowDeleteRecipeConfirm] = useState<number | null>(null);
+  const [viewingRecipe, setViewingRecipe] = useState<{
+    id: number;
+    recipeName: string;
+    feedType: string;
+    cost: string;
+    status: string;
+    ingredientSummary?: string;
+    ingredients?: any[];
+  } | null>(null);
 
   // =====================
   // INVENTORY STATE
@@ -161,6 +331,49 @@ export default function FeedPage() {
   const [inventoryForm, setInventoryForm] = useState<InventoryForm>(EMPTY_INVENTORY_FORM);
   const [showRestockDialog, setShowRestockDialog] = useState<number | null>(null);
   const [restockQuantity, setRestockQuantity] = useState('');
+
+  // =====================
+  // PRODUCTION STATE
+  // =====================
+  const [productionsPage, setProductionsPage] = useState(1);
+  const [productionStatusFilter, setProductionStatusFilter] = useState('');
+  const [showProductionDialog, setShowProductionDialog] = useState(false);
+  const [productionForm, setProductionForm] = useState<ProductionForm>(EMPTY_PRODUCTION_FORM);
+  const [showCompleteDialog, setShowCompleteDialog] = useState<number | null>(null);
+  const [completeActualQty, setCompleteActualQty] = useState('');
+  const [showDeleteProductionConfirm, setShowDeleteProductionConfirm] = useState<number | null>(null);
+
+  // =====================
+  // DISTRIBUTION STATE
+  // =====================
+  const [distributionsPage, setDistributionsPage] = useState(1);
+  const [distributionFeedTypeFilter, setDistributionFeedTypeFilter] = useState('');
+  const [showDistributionDialog, setShowDistributionDialog] = useState(false);
+  const [distributionForm, setDistributionForm] = useState<DistributionForm>(EMPTY_DISTRIBUTION_FORM);
+  const [showDeleteDistributionConfirm, setShowDeleteDistributionConfirm] = useState<number | null>(null);
+
+  // =====================
+  // PURCHASE ORDERS STATE
+  // =====================
+  const [poPage, setPoPage] = useState(1);
+  const [poStatusFilter, setPoStatusFilter] = useState('');
+  const [poSearch, setPoSearch] = useState('');
+  const [showPoDialog, setShowPoDialog] = useState(false);
+  const [poForm, setPoForm] = useState<{
+    supplierId: string;
+    orderDate: string;
+    expectedDeliveryDate: string;
+    notes: string;
+    items: { inventoryItemId: string; orderedQuantity: string; unitPrice: string; unit: string }[];
+  }>({
+    supplierId: '',
+    orderDate: new Date().toISOString().split('T')[0],
+    expectedDeliveryDate: '',
+    notes: '',
+    items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
+  });
+  const [showPoDetail, setShowPoDetail] = useState<number | null>(null);
+  const [showReceiveDialog, setShowReceiveDialog] = useState(false);
 
   // =====================
   // DATA HOOKS
@@ -187,13 +400,57 @@ export default function FeedPage() {
   const updateSupplierMutation = useUpdateSupplier(editingSupplier ? String(editingSupplier.id) : '0');
   const deleteSupplierMutation = useDeleteSupplier();
 
+  const { data: recipeDetailData, isLoading: recipeDetailLoading } = useRecipe(
+    editingRecipe ? String(editingRecipe.id) : viewingRecipe ? String(viewingRecipe.id) : undefined,
+  );
   const createRecipeMutation = useCreateRecipe();
   const updateRecipeMutation = useUpdateRecipe(editingRecipe ? String(editingRecipe.id) : '0');
+  const toggleRecipeStatusMutation = useToggleRecipeStatus();
   const deleteRecipeMutation = useDeleteRecipe();
 
   const createInventoryMutation = useCreateInventory();
   const updateInventoryMutation = useUpdateInventory(editingInventory ? String(editingInventory.id) : '0');
   const restockInventoryMutation = useRestockInventory();
+
+  // Production hooks
+  const { data: productionsData, isLoading: productionsLoading } = useProductions({
+    page: productionsPage,
+    limit: 20,
+    status: productionStatusFilter || undefined,
+  });
+  const { data: activeRecipesData } = useRecipes({ page: 1, limit: 100, status: 'active' });
+  const { data: completionDetailData } = useProduction(showCompleteDialog ? String(showCompleteDialog) : undefined);
+
+  const createProductionMutation = useCreateProduction();
+  const completeProductionMutation = useCompleteProduction(showCompleteDialog ? String(showCompleteDialog) : '0');
+  const deleteProductionMutation = useDeleteProduction();
+
+  // Distribution hooks
+  const { data: distributionsData, isLoading: distributionsLoading } = useDistributions({
+    page: distributionsPage,
+    limit: 20,
+    feedType: distributionFeedTypeFilter || undefined,
+  });
+  const { data: completedProductionsData } = useProductions({ page: 1, limit: 100, status: 'completed' });
+  const { data: batchesData } = useBatches({ page: 1, limit: 100 });
+
+  const createDistributionMutation = useCreateDistribution();
+  const deleteDistributionMutation = useDeleteDistribution();
+
+  // Purchase Orders
+  const { data: poData, isLoading: poLoading } = usePurchaseOrders({
+    page: poPage,
+    limit: 20,
+    status: poStatusFilter || undefined,
+    search: poSearch || undefined,
+  });
+  const poList = ((poData as unknown as { data: unknown[] })?.data || []) as { id: number; orderCode: string; supplierName?: string; orderDate: string; status: string; totalCost: string | number }[];
+  const poTotal = (poData as unknown as { totalPages: number })?.totalPages || 1;
+
+  const createPO = useCreatePurchaseOrder();
+  const deletePO = useDeletePurchaseOrder();
+  const updatePOStatusMutation = useUpdatePurchaseOrderStatus();
+  const receivePOMutation = useReceivePurchaseOrder();
 
   // Derived data
   const suppliersList = suppliersData?.data ?? [];
@@ -207,6 +464,19 @@ export default function FeedPage() {
   const inventoryList = inventoryData?.data ?? [];
   const inventoryTotalPages = inventoryData?.totalPages ?? 0;
   const inventoryTotal = inventoryData?.total ?? 0;
+
+  const productionsList = productionsData?.data ?? [];
+  const productionsTotalPages = productionsData?.totalPages ?? 0;
+  const productionsTotal = productionsData?.total ?? 0;
+
+  const distributionsList = distributionsData?.data ?? [];
+  const distributionsTotalPages = distributionsData?.totalPages ?? 0;
+  const distributionsTotal = distributionsData?.total ?? 0;
+
+  const activeRecipes = activeRecipesData?.data ?? [];
+  const completedProductions = completedProductionsData?.data ?? [];
+  const farmBatches = batchesData?.data ?? [];
+  const completionDetail = (completionDetailData as unknown as { data?: { materials?: { inventoryItemId: number; ingredientName?: string; plannedQuantity: string; actualQuantity?: string | null; unit: string; availableQuantity?: string; costPerUnit?: string }[] } })?.data;
 
   // =====================
   // SUPPLIER HANDLERS
@@ -259,8 +529,8 @@ export default function FeedPage() {
       setShowSupplierDialog(false);
       setEditingSupplier(null);
       setSupplierForm(EMPTY_SUPPLIER_FORM);
-    } catch {
-      toast.error(editingSupplier ? 'Failed to update supplier' : 'Failed to create supplier');
+    } catch (error) {
+      parseApiError(error, editingSupplier ? 'Failed to update supplier' : 'Failed to create supplier');
     }
   };
 
@@ -269,8 +539,8 @@ export default function FeedPage() {
       await deleteSupplierMutation.mutateAsync(id);
       toast.success('Supplier deactivated');
       setShowDeleteSupplierConfirm(null);
-    } catch {
-      toast.error('Failed to deactivate supplier');
+    } catch (error) {
+      parseApiError(error, 'Failed to deactivate supplier');
     }
   };
 
@@ -283,30 +553,58 @@ export default function FeedPage() {
     setShowRecipeDialog(true);
   };
 
+  // Track which recipe detail we've already loaded ingredients for
+  const loadedRecipeDetailIdRef = useRef<number | null>(null);
+
   const handleOpenEditRecipe = (recipe: {
     id: number;
     recipeName: string;
     feedType: string;
     cost?: number | string | null;
-    ingredients?: RecipeIngredient[];
   }) => {
+    loadedRecipeDetailIdRef.current = null; // reset so useEffect will re-populate
     setEditingRecipe({ id: recipe.id });
+    // Set basic fields immediately; ingredients will be loaded from detail query via useEffect
     setRecipeForm({
       recipeName: recipe.recipeName,
       feedType: recipe.feedType,
       cost: recipe.cost != null ? String(recipe.cost) : '',
-      ingredients:
-        recipe.ingredients && recipe.ingredients.length > 0
-          ? recipe.ingredients
-          : [{ ingredientName: '', proportion: '', unit: 'kg' }],
+      status: (recipe as any).status ?? 'active',
+      ingredients: [{ inventoryItemId: '', proportion: '', unit: 'kg' }],
     });
     setShowRecipeDialog(true);
   };
 
+  // When recipe detail loads, populate ingredients into the form
+  const recipeDetailForEdit = (recipeDetailData as unknown as { data?: { recipe?: Record<string, unknown>; ingredients?: { inventoryItemId?: number | null; proportion?: string; unit?: string }[] } })?.data;
+
+  useEffect(() => {
+    if (
+      editingRecipe &&
+      recipeDetailForEdit?.ingredients &&
+      loadedRecipeDetailIdRef.current !== editingRecipe.id
+    ) {
+      loadedRecipeDetailIdRef.current = editingRecipe.id;
+      const loadedIngredients = recipeDetailForEdit.ingredients
+        .filter((ing: { inventoryItemId?: number | null }) => ing.inventoryItemId != null)
+        .map((ing: { inventoryItemId?: number | null; proportion?: string; unit?: string }) => ({
+          inventoryItemId: String(ing.inventoryItemId ?? ''),
+          proportion: String(ing.proportion ?? ''),
+          unit: ing.unit ?? 'kg',
+        }));
+      if (loadedIngredients.length > 0) {
+        setRecipeForm((prev) => ({
+          ...prev,
+          ingredients: loadedIngredients,
+        }));
+      }
+    }
+  }, [editingRecipe, recipeDetailForEdit]);
+
   const handleAddIngredient = () => {
     setRecipeForm((prev) => ({
       ...prev,
-      ingredients: [...prev.ingredients, { ingredientName: '', proportion: '', unit: 'kg' }],
+      ingredients: [...prev.ingredients, { inventoryItemId: '', proportion: '', unit: 'kg' }],
     }));
   };
 
@@ -340,10 +638,16 @@ export default function FeedPage() {
         recipeName: recipeForm.recipeName,
         feedType: recipeForm.feedType as FeedType,
         cost: recipeForm.cost ? Number(recipeForm.cost) : 0,
-        ingredients: recipeForm.ingredients.filter((ing) => ing.ingredientName.trim()),
+        ingredients: recipeForm.ingredients
+          .filter((ing) => ing.inventoryItemId)
+          .map((ing) => ({
+            inventoryItemId: Number(ing.inventoryItemId),
+            proportion: Number(ing.proportion),
+            unit: ing.unit,
+          })),
       };
       if (editingRecipe) {
-        await updateRecipeMutation.mutateAsync(payload);
+        await updateRecipeMutation.mutateAsync({ ...payload, status: recipeForm.status });
         toast.success('Recipe updated successfully');
       } else {
         await createRecipeMutation.mutateAsync(payload);
@@ -352,18 +656,28 @@ export default function FeedPage() {
       setShowRecipeDialog(false);
       setEditingRecipe(null);
       setRecipeForm(EMPTY_RECIPE_FORM);
-    } catch {
-      toast.error(editingRecipe ? 'Failed to update recipe' : 'Failed to create recipe');
+    } catch (error) {
+      parseApiError(error, editingRecipe ? 'Failed to update recipe' : 'Failed to create recipe');
     }
   };
 
   const handleDeleteRecipe = async (id: number) => {
     try {
       await deleteRecipeMutation.mutateAsync(id);
-      toast.success('Recipe deleted');
+      toast.success('Recipe permanently deleted');
       setShowDeleteRecipeConfirm(null);
-    } catch {
-      toast.error('Failed to delete recipe');
+    } catch (error) {
+      parseApiError(error, 'Failed to delete recipe');
+    }
+  };
+
+  const handleToggleRecipeStatus = async (id: number, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    try {
+      await toggleRecipeStatusMutation.mutateAsync({ id, status: newStatus as 'active' | 'inactive' });
+      toast.success(`Recipe ${newStatus === 'active' ? 'activated' : 'deactivated'}`);
+    } catch (error) {
+      parseApiError(error, 'Failed to update recipe status');
     }
   };
 
@@ -383,10 +697,12 @@ export default function FeedPage() {
     unit: string;
     costPerUnit?: number | string | null;
     reorderLevel?: number | string | null;
+    supplierId?: number | null;
   }) => {
     setEditingInventory({ id: item.id });
     setInventoryForm({
       ingredientName: item.ingredientName,
+      supplierId: item.supplierId != null ? String(item.supplierId) : '',
       quantity: String(item.quantity),
       unit: item.unit,
       costPerUnit: item.costPerUnit != null ? String(item.costPerUnit) : '',
@@ -400,9 +716,14 @@ export default function FeedPage() {
       toast.error('Ingredient name is required');
       return;
     }
+    if (!inventoryForm.supplierId) {
+      toast.error('Supplier is required');
+      return;
+    }
     try {
       const payload = {
         ingredientName: inventoryForm.ingredientName,
+        supplierId: Number(inventoryForm.supplierId),
         quantity: Number(inventoryForm.quantity) || 0,
         unit: inventoryForm.unit,
         costPerUnit: inventoryForm.costPerUnit ? Number(inventoryForm.costPerUnit) : 0,
@@ -418,8 +739,8 @@ export default function FeedPage() {
       setShowInventoryDialog(false);
       setEditingInventory(null);
       setInventoryForm(EMPTY_INVENTORY_FORM);
-    } catch {
-      toast.error(editingInventory ? 'Failed to update inventory item' : 'Failed to create inventory item');
+    } catch (error) {
+      parseApiError(error, editingInventory ? 'Failed to update inventory item' : 'Failed to create inventory item');
     }
   };
 
@@ -433,8 +754,152 @@ export default function FeedPage() {
       toast.success('Inventory restocked successfully');
       setShowRestockDialog(null);
       setRestockQuantity('');
-    } catch {
-      toast.error('Failed to restock inventory');
+    } catch (error) {
+      parseApiError(error, 'Failed to restock inventory');
+    }
+  };
+
+  // =====================
+  // PRODUCTION HANDLERS
+  // =====================
+  const handleOpenCreateProduction = () => {
+    setProductionForm(EMPTY_PRODUCTION_FORM);
+    setShowProductionDialog(true);
+  };
+
+  const handleSaveProduction = async () => {
+    if (!productionForm.recipeId) {
+      toast.error('Please select a recipe');
+      return;
+    }
+    if (!productionForm.plannedQuantity || Number(productionForm.plannedQuantity) <= 0) {
+      toast.error('Planned quantity must be positive');
+      return;
+    }
+    try {
+      await createProductionMutation.mutateAsync({
+        recipeId: Number(productionForm.recipeId),
+        plannedQuantity: Number(productionForm.plannedQuantity),
+        unit: productionForm.unit,
+        productionDate: productionForm.productionDate,
+        notes: productionForm.notes || undefined,
+      });
+      toast.success('Production batch created');
+      setShowProductionDialog(false);
+      setProductionForm(EMPTY_PRODUCTION_FORM);
+    } catch (error) {
+      parseApiError(error, 'Failed to create production batch');
+    }
+  };
+
+  const handleStartProduction = async (id: number) => {
+    try {
+      await apiPut(`/feed/production/${id}/status`, { status: 'in_progress' });
+      toast.success('Production started');
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['production-summary'] });
+    } catch (error) {
+      parseApiError(error, 'Failed to start production');
+    }
+  };
+
+  const handleCancelProduction = async (id: number) => {
+    try {
+      await apiPut(`/feed/production/${id}/status`, { status: 'cancelled' });
+      toast.success('Production cancelled');
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['production-summary'] });
+    } catch (error) {
+      parseApiError(error, 'Failed to cancel production');
+    }
+  };
+
+  const handleOpenComplete = (id: number) => {
+    setShowCompleteDialog(id);
+    setCompleteActualQty('');
+  };
+
+  const handleCompleteProduction = async () => {
+    if (!showCompleteDialog || !completeActualQty) return;
+    const materials = completionDetail?.materials?.map((m) => ({
+      inventoryItemId: m.inventoryItemId,
+      actualQuantity: Number(m.plannedQuantity), // Default to planned, user can adjust
+    })) ?? [];
+
+    if (materials.length === 0) {
+      toast.error('No materials found for this production batch');
+      return;
+    }
+
+    try {
+      await completeProductionMutation.mutateAsync({
+        actualQuantity: Number(completeActualQty),
+        materials,
+      });
+      toast.success('Production completed successfully');
+      setShowCompleteDialog(null);
+      setCompleteActualQty('');
+    } catch (error) {
+      parseApiError(error, 'Failed to complete production — check inventory availability');
+    }
+  };
+
+  const handleDeleteProduction = async (id: number) => {
+    try {
+      await deleteProductionMutation.mutateAsync(id);
+      toast.success('Production batch deleted');
+      setShowDeleteProductionConfirm(null);
+    } catch (error) {
+      parseApiError(error, 'Failed to delete production batch');
+    }
+  };
+
+  // =====================
+  // DISTRIBUTION HANDLERS
+  // =====================
+  const handleOpenCreateDistribution = () => {
+    setDistributionForm(EMPTY_DISTRIBUTION_FORM);
+    setShowDistributionDialog(true);
+  };
+
+  const handleSaveDistribution = async () => {
+    if (!distributionForm.farmBatchId) {
+      toast.error('Please select a farm batch');
+      return;
+    }
+    if (!distributionForm.feedType) {
+      toast.error('Please select a feed type');
+      return;
+    }
+    if (!distributionForm.quantity || Number(distributionForm.quantity) <= 0) {
+      toast.error('Quantity must be positive');
+      return;
+    }
+    try {
+      await createDistributionMutation.mutateAsync({
+        productionBatchId: distributionForm.productionBatchId ? Number(distributionForm.productionBatchId) : null,
+        farmBatchId: Number(distributionForm.farmBatchId),
+        feedType: distributionForm.feedType,
+        quantity: Number(distributionForm.quantity),
+        unit: distributionForm.unit,
+        distributionDate: distributionForm.distributionDate,
+        notes: distributionForm.notes || undefined,
+      });
+      toast.success('Distribution recorded');
+      setShowDistributionDialog(false);
+      setDistributionForm(EMPTY_DISTRIBUTION_FORM);
+    } catch (error) {
+      parseApiError(error, 'Failed to create distribution');
+    }
+  };
+
+  const handleDeleteDistribution = async (id: number) => {
+    try {
+      await deleteDistributionMutation.mutateAsync(id);
+      toast.success('Distribution deleted');
+      setShowDeleteDistributionConfirm(null);
+    } catch (error) {
+      parseApiError(error, 'Failed to delete distribution');
     }
   };
 
@@ -447,19 +912,31 @@ export default function FeedPage() {
         <h1 className="text-2xl font-bold text-foreground">Feed Management</h1>
       </div>
 
-      <Tabs defaultValue="suppliers">
+      <Tabs defaultValue="inventory">
         <TabsList>
-          <TabsTrigger value="suppliers" className="gap-2">
-            <Package className="h-4 w-4" />
-            Suppliers
+          <TabsTrigger value="inventory" className="gap-2">
+            <Warehouse className="h-4 w-4" />
+            Inventory
           </TabsTrigger>
           <TabsTrigger value="recipes" className="gap-2">
             <FlaskConical className="h-4 w-4" />
             Recipes
           </TabsTrigger>
-          <TabsTrigger value="inventory" className="gap-2">
-            <Warehouse className="h-4 w-4" />
-            Inventory
+          <TabsTrigger value="production" className="gap-2">
+            <Factory className="h-4 w-4" />
+            Production
+          </TabsTrigger>
+          <TabsTrigger value="distribution" className="gap-2">
+            <Truck className="h-4 w-4" />
+            Distribution
+          </TabsTrigger>
+          <TabsTrigger value="purchase-orders" className="gap-2">
+            <ShoppingCart className="h-4 w-4" />
+            Purchase Orders
+          </TabsTrigger>
+          <TabsTrigger value="suppliers" className="gap-2">
+            <Package className="h-4 w-4" />
+            Suppliers
           </TabsTrigger>
         </TabsList>
 
@@ -697,14 +1174,12 @@ export default function FeedPage() {
                         <TableHead>Cost</TableHead>
                         <TableHead className="hidden sm:table-cell">Ingredients</TableHead>
                         <TableHead>Status</TableHead>
-                        {(hasPermission('feed_production:update') || hasPermission('feed_production:delete')) && (
-                          <TableHead className="w-[120px]" />
-                        )}
+                        <TableHead className="w-[120px]" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {recipesList.map((recipe) => (
-                        <TableRow key={recipe.id}>
+                        <TableRow key={recipe.id} className={recipe.status === 'inactive' ? 'opacity-60' : ''}>
                           <TableCell className="font-medium">{recipe.recipeName}</TableCell>
                           <TableCell>
                             <Badge
@@ -716,44 +1191,70 @@ export default function FeedPage() {
                           </TableCell>
                           <TableCell>
                             {recipe.cost != null
-                              ? `R${Number(recipe.cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              ? `Rs. ${Number(recipe.cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '--'}
                           </TableCell>
-                          <TableCell className="hidden sm:table-cell text-muted-foreground">
-                            {(recipe as unknown as { ingredients?: unknown[] }).ingredients?.length ?? 0}
+                          <TableCell className="hidden sm:table-cell text-muted-foreground text-sm max-w-[300px] truncate" title={(recipe as any).ingredientSummary}>
+                            {(recipe as any).ingredientSummary || ((recipe as any).ingredientCount ? `${(recipe as any).ingredientCount} ingredients` : '--')}
                           </TableCell>
                           <TableCell>
-                            <span
-                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${recipe.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}
-                            >
-                              {recipe.status ?? 'active'}
-                            </span>
+                            {hasPermission('feed_production:update') ? (
+                              <button
+                                type="button"
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize cursor-pointer transition-colors ${recipe.status === 'active' ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                                onClick={() => handleToggleRecipeStatus(recipe.id, recipe.status ?? 'active')}
+                                title={`Click to ${recipe.status === 'active' ? 'deactivate' : 'activate'}`}
+                              >
+                                {recipe.status ?? 'active'}
+                              </button>
+                            ) : (
+                              <span
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${recipe.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}
+                              >
+                                {recipe.status ?? 'active'}
+                              </span>
+                            )}
                           </TableCell>
-                          {(hasPermission('feed_production:update') || hasPermission('feed_production:delete')) && (
-                            <TableCell>
-                              <div className="flex gap-1">
-                                {hasPermission('feed_production:update') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleOpenEditRecipe(recipe)}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {hasPermission('feed_production:delete') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-red-600"
-                                    onClick={() => setShowDeleteRecipeConfirm(recipe.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          )}
+                          <TableCell>
+                            <div className="flex gap-1 justify-end">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setViewingRecipe({
+                                  id: recipe.id,
+                                  recipeName: recipe.recipeName,
+                                  feedType: recipe.feedType,
+                                  cost: recipe.cost ? String(recipe.cost) : '0',
+                                  status: recipe.status ?? 'active',
+                                  ingredientSummary: (recipe as any).ingredientSummary,
+                                })}
+                                title="View details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              {hasPermission('feed_production:update') && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleOpenEditRecipe(recipe)}
+                                  title="Edit recipe"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {hasPermission('feed_production:delete') && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-red-600"
+                                  onClick={() => setShowDeleteRecipeConfirm(recipe.id)}
+                                  title="Permanently delete recipe"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -864,7 +1365,7 @@ export default function FeedPage() {
                             <TableCell className="text-muted-foreground">{item.unit}</TableCell>
                             <TableCell className="hidden sm:table-cell">
                               {item.costPerUnit != null
-                                ? `R${Number(item.costPerUnit).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                ? `Rs. ${Number(item.costPerUnit).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                                 : '--'}
                             </TableCell>
                             <TableCell className="hidden sm:table-cell text-muted-foreground">
@@ -940,6 +1441,484 @@ export default function FeedPage() {
                         size="sm"
                         disabled={inventoryPage >= inventoryTotalPages}
                         onClick={() => setInventoryPage((p) => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ========================= */}
+        {/* PRODUCTION TAB            */}
+        {/* ========================= */}
+        <TabsContent value="production">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                <Select
+                  value={productionStatusFilter || 'all'}
+                  onValueChange={(v) => {
+                    setProductionStatusFilter(v === 'all' ? '' : v);
+                    setProductionsPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="All Statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="planned">Planned</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="sm:ml-auto">
+                  {hasPermission('feed_production:create') && (
+                    <Button onClick={handleOpenCreateProduction}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New Production
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {productionsLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : productionsList.length === 0 ? (
+                <div className="text-center py-12">
+                  <Factory className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-1">No production batches</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {productionStatusFilter
+                      ? 'Try adjusting your filter.'
+                      : 'Create your first production batch to start milling.'}
+                  </p>
+                  {hasPermission('feed_production:create') && !productionStatusFilter && (
+                    <Button onClick={handleOpenCreateProduction}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New Production
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Code</TableHead>
+                        <TableHead>Recipe</TableHead>
+                        <TableHead className="hidden sm:table-cell">Feed Type</TableHead>
+                        <TableHead>Planned</TableHead>
+                        <TableHead className="hidden sm:table-cell">Actual</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="hidden md:table-cell">Date</TableHead>
+                        <TableHead className="hidden md:table-cell">Cost</TableHead>
+                        {hasPermission('feed_production:update') && <TableHead className="w-[180px]" />}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {productionsList.map((prod) => (
+                        <TableRow key={prod.id}>
+                          <TableCell className="font-medium font-mono text-sm">{prod.productionCode}</TableCell>
+                          <TableCell>{(prod as { recipeName?: string }).recipeName ?? '--'}</TableCell>
+                          <TableCell className="hidden sm:table-cell">
+                            {(prod as { feedType?: string }).feedType ? (
+                              <Badge variant="secondary" className={FEED_TYPE_COLORS[(prod as { feedType?: string }).feedType!] ?? ''}>
+                                {(prod as { feedType?: string }).feedType}
+                              </Badge>
+                            ) : '--'}
+                          </TableCell>
+                          <TableCell>{Number(prod.plannedQuantity).toLocaleString()} {prod.unit}</TableCell>
+                          <TableCell className="hidden sm:table-cell">
+                            {prod.actualQuantity != null ? `${Number(prod.actualQuantity).toLocaleString()} ${prod.unit}` : '--'}
+                          </TableCell>
+                          <TableCell>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${PRODUCTION_STATUS_COLORS[prod.status] ?? ''}`}>
+                              {prod.status.replace('_', ' ')}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-muted-foreground">
+                            {new Date(prod.productionDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            {prod.productionCost != null
+                              ? `Rs. ${Number(prod.productionCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              : '--'}
+                          </TableCell>
+                          {hasPermission('feed_production:update') && (
+                            <TableCell>
+                              <div className="flex gap-1">
+                                {prod.status === 'planned' && (
+                                  <Button variant="ghost" size="icon" title="Start" onClick={() => handleStartProduction(prod.id)}>
+                                    <Play className="h-4 w-4 text-blue-600" />
+                                  </Button>
+                                )}
+                                {prod.status === 'in_progress' && (
+                                  <Button variant="ghost" size="icon" title="Complete" onClick={() => handleOpenComplete(prod.id)}>
+                                    <CheckCircle className="h-4 w-4 text-green-600" />
+                                  </Button>
+                                )}
+                                {(prod.status === 'planned' || prod.status === 'in_progress') && (
+                                  <Button variant="ghost" size="icon" title="Cancel" onClick={() => handleCancelProduction(prod.id)}>
+                                    <XCircle className="h-4 w-4 text-orange-600" />
+                                  </Button>
+                                )}
+                                {(prod.status === 'planned' || prod.status === 'cancelled') && hasPermission('feed_production:delete') && (
+                                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => setShowDeleteProductionConfirm(prod.id)}>
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+
+                  <div className="flex items-center justify-between pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {(productionsPage - 1) * 20 + 1} to{' '}
+                      {Math.min(productionsPage * 20, productionsTotal)} of {productionsTotal}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" disabled={productionsPage <= 1} onClick={() => setProductionsPage((p) => p - 1)}>
+                        Previous
+                      </Button>
+                      <Button variant="outline" size="sm" disabled={productionsPage >= productionsTotalPages} onClick={() => setProductionsPage((p) => p + 1)}>
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ========================= */}
+        {/* DISTRIBUTION TAB          */}
+        {/* ========================= */}
+        <TabsContent value="distribution">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                <Select
+                  value={distributionFeedTypeFilter || 'all'}
+                  onValueChange={(v) => {
+                    setDistributionFeedTypeFilter(v === 'all' ? '' : v);
+                    setDistributionsPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="All Feed Types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Feed Types</SelectItem>
+                    <SelectItem value="starter">Starter</SelectItem>
+                    <SelectItem value="grower">Grower</SelectItem>
+                    <SelectItem value="finisher">Finisher</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="sm:ml-auto">
+                  {hasPermission('feed_production:create') && (
+                    <Button onClick={handleOpenCreateDistribution}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New Distribution
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {distributionsLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : distributionsList.length === 0 ? (
+                <div className="text-center py-12">
+                  <Truck className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-1">No distributions</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {distributionFeedTypeFilter
+                      ? 'Try adjusting your filter.'
+                      : 'Distribute feed to farm batches after completing production.'}
+                  </p>
+                  {hasPermission('feed_production:create') && !distributionFeedTypeFilter && (
+                    <Button onClick={handleOpenCreateDistribution}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New Distribution
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Production</TableHead>
+                        <TableHead>Farm Batch</TableHead>
+                        <TableHead>Feed Type</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead className="hidden sm:table-cell">Date</TableHead>
+                        <TableHead className="hidden md:table-cell">Notes</TableHead>
+                        {hasPermission('feed_production:delete') && <TableHead className="w-[80px]" />}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {distributionsList.map((dist) => (
+                        <TableRow key={dist.id}>
+                          <TableCell className="font-mono text-sm">
+                            {(dist as { productionCode?: string }).productionCode ?? 'Manual'}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {(dist as { farmBatchCode?: string }).farmBatchCode ?? '--'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className={FEED_TYPE_COLORS[dist.feedType] ?? ''}>
+                              {dist.feedType}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{Number(dist.quantity).toLocaleString()} {dist.unit}</TableCell>
+                          <TableCell className="hidden sm:table-cell text-muted-foreground">
+                            {new Date(dist.distributionDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-muted-foreground max-w-[200px] truncate">
+                            {dist.notes ?? '--'}
+                          </TableCell>
+                          {hasPermission('feed_production:delete') && (
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-red-600"
+                                onClick={() => setShowDeleteDistributionConfirm(dist.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+
+                  <div className="flex items-center justify-between pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {(distributionsPage - 1) * 20 + 1} to{' '}
+                      {Math.min(distributionsPage * 20, distributionsTotal)} of {distributionsTotal}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" disabled={distributionsPage <= 1} onClick={() => setDistributionsPage((p) => p - 1)}>
+                        Previous
+                      </Button>
+                      <Button variant="outline" size="sm" disabled={distributionsPage >= distributionsTotalPages} onClick={() => setDistributionsPage((p) => p + 1)}>
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ========================= */}
+        {/* PURCHASE ORDERS TAB       */}
+        {/* ========================= */}
+        <TabsContent value="purchase-orders">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                <Input
+                  placeholder="Search by PO code..."
+                  value={poSearch}
+                  onChange={(e) => {
+                    setPoSearch(e.target.value);
+                    setPoPage(1);
+                  }}
+                  className="sm:w-64"
+                />
+                <Select
+                  value={poStatusFilter}
+                  onValueChange={(v) => {
+                    setPoStatusFilter(v === 'all' ? '' : v);
+                    setPoPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-44">
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="submitted">Submitted</SelectItem>
+                    <SelectItem value="partially_received">Partially Received</SelectItem>
+                    <SelectItem value="received">Received</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex-1" />
+                {hasPermission('feed_inventory:create') && (
+                  <Button onClick={() => setShowPoDialog(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    New Purchase Order
+                  </Button>
+                )}
+              </div>
+
+              {poLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : poList.length === 0 ? (
+                <div className="text-center py-12">
+                  <ShoppingCart className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-medium mb-1">No Purchase Orders</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Create a purchase order to start tracking procurement.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>PO Code</TableHead>
+                        <TableHead>Supplier</TableHead>
+                        <TableHead>Order Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Total Cost</TableHead>
+                        <TableHead className="w-[120px]" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {poList.map((po) => (
+                        <TableRow key={po.id}>
+                          <TableCell className="font-medium">{po.orderCode}</TableCell>
+                          <TableCell>{po.supplierName ?? '--'}</TableCell>
+                          <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="secondary"
+                              className={
+                                po.status === 'received' ? 'bg-green-100 text-green-800' :
+                                  po.status === 'submitted' ? 'bg-blue-100 text-blue-800' :
+                                    po.status === 'partially_received' ? 'bg-yellow-100 text-yellow-800' :
+                                      po.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                        'bg-gray-100 text-gray-800'
+                              }
+                            >
+                              {po.status.replace(/_/g, ' ')}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            Rs. {Number(po.totalCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              {po.status === 'draft' && hasPermission('feed_inventory:update') && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      await updatePOStatusMutation.mutateAsync({ id: po.id, status: 'submitted' });
+                                      toast.success('Purchase order submitted');
+                                    } catch (error) {
+                                      parseApiError(error, 'Failed to submit PO');
+                                    }
+                                  }}
+                                >
+                                  <Play className="h-4 w-4 mr-1" />
+                                  Submit
+                                </Button>
+                              )}
+                              {['submitted', 'partially_received'].includes(po.status) && hasPermission('feed_inventory:update') && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setShowPoDetail(po.id);
+                                    setShowReceiveDialog(true);
+                                  }}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  Receive
+                                </Button>
+                              )}
+                              {['draft', 'submitted'].includes(po.status) && hasPermission('feed_inventory:update') && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-600"
+                                  onClick={async () => {
+                                    try {
+                                      await updatePOStatusMutation.mutateAsync({ id: po.id, status: 'cancelled' });
+                                      toast.success('Purchase order cancelled');
+                                    } catch (error) {
+                                      parseApiError(error, 'Failed to cancel PO');
+                                    }
+                                  }}
+                                >
+                                  <XCircle className="h-4 w-4 mr-1" />
+                                  Cancel
+                                </Button>
+                              )}
+                              {po.status === 'draft' && hasPermission('feed_inventory:delete') && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-red-600"
+                                  onClick={async () => {
+                                    try {
+                                      await deletePO.mutateAsync(po.id);
+                                      toast.success('Purchase order deleted');
+                                    } catch (error) {
+                                      parseApiError(error, 'Failed to delete PO');
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+
+                  <div className="flex items-center justify-between pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Page {poPage} of {poTotal}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={poPage <= 1}
+                        onClick={() => setPoPage((p) => p - 1)}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={poPage >= poTotal}
+                        onClick={() => setPoPage((p) => p + 1)}
                       >
                         Next
                       </Button>
@@ -1134,12 +2113,29 @@ export default function FeedPage() {
                   onChange={(e) => setRecipeForm((prev) => ({ ...prev, cost: e.target.value }))}
                 />
               </div>
+              {editingRecipe && (
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <Select
+                    value={recipeForm.status}
+                    onValueChange={(v) => setRecipeForm((prev) => ({ ...prev, status: v }))}
+                  >
+                    <SelectTrigger id="status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             {/* Ingredients Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Ingredients</Label>
+                <Label>Ingredients {editingRecipe && recipeDetailLoading ? <span className="text-xs text-muted-foreground ml-1">(loading...)</span> : null}</Label>
                 <Button type="button" variant="outline" size="sm" onClick={handleAddIngredient}>
                   <Plus className="h-3 w-3 mr-1" />
                   Add Ingredient
@@ -1149,13 +2145,23 @@ export default function FeedPage() {
                 <div key={index} className="flex gap-2 items-end">
                   <div className="flex-1 space-y-1">
                     {index === 0 && (
-                      <Label className="text-xs text-muted-foreground">Name</Label>
+                      <Label className="text-xs text-muted-foreground">Inventory Item</Label>
                     )}
-                    <Input
-                      placeholder="Ingredient name"
-                      value={ingredient.ingredientName}
-                      onChange={(e) => handleIngredientChange(index, 'ingredientName', e.target.value)}
-                    />
+                    <Select
+                      value={ingredient.inventoryItemId}
+                      onValueChange={(v) => handleIngredientChange(index, 'inventoryItemId', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select ingredient" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {inventoryList.map((inv) => (
+                          <SelectItem key={inv.id} value={String(inv.id)}>
+                            {inv.ingredientName} ({Number(inv.quantity).toFixed(0)} {inv.unit})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="w-24 space-y-1">
                     {index === 0 && (
@@ -1238,9 +2244,9 @@ export default function FeedPage() {
       >
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
-            <DialogTitle>Delete Recipe</DialogTitle>
+            <DialogTitle>Permanently Delete Recipe</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this recipe? This action cannot be undone.
+              This will permanently delete the recipe and all its ingredients. This action cannot be undone. If you only want to hide it, use the status toggle to set it as inactive instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1252,7 +2258,7 @@ export default function FeedPage() {
               onClick={() => showDeleteRecipeConfirm !== null && handleDeleteRecipe(showDeleteRecipeConfirm)}
               disabled={deleteRecipeMutation.isPending}
             >
-              {deleteRecipeMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteRecipeMutation.isPending ? 'Deleting...' : 'Permanently Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1287,6 +2293,24 @@ export default function FeedPage() {
                 value={inventoryForm.ingredientName}
                 onChange={(e) => setInventoryForm((prev) => ({ ...prev, ingredientName: e.target.value }))}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="supplierId">Supplier *</Label>
+              <Select
+                value={inventoryForm.supplierId}
+                onValueChange={(v) => setInventoryForm((prev) => ({ ...prev, supplierId: v }))}
+              >
+                <SelectTrigger id="supplierId">
+                  <SelectValue placeholder="Select supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {suppliersList.filter((s) => s.status === 'active').map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.supplierName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
@@ -1412,6 +2436,658 @@ export default function FeedPage() {
             >
               {restockInventoryMutation.isPending ? 'Restocking...' : 'Restock'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= */}
+      {/* PRODUCTION CREATE DLG     */}
+      {/* ========================= */}
+      <Dialog
+        open={showProductionDialog}
+        onOpenChange={(open) => {
+          setShowProductionDialog(open);
+          if (!open) setProductionForm(EMPTY_PRODUCTION_FORM);
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>New Production Batch</DialogTitle>
+            <DialogDescription>Create a new feed production/milling run from a recipe.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="prodRecipe">Recipe *</Label>
+              <Select
+                value={productionForm.recipeId}
+                onValueChange={(v) => setProductionForm((prev) => ({ ...prev, recipeId: v }))}
+              >
+                <SelectTrigger id="prodRecipe">
+                  <SelectValue placeholder="Select recipe" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeRecipes.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {r.recipeName} ({r.feedType})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="prodQty">Planned Quantity *</Label>
+                <Input
+                  id="prodQty"
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 1000"
+                  value={productionForm.plannedQuantity}
+                  onChange={(e) => setProductionForm((prev) => ({ ...prev, plannedQuantity: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="prodUnit">Unit</Label>
+                <Select
+                  value={productionForm.unit}
+                  onValueChange={(v) => setProductionForm((prev) => ({ ...prev, unit: v }))}
+                >
+                  <SelectTrigger id="prodUnit">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="bags">bags</SelectItem>
+                    <SelectItem value="tons">tons</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prodDate">Production Date *</Label>
+              <Input
+                id="prodDate"
+                type="date"
+                value={productionForm.productionDate}
+                onChange={(e) => setProductionForm((prev) => ({ ...prev, productionDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prodNotes">Notes</Label>
+              <Input
+                id="prodNotes"
+                placeholder="Optional notes..."
+                value={productionForm.notes}
+                onChange={(e) => setProductionForm((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowProductionDialog(false)}>Cancel</Button>
+            <Button onClick={handleSaveProduction} disabled={createProductionMutation.isPending}>
+              {createProductionMutation.isPending ? 'Creating...' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* COMPLETE PRODUCTION DLG */}
+      <Dialog
+        open={showCompleteDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowCompleteDialog(null);
+            setCompleteActualQty('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Complete Production</DialogTitle>
+            <DialogDescription>
+              Enter the actual quantity produced. Raw materials will be deducted from inventory.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="completeQty">Actual Quantity Produced *</Label>
+              <Input
+                id="completeQty"
+                type="number"
+                step="0.01"
+                placeholder="e.g. 950"
+                value={completeActualQty}
+                onChange={(e) => setCompleteActualQty(e.target.value)}
+              />
+            </div>
+            {completionDetail?.materials && completionDetail.materials.length > 0 && (
+              <div className="space-y-2">
+                <Label>Materials to consume</Label>
+                <div className="border rounded-md p-3 space-y-2 text-sm">
+                  {completionDetail.materials.map((m) => (
+                    <div key={m.inventoryItemId} className="flex justify-between">
+                      <span>{m.ingredientName ?? `Item #${m.inventoryItemId}`}</span>
+                      <span className="text-muted-foreground">
+                        {Number(m.plannedQuantity).toLocaleString()} {m.unit}
+                        {m.availableQuantity && (
+                          <span className={Number(m.availableQuantity) < Number(m.plannedQuantity) ? ' text-red-600' : ' text-green-600'}>
+                            {' '}(avail: {Number(m.availableQuantity).toLocaleString()})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowCompleteDialog(null); setCompleteActualQty(''); }}>Cancel</Button>
+            <Button
+              onClick={handleCompleteProduction}
+              disabled={completeProductionMutation.isPending || !completeActualQty || Number(completeActualQty) <= 0}
+            >
+              {completeProductionMutation.isPending ? 'Completing...' : 'Complete Production'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE PRODUCTION CONFIRM */}
+      <Dialog
+        open={showDeleteProductionConfirm !== null}
+        onOpenChange={(open) => { if (!open) setShowDeleteProductionConfirm(null); }}
+      >
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Delete Production Batch</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this production batch? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteProductionConfirm(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => showDeleteProductionConfirm !== null && handleDeleteProduction(showDeleteProductionConfirm)}
+              disabled={deleteProductionMutation.isPending}
+            >
+              {deleteProductionMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= */}
+      {/* DISTRIBUTION CREATE DLG   */}
+      {/* ========================= */}
+      <Dialog
+        open={showDistributionDialog}
+        onOpenChange={(open) => {
+          setShowDistributionDialog(open);
+          if (!open) setDistributionForm(EMPTY_DISTRIBUTION_FORM);
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>New Distribution</DialogTitle>
+            <DialogDescription>Distribute feed to a farm batch.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="distProd">Production Batch (optional)</Label>
+              <Select
+                value={distributionForm.productionBatchId || 'none'}
+                onValueChange={(v) => setDistributionForm((prev) => ({ ...prev, productionBatchId: v === 'none' ? '' : v }))}
+              >
+                <SelectTrigger id="distProd">
+                  <SelectValue placeholder="Select production batch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Manual (no production link)</SelectItem>
+                  {completedProductions.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.productionCode} — {Number(p.actualQuantity ?? 0).toLocaleString()} {p.unit}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="distBatch">Farm Batch *</Label>
+              <Select
+                value={distributionForm.farmBatchId}
+                onValueChange={(v) => setDistributionForm((prev) => ({ ...prev, farmBatchId: v }))}
+              >
+                <SelectTrigger id="distBatch">
+                  <SelectValue placeholder="Select farm batch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {farmBatches.map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)}>
+                      {b.batchCode}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="distFeedType">Feed Type *</Label>
+                <Select
+                  value={distributionForm.feedType}
+                  onValueChange={(v) => setDistributionForm((prev) => ({ ...prev, feedType: v }))}
+                >
+                  <SelectTrigger id="distFeedType">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="starter">Starter</SelectItem>
+                    <SelectItem value="grower">Grower</SelectItem>
+                    <SelectItem value="finisher">Finisher</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="distQty">Quantity *</Label>
+                <Input
+                  id="distQty"
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 500"
+                  value={distributionForm.quantity}
+                  onChange={(e) => setDistributionForm((prev) => ({ ...prev, quantity: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="distDate">Distribution Date *</Label>
+              <Input
+                id="distDate"
+                type="date"
+                value={distributionForm.distributionDate}
+                onChange={(e) => setDistributionForm((prev) => ({ ...prev, distributionDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="distNotes">Notes</Label>
+              <Input
+                id="distNotes"
+                placeholder="Optional notes..."
+                value={distributionForm.notes}
+                onChange={(e) => setDistributionForm((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDistributionDialog(false)}>Cancel</Button>
+            <Button onClick={handleSaveDistribution} disabled={createDistributionMutation.isPending}>
+              {createDistributionMutation.isPending ? 'Recording...' : 'Record Distribution'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE DISTRIBUTION CONFIRM */}
+      <Dialog
+        open={showDeleteDistributionConfirm !== null}
+        onOpenChange={(open) => { if (!open) setShowDeleteDistributionConfirm(null); }}
+      >
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Delete Distribution</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this distribution record?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDistributionConfirm(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => showDeleteDistributionConfirm !== null && handleDeleteDistribution(showDeleteDistributionConfirm)}
+              disabled={deleteDistributionMutation.isPending}
+            >
+              {deleteDistributionMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CREATE PO DIALOG */}
+      <Dialog
+        open={showPoDialog}
+        onOpenChange={(open) => {
+          setShowPoDialog(open);
+          if (!open) {
+            setPoForm({
+              supplierId: '',
+              orderDate: new Date().toISOString().split('T')[0],
+              expectedDeliveryDate: '',
+              notes: '',
+              items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
+            });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>New Purchase Order</DialogTitle>
+            <DialogDescription>Create a purchase order for a supplier.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Supplier *</Label>
+                <Select
+                  value={poForm.supplierId}
+                  onValueChange={(v) => setPoForm((prev) => ({ ...prev, supplierId: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliersList.filter((s) => s.status === 'active').map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.supplierName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Order Date *</Label>
+                <Input
+                  type="date"
+                  value={poForm.orderDate}
+                  onChange={(e) => setPoForm((prev) => ({ ...prev, orderDate: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Expected Delivery</Label>
+                <Input
+                  type="date"
+                  value={poForm.expectedDeliveryDate}
+                  onChange={(e) => setPoForm((prev) => ({ ...prev, expectedDeliveryDate: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Input
+                  placeholder="Optional notes"
+                  value={poForm.notes}
+                  onChange={(e) => setPoForm((prev) => ({ ...prev, notes: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Line Items</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setPoForm((prev) => ({
+                      ...prev,
+                      items: [...prev.items, { inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
+                    }))
+                  }
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add Item
+                </Button>
+              </div>
+              {poForm.items.map((item, index) => (
+                <div key={index} className="flex gap-2 items-end">
+                  <div className="flex-1 space-y-1">
+                    {index === 0 && <Label className="text-xs text-muted-foreground">Inventory Item</Label>}
+                    <Select
+                      value={item.inventoryItemId}
+                      onValueChange={(v) => {
+                        const newItems = [...poForm.items];
+                        newItems[index] = { ...newItems[index], inventoryItemId: v };
+                        setPoForm((prev) => ({ ...prev, items: newItems }));
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select item" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {inventoryList.map((inv) => (
+                          <SelectItem key={inv.id} value={String(inv.id)}>
+                            {inv.ingredientName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="w-20 space-y-1">
+                    {index === 0 && <Label className="text-xs text-muted-foreground">Qty</Label>}
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="0"
+                      value={item.orderedQuantity}
+                      onChange={(e) => {
+                        const newItems = [...poForm.items];
+                        newItems[index] = { ...newItems[index], orderedQuantity: e.target.value };
+                        setPoForm((prev) => ({ ...prev, items: newItems }));
+                      }}
+                    />
+                  </div>
+                  <div className="w-24 space-y-1">
+                    {index === 0 && <Label className="text-xs text-muted-foreground">Unit Price</Label>}
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={item.unitPrice}
+                      onChange={(e) => {
+                        const newItems = [...poForm.items];
+                        newItems[index] = { ...newItems[index], unitPrice: e.target.value };
+                        setPoForm((prev) => ({ ...prev, items: newItems }));
+                      }}
+                    />
+                  </div>
+                  <div className="w-16 space-y-1">
+                    {index === 0 && <Label className="text-xs text-muted-foreground">Unit</Label>}
+                    <Select
+                      value={item.unit}
+                      onValueChange={(v) => {
+                        const newItems = [...poForm.items];
+                        newItems[index] = { ...newItems[index], unit: v };
+                        setPoForm((prev) => ({ ...prev, items: newItems }));
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="kg">kg</SelectItem>
+                        <SelectItem value="g">g</SelectItem>
+                        <SelectItem value="l">l</SelectItem>
+                        <SelectItem value="bags">bags</SelectItem>
+                        <SelectItem value="units">units</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {poForm.items.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-red-600 shrink-0"
+                      onClick={() => {
+                        setPoForm((prev) => ({
+                          ...prev,
+                          items: prev.items.filter((_, i) => i !== index),
+                        }));
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {poForm.items.some((it) => it.orderedQuantity && it.unitPrice) && (
+              <div className="text-sm text-right text-muted-foreground">
+                Estimated Total: Rs. {poForm.items
+                  .reduce((sum, it) => sum + (Number(it.orderedQuantity) || 0) * (Number(it.unitPrice) || 0), 0)
+                  .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPoDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={createPO.isPending}
+              onClick={async () => {
+                if (!poForm.supplierId) {
+                  toast.error('Supplier is required');
+                  return;
+                }
+                if (!poForm.orderDate) {
+                  toast.error('Order date is required');
+                  return;
+                }
+                const validItems = poForm.items.filter((it) => it.inventoryItemId && it.orderedQuantity && it.unitPrice);
+                if (validItems.length === 0) {
+                  toast.error('At least one line item is required');
+                  return;
+                }
+                try {
+                  await createPO.mutateAsync({
+                    supplierId: Number(poForm.supplierId),
+                    orderDate: poForm.orderDate,
+                    expectedDeliveryDate: poForm.expectedDeliveryDate || undefined,
+                    notes: poForm.notes || undefined,
+                    items: validItems.map((it) => ({
+                      inventoryItemId: Number(it.inventoryItemId),
+                      orderedQuantity: Number(it.orderedQuantity),
+                      unitPrice: Number(it.unitPrice),
+                      unit: it.unit,
+                    })),
+                  });
+                  toast.success('Purchase order created');
+                  setShowPoDialog(false);
+                  setPoForm({
+                    supplierId: '',
+                    orderDate: new Date().toISOString().split('T')[0],
+                    expectedDeliveryDate: '',
+                    notes: '',
+                    items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
+                  });
+                } catch (error) {
+                  parseApiError(error, 'Failed to create purchase order');
+                }
+              }}
+            >
+              {createPO.isPending ? 'Creating...' : 'Create PO'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* RECEIVE PO DIALOG */}
+      <Dialog
+        open={showReceiveDialog && showPoDetail !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowReceiveDialog(false);
+            setShowPoDetail(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Receive Items</DialogTitle>
+            <DialogDescription>Enter received quantities for purchase order items.</DialogDescription>
+          </DialogHeader>
+          <ReceivePOContent
+            poId={showPoDetail!}
+            onClose={() => {
+              setShowReceiveDialog(false);
+              setShowPoDetail(null);
+            }}
+            receivePOMutation={receivePOMutation}
+          />
+        </DialogContent>
+      </Dialog>
+      {/* VIEW RECIPE DETAILS DIALOG */}
+      <Dialog
+        open={viewingRecipe !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewingRecipe(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Recipe Details</DialogTitle>
+            <DialogDescription>
+              Viewing details for {viewingRecipe?.recipeName}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-muted-foreground">Name:</span> <span className="ml-2">{viewingRecipe?.recipeName}</span>
+              </div>
+              <div>
+                <span className="font-medium text-muted-foreground">Type:</span> <Badge variant="secondary" className={`ml-2 ${FEED_TYPE_COLORS[viewingRecipe?.feedType || '']}`}>{viewingRecipe?.feedType}</Badge>
+              </div>
+              <div>
+                <span className="font-medium text-muted-foreground">Status:</span> <span className={`ml-2 capitalize ${viewingRecipe?.status === 'active' ? 'text-green-600' : 'text-gray-500'}`}>{viewingRecipe?.status}</span>
+              </div>
+              <div>
+                <span className="font-medium text-muted-foreground">Cost:</span> <span className="ml-2">Rs. {Number(viewingRecipe?.cost).toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium">Ingredients</h4>
+              {recipeDetailLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ingredient</TableHead>
+                      <TableHead>Proportion</TableHead>
+                      <TableHead>Unit</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {((recipeDetailData as any)?.data?.ingredients || []).map((ing: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell>{ing.ingredientName || 'Unknown Ingredient'}</TableCell>
+                        <TableCell>{ing.proportion}</TableCell>
+                        <TableCell>{ing.unit}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(!((recipeDetailData as any)?.data?.ingredients) || ((recipeDetailData as any)?.data?.ingredients.length === 0)) && (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center text-muted-foreground">No ingredients found.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingRecipe(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
