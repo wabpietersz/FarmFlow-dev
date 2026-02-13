@@ -138,7 +138,7 @@ export function useSale(id: string | undefined) {
 export function useCreateSale() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { batchId: number; buyerId: number; saleDate: string; totalBirds: number; pricePerBird: number; notes?: string }) =>
+    mutationFn: (data: { batchId: number; buyerId: number; saleDate: string; totalBirds: number; totalWeight: number; pricePerKg: number; notes?: string }) =>
       apiPost<Sale>('/sales', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });

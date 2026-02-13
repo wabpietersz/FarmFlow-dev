@@ -16,7 +16,8 @@ export const saleFormSchema = z.object({
   buyerId: z.coerce.number({ required_error: 'Buyer is required' }).int().positive('Buyer is required'),
   saleDate: z.string().min(1, 'Sale date is required'),
   totalBirds: z.coerce.number().int().positive('Number of birds must be positive'),
-  pricePerBird: z.coerce.number().positive('Price per bird must be positive'),
+  totalWeight: z.coerce.number().positive('Total weight is required'),
+  pricePerKg: z.coerce.number().positive('Price per kg must be positive'),
   notes: z.string().max(1000).optional().or(z.literal('')),
 });
 

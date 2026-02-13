@@ -11,7 +11,6 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from '@/components/ui/sheet';
 import {
   DropdownMenu,
@@ -21,7 +20,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Menu, ChevronDown, LogOut, User } from 'lucide-react';
+import { ChevronDown, LogOut, User } from 'lucide-react';
+import OfflineBanner from '@/components/layout/OfflineBanner';
+import InstallPrompt from '@/components/layout/InstallPrompt';
+import MobileBottomNav from '@/components/layout/MobileBottomNav';
 
 export default function AppLayout() {
   const { currentUser, logout, hasPermission } = useAuthStore();
@@ -47,46 +49,14 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-screen bg-muted">
+      <InstallPrompt />
+      <OfflineBanner />
       <header className="bg-card border-b border-border sticky top-0 z-50">
         <div className="px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-3">
-              <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-                <SheetTrigger asChild>
-                  <Button variant="ghost" size="icon" className="md:hidden">
-                    <Menu className="h-5 w-5" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="left" className="w-64 p-0">
-                  <SheetHeader className="p-4 pb-0">
-                    <SheetTitle className="text-lg font-bold">FarmFlow</SheetTitle>
-                  </SheetHeader>
-                  <Separator className="my-2" />
-                  <nav className="p-4 space-y-1">
-                    {filteredNavItems.map((item) => (
-                      <NavLink
-                        key={item.href}
-                        item={item}
-                        active={isActive(item)}
-                        onClick={() => setMobileOpen(false)}
-                      />
-                    ))}
-                  </nav>
-                  <div className="absolute bottom-4 left-4 right-4">
-                    <Separator className="mb-3" />
-                    <p className="text-xs text-muted-foreground truncate">
-                      {currentUser?.fullName}
-                    </p>
-                    <Badge variant="secondary" className="mt-1 text-xs capitalize">
-                      {roleName}
-                    </Badge>
-                  </div>
-                </SheetContent>
-              </Sheet>
-              <Link to="/dashboard" className="text-lg font-bold text-foreground">
-                FarmFlow
-              </Link>
-            </div>
+            <Link to="/dashboard" className="text-lg font-bold text-foreground">
+              FarmFlow
+            </Link>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -114,7 +84,37 @@ export default function AppLayout() {
         </div>
       </header>
 
+      {/* Mobile sidebar sheet (opened by "More" in bottom nav) */}
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <SheetHeader className="p-4 pb-0">
+            <SheetTitle className="text-lg font-bold">FarmFlow</SheetTitle>
+          </SheetHeader>
+          <Separator className="my-2" />
+          <nav className="p-4 space-y-1">
+            {filteredNavItems.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                active={isActive(item)}
+                onClick={() => setMobileOpen(false)}
+              />
+            ))}
+          </nav>
+          <div className="absolute bottom-4 left-4 right-4">
+            <Separator className="mb-3" />
+            <p className="text-xs text-muted-foreground truncate">
+              {currentUser?.fullName}
+            </p>
+            <Badge variant="secondary" className="mt-1 text-xs capitalize">
+              {roleName}
+            </Badge>
+          </div>
+        </SheetContent>
+      </Sheet>
+
       <div className="flex">
+        {/* Desktop sidebar */}
         <aside className="hidden md:flex md:flex-col w-56 bg-card border-r border-border min-h-[calc(100vh-3.5rem)]">
           <nav className="p-4 space-y-1 flex-1">
             {filteredNavItems.map((item) => (
@@ -131,10 +131,14 @@ export default function AppLayout() {
           </div>
         </aside>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl">
+        {/* Main content — add bottom padding on mobile for bottom nav */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl pb-20 md:pb-8">
           <Outlet />
         </main>
       </div>
+
+      {/* Mobile bottom navigation */}
+      <MobileBottomNav onMoreClick={() => setMobileOpen(true)} />
     </div>
   );
 }

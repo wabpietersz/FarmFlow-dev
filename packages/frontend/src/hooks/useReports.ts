@@ -178,6 +178,137 @@ export function useFinancialOverview(params: FinancialOverviewParams = {}) {
   });
 }
 
+// --- New parameter interfaces ---
+
+interface BatchComparisonParams {
+  batchIds: number[];
+}
+
+interface BatchProfitabilityParams {
+  startDate?: string;
+  endDate?: string;
+  siteId?: number;
+}
+
+interface HRAnalyticsParams {
+  startDate?: string;
+  endDate?: string;
+}
+
+interface FeedAnalyticsParams {
+  startDate?: string;
+  endDate?: string;
+}
+
+// --- New response interfaces ---
+
+export interface BatchComparisonCurvePoint {
+  age: number;
+  value: number;
+}
+
+export interface BatchComparisonEntry {
+  batchId: number;
+  batchCode: string;
+  siteName: string | null;
+  chicksPlaced: number;
+  currentBirdCount: number;
+  mortalityRate: number;
+  fcr: number;
+  totalFeedConsumed: number;
+  averageWeight: number;
+  curves: {
+    fcr: BatchComparisonCurvePoint[];
+    growth: BatchComparisonCurvePoint[];
+    mortality: BatchComparisonCurvePoint[];
+    feedEfficiency: BatchComparisonCurvePoint[];
+  };
+}
+
+export interface BatchComparisonData {
+  batches: BatchComparisonEntry[];
+}
+
+export interface BatchProfitabilityEntry {
+  batchId: number;
+  batchCode: string;
+  siteName: string | null;
+  chicksPlaced: number;
+  birdsSold: number;
+  revenue: number;
+  feedCost: number;
+  laborCost: number;
+  totalCost: number;
+  grossMargin: number;
+  profitMargin: number;
+  costPerBird: number;
+}
+
+export interface BatchProfitabilityData {
+  batches: BatchProfitabilityEntry[];
+  totals: {
+    totalRevenue: number;
+    totalFeedCost: number;
+    totalLaborCost: number;
+    totalGrossMargin: number;
+    averageProfitMargin: number;
+  };
+}
+
+export interface HRAnalyticsData {
+  attendanceByMonth: { month: string; presentCount: number; totalCount: number; rate: number }[];
+  attendanceByEmployee: { employeeId: number; name: string; presentDays: number; totalDays: number; rate: number }[];
+  leaveUtilization: { leaveType: string; totalAllocated: number; totalUsed: number; utilizationRate: number }[];
+  payrollByMonth: { month: string; grossTotal: number; netTotal: number; employeeCount: number }[];
+  overtimeByMonth: { month: string; totalHours: number; avgRate: number; totalCost: number }[];
+}
+
+export interface FeedAnalyticsData {
+  fcrByBatch: { batchCode: string; placementDate: string; fcr: number }[];
+  feedCostPerBird: { batchCode: string; costPerBird: number; totalFeedCost: number }[];
+  inventoryTurnover: { ingredientName: string; currentStock: number; totalDistributed: number; turnoverRate: number; daysUntilReorder: number | null }[];
+  productionEfficiency: { productionCode: string; plannedQty: number; actualQty: number; efficiency: number; productionDate: string }[];
+}
+
+// --- New report hooks ---
+
+export function useBatchComparison(params: BatchComparisonParams) {
+  const queryString = params.batchIds.length >= 2 ? `batchIds=${params.batchIds.join(',')}` : '';
+
+  return useQuery({
+    queryKey: ['reports', 'batch-comparison', params.batchIds],
+    queryFn: () => apiGet<BatchComparisonData>(`/reports/batch-comparison?${queryString}`),
+    enabled: params.batchIds.length >= 2,
+  });
+}
+
+export function useBatchProfitability(params: BatchProfitabilityParams = {}) {
+  const queryString = buildQueryString(params);
+
+  return useQuery({
+    queryKey: ['reports', 'batch-profitability', params],
+    queryFn: () => apiGet<BatchProfitabilityData>(`/reports/batch-profitability?${queryString}`),
+  });
+}
+
+export function useHRAnalytics(params: HRAnalyticsParams = {}) {
+  const queryString = buildQueryString(params);
+
+  return useQuery({
+    queryKey: ['reports', 'hr-analytics', params],
+    queryFn: () => apiGet<HRAnalyticsData>(`/reports/hr-analytics?${queryString}`),
+  });
+}
+
+export function useFeedAnalytics(params: FeedAnalyticsParams = {}) {
+  const queryString = buildQueryString(params);
+
+  return useQuery({
+    queryKey: ['reports', 'feed-analytics', params],
+    queryFn: () => apiGet<FeedAnalyticsData>(`/reports/feed-analytics?${queryString}`),
+  });
+}
+
 // --- CSV export function ---
 
 export async function exportReportCsv(

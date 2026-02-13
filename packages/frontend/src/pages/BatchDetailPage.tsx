@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
-import { useBatch, useUpdateBatch, useCreateDailyRecord, useCreateVaccination } from '@/hooks/useBatches';
+import { useBatch, useUpdateBatch, useCreateDailyRecord, useUpdateDailyRecord, useRecordMortality, useCreateVaccination } from '@/hooks/useBatches';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -34,7 +34,7 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil } from 'lucide-react';
+import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const dailyRecordSchema = z.object({
@@ -51,6 +51,24 @@ const dailyRecordSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+const editRecordSchema = z.object({
+  birdCount: z.coerce.number().int().positive(),
+  mortalityCount: z.coerce.number().int().min(0),
+  mortalityCause: z.string().max(100).optional(),
+  feedConsumption: z.coerce.number().min(0),
+  waterConsumption: z.coerce.number().min(0).optional(),
+  averageWeight: z.coerce.number().min(0).optional(),
+  temperature: z.coerce.number().optional(),
+  humidity: z.coerce.number().int().min(0).max(100).optional(),
+  notes: z.string().max(1000).optional(),
+});
+
+const mortalitySchema = z.object({
+  count: z.coerce.number().int().positive('Enter at least 1'),
+  cause: z.string().max(100).optional(),
+  notes: z.string().max(1000).optional(),
+});
+
 const vaccinationSchema = z.object({
   vaccineType: z.string().min(1, 'Vaccine type is required').max(100),
   vaccinationDate: z.string().min(1, 'Date is required'),
@@ -64,6 +82,8 @@ const editBatchSchema = z.object({
 });
 
 type DailyRecordFormValues = z.infer<typeof dailyRecordSchema>;
+type EditRecordFormValues = z.infer<typeof editRecordSchema>;
+type MortalityFormValues = z.infer<typeof mortalitySchema>;
 type VaccinationFormValues = z.infer<typeof vaccinationSchema>;
 type EditBatchFormValues = z.infer<typeof editBatchSchema>;
 
@@ -81,9 +101,14 @@ export default function BatchDetailPage() {
   const { data, isLoading } = useBatch(id);
   const updateMutation = useUpdateBatch(id!);
   const createRecordMutation = useCreateDailyRecord(id!);
+  const updateRecordMutation = useUpdateDailyRecord(id!);
+  const mortalityMutation = useRecordMortality(id!);
   const createVaxMutation = useCreateVaccination(id!);
 
   const [showAddRecord, setShowAddRecord] = useState(false);
+  const [showEditRecord, setShowEditRecord] = useState(false);
+  const [editingRecordId, setEditingRecordId] = useState<number | null>(null);
+  const [showMortality, setShowMortality] = useState(false);
   const [showAddVax, setShowAddVax] = useState(false);
   const [showStatusChange, setShowStatusChange] = useState(false);
   const [showEditBatch, setShowEditBatch] = useState(false);
@@ -94,12 +119,26 @@ export default function BatchDetailPage() {
   const vaxRecords = batchData?.vaccinations ?? [];
   const stats = batchData?.stats;
 
+  const mortalityForm = useForm<MortalityFormValues>({
+    resolver: zodResolver(mortalitySchema),
+    defaultValues: { count: 1, cause: '', notes: '' },
+  });
+
+  const editRecordForm = useForm<EditRecordFormValues>({
+    resolver: zodResolver(editRecordSchema),
+    defaultValues: {
+      birdCount: 0,
+      mortalityCount: 0,
+      feedConsumption: 0,
+    },
+  });
+
   const recordForm = useForm<DailyRecordFormValues>({
     resolver: zodResolver(dailyRecordSchema),
     defaultValues: {
       recordDate: new Date().toISOString().split('T')[0],
-      currentAge: stats?.currentAge ? stats.currentAge + 1 : 0,
-      birdCount: stats?.currentBirdCount ?? 0,
+      currentAge: 0,
+      birdCount: 0,
       mortalityCount: 0,
       feedConsumption: 0,
     },
@@ -140,6 +179,83 @@ export default function BatchDetailPage() {
       setShowAddRecord(false);
     } catch {
       toast.error('Failed to add daily record');
+    }
+  };
+
+  const handleRecordMortality = async (values: MortalityFormValues) => {
+    try {
+      await mortalityMutation.mutateAsync({
+        batchId: Number(id),
+        count: values.count,
+        cause: values.cause || undefined,
+        notes: values.notes || undefined,
+      });
+      toast.success(`${values.count} mortality recorded`);
+      mortalityForm.reset({ count: 1, cause: '', notes: '' });
+      setShowMortality(false);
+    } catch {
+      toast.error('Failed to record mortality');
+    }
+  };
+
+  const handleOpenDailyRecord = () => {
+    const age = stats?.currentAge ? stats.currentAge + 1 : batch ? Math.floor((new Date().getTime() - new Date(batch.placementDate).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+    recordForm.reset({
+      recordDate: new Date().toISOString().split('T')[0],
+      currentAge: age,
+      birdCount: stats?.currentBirdCount ?? batch?.chicksPlaced ?? 0,
+      mortalityCount: 0,
+      feedConsumption: 0,
+    });
+    setShowAddRecord(true);
+  };
+
+  // Auto-adjust bird count when mortality is entered in the daily record form
+  const watchedMortality = recordForm.watch('mortalityCount');
+  useEffect(() => {
+    const baseBirdCount = stats?.currentBirdCount ?? batch?.chicksPlaced ?? 0;
+    const mortality = watchedMortality || 0;
+    recordForm.setValue('birdCount', Math.max(0, baseBirdCount - mortality));
+  }, [watchedMortality, stats?.currentBirdCount, batch?.chicksPlaced, recordForm]);
+
+  const handleOpenEditRecord = (record: { id: number; birdCount: number; mortalityCount: number; mortalityCause?: string | null; feedConsumption: number; waterConsumption?: number | null; averageWeight?: number | null; temperature?: number | null; humidity?: number | null; notes?: string | null }) => {
+    setEditingRecordId(record.id);
+    editRecordForm.reset({
+      birdCount: record.birdCount,
+      mortalityCount: record.mortalityCount,
+      mortalityCause: record.mortalityCause ?? '',
+      feedConsumption: Number(record.feedConsumption),
+      waterConsumption: record.waterConsumption ? Number(record.waterConsumption) : undefined,
+      averageWeight: record.averageWeight ? Number(record.averageWeight) : undefined,
+      temperature: record.temperature ? Number(record.temperature) : undefined,
+      humidity: record.humidity ?? undefined,
+      notes: record.notes ?? '',
+    });
+    setShowEditRecord(true);
+  };
+
+  const handleUpdateRecord = async (values: EditRecordFormValues) => {
+    if (!editingRecordId) return;
+    try {
+      await updateRecordMutation.mutateAsync({
+        recordId: editingRecordId,
+        data: {
+          birdCount: values.birdCount,
+          mortalityCount: values.mortalityCount,
+          mortalityCause: values.mortalityCause || undefined,
+          feedConsumption: values.feedConsumption,
+          waterConsumption: values.waterConsumption || undefined,
+          averageWeight: values.averageWeight || undefined,
+          temperature: values.temperature || undefined,
+          humidity: values.humidity || undefined,
+          notes: values.notes || undefined,
+        },
+      });
+      toast.success('Daily record updated');
+      setShowEditRecord(false);
+      setEditingRecordId(null);
+    } catch {
+      toast.error('Failed to update daily record');
     }
   };
 
@@ -238,7 +354,13 @@ export default function BatchDetailPage() {
             <Button variant="outline" onClick={() => setShowStatusChange(true)}>Change Status</Button>
           )}
           {isActive && hasPermission('daily_records:create') && (
-            <Button variant="outline" onClick={() => setShowAddRecord(true)}>
+            <Button variant="destructive" onClick={() => setShowMortality(true)}>
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              Record Mortality
+            </Button>
+          )}
+          {isActive && hasPermission('daily_records:create') && (
+            <Button variant="outline" onClick={handleOpenDailyRecord}>
               <Plus className="h-4 w-4 mr-2" />
               Daily Record
             </Button>
@@ -363,6 +485,7 @@ export default function BatchDetailPage() {
                     <TableHead>Water (L)</TableHead>
                     <TableHead>Avg Weight (g)</TableHead>
                     <TableHead>Temp</TableHead>
+                    {(hasPermission('daily_records:update') || hasPermission('batches:update')) && <TableHead className="w-[50px]" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -378,6 +501,13 @@ export default function BatchDetailPage() {
                       <TableCell>{record.waterConsumption ?? '--'}</TableCell>
                       <TableCell>{record.averageWeight ?? '--'}</TableCell>
                       <TableCell>{record.temperature ? `${record.temperature}°C` : '--'}</TableCell>
+                      {(hasPermission('daily_records:update') || hasPermission('batches:update')) && (
+                        <TableCell>
+                          <Button variant="ghost" size="icon" onClick={() => handleOpenEditRecord(record)}>
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -418,55 +548,196 @@ export default function BatchDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Add Daily Record Dialog */}
+      {/* Record Mortality Dialog — simple, fast entry */}
+      <Dialog open={showMortality} onOpenChange={setShowMortality}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-600" />
+              Record Mortality
+            </DialogTitle>
+            <DialogDescription>
+              How many birds died today in {batch.batchCode}?
+              {stats && (
+                <span className="block mt-1 text-xs">
+                  Current flock: <strong>{stats.currentBirdCount.toLocaleString()}</strong> birds
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...mortalityForm}>
+            <form onSubmit={mortalityForm.handleSubmit(handleRecordMortality)} className="space-y-4">
+              <FormField control={mortalityForm.control} name="count" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Number of deaths</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} autoFocus className="text-2xl h-14 text-center font-bold" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={mortalityForm.control} name="cause" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Cause (optional)</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. Heat stress, Disease, Unknown" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={mortalityForm.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Any additional details..." rows={2} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowMortality(false)}>Cancel</Button>
+                <Button type="submit" variant="destructive" disabled={mortalityMutation.isPending}>
+                  {mortalityMutation.isPending ? 'Recording...' : 'Record Deaths'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Daily Record Dialog — redesigned with sections */}
       <Dialog open={showAddRecord} onOpenChange={setShowAddRecord}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
-            <DialogTitle>Add Daily Record</DialogTitle>
-            <DialogDescription>Record today's production data for {batch.batchCode}.</DialogDescription>
+            <DialogTitle>Daily Record</DialogTitle>
+            <DialogDescription>End-of-day production data for {batch.batchCode}.</DialogDescription>
           </DialogHeader>
           <Form {...recordForm}>
-            <form onSubmit={recordForm.handleSubmit(handleAddRecord)} className="space-y-4">
+            <form onSubmit={recordForm.handleSubmit(handleAddRecord)} className="space-y-5">
+              {/* Date & Auto-computed fields */}
               <div className="grid grid-cols-3 gap-4">
                 <FormField control={recordForm.control} name="recordDate" render={({ field }) => (
                   <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={recordForm.control} name="currentAge" render={({ field }) => (
-                  <FormItem><FormLabel>Age (days)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>Age (days)</FormLabel><FormControl><Input type="number" {...field} className="bg-muted" readOnly /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={recordForm.control} name="birdCount" render={({ field }) => (
-                  <FormItem><FormLabel>Bird Count</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>Bird Count</FormLabel><FormControl><Input type="number" {...field} className="bg-muted" readOnly /></FormControl><FormMessage /></FormItem>
                 )} />
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <FormField control={recordForm.control} name="mortalityCount" render={({ field }) => (
-                  <FormItem><FormLabel>Mortality</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={recordForm.control} name="feedConsumption" render={({ field }) => (
-                  <FormItem><FormLabel>Feed (kg)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={recordForm.control} name="waterConsumption" render={({ field }) => (
-                  <FormItem><FormLabel>Water (L)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
+
+              {/* Mortality section */}
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 space-y-3">
+                <p className="text-sm font-medium text-red-800">Mortality</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField control={recordForm.control} name="mortalityCount" render={({ field }) => (
+                    <FormItem><FormLabel>Deaths today</FormLabel><FormControl><Input type="number" min={0} {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={recordForm.control} name="mortalityCause" render={({ field }) => (
+                    <FormItem><FormLabel>Cause</FormLabel><FormControl><Input placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <FormField control={recordForm.control} name="averageWeight" render={({ field }) => (
-                  <FormItem><FormLabel>Avg Weight (g)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={recordForm.control} name="temperature" render={({ field }) => (
-                  <FormItem><FormLabel>Temp (°C)</FormLabel><FormControl><Input type="number" step="0.1" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={recordForm.control} name="humidity" render={({ field }) => (
-                  <FormItem><FormLabel>Humidity (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
+
+              {/* Feed & Water */}
+              <div className="rounded-md border p-3 space-y-3">
+                <p className="text-sm font-medium">Feed &amp; Water</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField control={recordForm.control} name="feedConsumption" render={({ field }) => (
+                    <FormItem><FormLabel>Feed consumed (kg)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={recordForm.control} name="waterConsumption" render={({ field }) => (
+                    <FormItem><FormLabel>Water consumed (L)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
               </div>
+
+              {/* Environment & Weight */}
+              <div className="rounded-md border p-3 space-y-3">
+                <p className="text-sm font-medium">Environment &amp; Weight</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <FormField control={recordForm.control} name="averageWeight" render={({ field }) => (
+                    <FormItem><FormLabel>Avg weight (g)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={recordForm.control} name="temperature" render={({ field }) => (
+                    <FormItem><FormLabel>Temp (°C)</FormLabel><FormControl><Input type="number" step="0.1" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={recordForm.control} name="humidity" render={({ field }) => (
+                    <FormItem><FormLabel>Humidity (%)</FormLabel><FormControl><Input type="number" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
+              </div>
+
               <FormField control={recordForm.control} name="notes" render={({ field }) => (
-                <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea placeholder="Optional notes..." {...field} /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea placeholder="Optional notes..." rows={2} {...field} /></FormControl><FormMessage /></FormItem>
               )} />
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setShowAddRecord(false)}>Cancel</Button>
                 <Button type="submit" disabled={createRecordMutation.isPending}>
                   {createRecordMutation.isPending ? 'Saving...' : 'Save Record'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Daily Record Dialog */}
+      <Dialog open={showEditRecord} onOpenChange={(open) => { setShowEditRecord(open); if (!open) setEditingRecordId(null); }}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Edit Daily Record</DialogTitle>
+            <DialogDescription>Update this record for {batch.batchCode}.</DialogDescription>
+          </DialogHeader>
+          <Form {...editRecordForm}>
+            <form onSubmit={editRecordForm.handleSubmit(handleUpdateRecord)} className="space-y-5">
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 space-y-3">
+                <p className="text-sm font-medium text-red-800">Mortality &amp; Birds</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <FormField control={editRecordForm.control} name="birdCount" render={({ field }) => (
+                    <FormItem><FormLabel>Bird Count</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editRecordForm.control} name="mortalityCount" render={({ field }) => (
+                    <FormItem><FormLabel>Deaths</FormLabel><FormControl><Input type="number" min={0} {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editRecordForm.control} name="mortalityCause" render={({ field }) => (
+                    <FormItem><FormLabel>Cause</FormLabel><FormControl><Input placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
+              </div>
+              <div className="rounded-md border p-3 space-y-3">
+                <p className="text-sm font-medium">Feed &amp; Water</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField control={editRecordForm.control} name="feedConsumption" render={({ field }) => (
+                    <FormItem><FormLabel>Feed (kg)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editRecordForm.control} name="waterConsumption" render={({ field }) => (
+                    <FormItem><FormLabel>Water (L)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
+              </div>
+              <div className="rounded-md border p-3 space-y-3">
+                <p className="text-sm font-medium">Environment &amp; Weight</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <FormField control={editRecordForm.control} name="averageWeight" render={({ field }) => (
+                    <FormItem><FormLabel>Avg weight (g)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editRecordForm.control} name="temperature" render={({ field }) => (
+                    <FormItem><FormLabel>Temp (°C)</FormLabel><FormControl><Input type="number" step="0.1" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={editRecordForm.control} name="humidity" render={({ field }) => (
+                    <FormItem><FormLabel>Humidity (%)</FormLabel><FormControl><Input type="number" placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
+              </div>
+              <FormField control={editRecordForm.control} name="notes" render={({ field }) => (
+                <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea placeholder="Optional notes..." rows={2} {...field} /></FormControl><FormMessage /></FormItem>
+              )} />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => { setShowEditRecord(false); setEditingRecordId(null); }}>Cancel</Button>
+                <Button type="submit" disabled={updateRecordMutation.isPending}>
+                  {updateRecordMutation.isPending ? 'Saving...' : 'Save Changes'}
                 </Button>
               </DialogFooter>
             </form>

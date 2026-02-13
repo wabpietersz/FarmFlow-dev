@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
-import type { Batch, DailyRecord, Vaccination, CreateBatchRequest, CreateDailyRecordRequest } from '@farmflow/shared';
+import type { Batch, DailyRecord, Vaccination, CreateBatchRequest, CreateDailyRecordRequest, RecordMortalityRequest } from '@farmflow/shared';
 
 interface BatchListItem extends Batch {
   siteName: string | null;
@@ -87,6 +87,28 @@ export function useCreateDailyRecord(batchId: string) {
   return useMutation({
     mutationFn: (data: CreateDailyRecordRequest) =>
       apiPost<DailyRecord>(`/batches/${batchId}/daily-records`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['batches', batchId] });
+    },
+  });
+}
+
+export function useUpdateDailyRecord(batchId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ recordId, data }: { recordId: number; data: Partial<Omit<CreateDailyRecordRequest, 'batchId' | 'recordDate' | 'currentAge'>> }) =>
+      apiPut<DailyRecord>(`/batches/${batchId}/daily-records/${recordId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['batches', batchId] });
+    },
+  });
+}
+
+export function useRecordMortality(batchId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RecordMortalityRequest) =>
+      apiPost<DailyRecord>(`/batches/${batchId}/mortality`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['batches', batchId] });
     },

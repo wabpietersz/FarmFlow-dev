@@ -91,9 +91,28 @@ export default function EmployeeForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel>Designation</FormLabel>
-              <FormControl>
-                <Input placeholder="e.g. Supervisor, Farm Worker" {...field} />
-              </FormControl>
+              <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select designation" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectItem value="Farm Manager">Farm Manager</SelectItem>
+                  <SelectItem value="Assistant Manager">Assistant Manager</SelectItem>
+                  <SelectItem value="Supervisor">Supervisor</SelectItem>
+                  <SelectItem value="Farm Worker">Farm Worker</SelectItem>
+                  <SelectItem value="Veterinarian">Veterinarian</SelectItem>
+                  <SelectItem value="Feed Specialist">Feed Specialist</SelectItem>
+                  <SelectItem value="Hatchery Technician">Hatchery Technician</SelectItem>
+                  <SelectItem value="Maintenance Technician">Maintenance Technician</SelectItem>
+                  <SelectItem value="Driver">Driver</SelectItem>
+                  <SelectItem value="Security">Security</SelectItem>
+                  <SelectItem value="Admin Clerk">Admin Clerk</SelectItem>
+                  <SelectItem value="Accountant">Accountant</SelectItem>
+                  <SelectItem value="General Labourer">General Labourer</SelectItem>
+                </SelectContent>
+              </Select>
               <FormMessage />
             </FormItem>
           )}
