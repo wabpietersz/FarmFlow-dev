@@ -1,17 +1,33 @@
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import {
+  securityHeaders,
+  generalRateLimiter,
+  authRateLimiter,
+  parameterPollutionProtection,
+  inputSanitizer,
+  requestTimeout,
+  additionalSecurityHeaders,
+} from './middleware/security';
+import { metricsCollector } from './middleware/monitoring';
 import routes from './routes';
 
 const app = express();
 
-// Security middleware
-app.use(helmet());
+// Trust proxy for rate limiting behind load balancers
+if (config.isProduction) {
+  app.set('trust proxy', 1);
+}
+
+// Security headers (Helmet with CSP, HSTS, etc.)
+app.use(securityHeaders);
+app.use(additionalSecurityHeaders);
+
+// CORS configuration
 app.use(
   cors({
     origin: config.corsOrigin,
@@ -19,30 +35,35 @@ app.use(
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['X-Total-Count', 'X-Page-Count'],
+    maxAge: 86400, // Cache preflight for 24 hours
   }),
 );
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    error: 'Too many requests, please try again later',
-    code: 'RATE_LIMIT_EXCEEDED',
-  },
-});
-app.use(limiter);
+// General rate limiting
+app.use(generalRateLimiter);
 
-// Body parsing
+// Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+
+// HTTP parameter pollution protection
+app.use(parameterPollutionProtection);
+
+// Input sanitization (XSS, prototype pollution)
+app.use(inputSanitizer);
+
+// Request timeout (30 seconds)
+app.use(requestTimeout(30000));
+
+// Metrics collection
+app.use(metricsCollector);
 
 // Logging
 app.use(requestLogger);
+
+// Stricter rate limiting on auth routes
+app.use('/api/auth', authRateLimiter);
 
 // Routes
 app.use('/api', routes);
