@@ -36,7 +36,8 @@ export interface Sale {
   buyerId: number;
   saleDate: Date;
   totalBirds: number;
-  pricePerBird: number;
+  totalWeight: number;
+  pricePerKg: number;
   totalAmount: number;
   status: SaleStatus;
   notes?: string | null;
@@ -65,7 +66,8 @@ export interface CreateSaleRequest {
   buyerId: number;
   saleDate: string;
   totalBirds: number;
-  pricePerBird: number;
+  totalWeight: number;
+  pricePerKg: number;
   notes?: string;
 }
 

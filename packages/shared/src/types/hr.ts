@@ -87,3 +87,67 @@ export interface PayrollAllowance {
   amount: number;
   remarks?: string | null;
 }
+
+// --- Request interfaces ---
+
+export interface CreateShiftRequest {
+  shiftName: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface CreateAttendanceRequest {
+  employeeId: number;
+  attendanceDate: string;
+  status: AttendanceStatus;
+  shiftId?: number;
+  notes?: string;
+}
+
+export interface BulkAttendanceRequest {
+  attendanceDate: string;
+  shiftId?: number;
+  records: Array<{
+    employeeId: number;
+    status: AttendanceStatus;
+    notes?: string;
+  }>;
+}
+
+export interface SetLeaveBalanceRequest {
+  employeeId: number;
+  leaveType: LeaveType;
+  year: number;
+  totalDays: number;
+}
+
+export interface CreatePayrollRequest {
+  employeeId: number;
+  payPeriod: string;
+  baseSalary: number;
+  workingDays: number;
+  overtimeHours?: number;
+  overtimeRate?: number;
+  notes?: string;
+}
+
+export interface GeneratePayrollRequest {
+  payPeriod: string;
+  workingDays: number;
+}
+
+export interface UpdatePayrollStatusRequest {
+  status: PayrollStatus;
+}
+
+export interface CreateDeductionRequest {
+  deductionType: string;
+  amount: number;
+  remarks?: string;
+}
+
+export interface CreateAllowanceRequest {
+  allowanceType: string;
+  amount: number;
+  remarks?: string;
+}

@@ -102,3 +102,10 @@ export interface CreateDailyRecordRequest {
   ammoniaLevel?: number;
   notes?: string;
 }
+
+export interface RecordMortalityRequest {
+  batchId: number;
+  count: number;
+  cause?: string;
+  notes?: string;
+}
