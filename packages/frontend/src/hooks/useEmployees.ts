@@ -6,10 +6,16 @@ import type {
   UpdateEmployeeRequest,
   EmergencyContact,
   BankDetails,
+  EmployeeCompensation,
+  UpsertCompensationRequest,
+  EmployeeCompensationProfile,
+  EmployeeCompensationRevision,
+  CreateCompensationRevisionRequest,
+  UpdateCompensationRevisionRequest,
 } from '@farmflow/shared';
 
 interface EmployeeListResponse {
-  data: (Employee & { siteName?: string })[];
+  data: (Employee & { siteName?: string; hasCompensation?: boolean })[];
   total: number;
   page: number;
   limit: number;
@@ -31,6 +37,15 @@ interface EmployeeDetail {
   employee: Employee;
   emergencyContacts: EmergencyContact[];
   bankDetails: BankDetails | null;
+  compensation: EmployeeCompensation | null;
+}
+
+interface CompensationHistoryResponse {
+  data: EmployeeCompensationRevision[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export function useEmployees(params: EmployeeListParams) {
@@ -42,7 +57,7 @@ export function useEmployees(params: EmployeeListParams) {
 
   return useQuery({
     queryKey: ['employees', params],
-    queryFn: () => apiGet<(Employee & { siteName?: string })[]>(`/employees?${queryString}`) as unknown as Promise<EmployeeListResponse>,
+    queryFn: () => apiGet<(Employee & { siteName?: string; hasCompensation?: boolean })[]>(`/employees?${queryString}`) as unknown as Promise<EmployeeListResponse>,
   });
 }
 
@@ -138,6 +153,101 @@ export function useDeleteBankDetails(employeeId: string) {
       apiDelete<void>(`/employees/${employeeId}/bank-details`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+    },
+  });
+}
+
+export function useUpsertCompensation(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpsertCompensationRequest) =>
+      apiPut<EmployeeCompensation>(`/employees/${employeeId}/compensation`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+}
+
+export function useDeleteCompensation(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiDelete<void>(`/employees/${employeeId}/compensation`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+}
+
+export function useCompensationProfile(employeeId: string | undefined) {
+  return useQuery({
+    queryKey: ['employees', employeeId, 'compensation-profile'],
+    queryFn: () => apiGet<EmployeeCompensationProfile>(`/employees/${employeeId}/compensation`),
+    enabled: !!employeeId,
+  });
+}
+
+export function useCompensationHistory(employeeId: string | undefined, page = 1, limit = 20) {
+  return useQuery({
+    queryKey: ['employees', employeeId, 'compensation-history', page, limit],
+    queryFn: () => apiGet<EmployeeCompensationRevision[]>(`/employees/${employeeId}/compensation/history?page=${page}&limit=${limit}`) as unknown as Promise<CompensationHistoryResponse>,
+    enabled: !!employeeId,
+  });
+}
+
+export function useCreateCompensationRevision(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateCompensationRevisionRequest) =>
+      apiPost<EmployeeCompensationRevision>(`/employees/${employeeId}/compensation/revisions`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-profile'] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-history'] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+}
+
+export function useUpdateCompensationRevision(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ revisionId, data }: { revisionId: number; data: UpdateCompensationRevisionRequest }) =>
+      apiPut<EmployeeCompensationRevision>(`/employees/${employeeId}/compensation/revisions/${revisionId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-profile'] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-history'] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+}
+
+export function useActivateCompensationRevision(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (revisionId: number) =>
+      apiPost<EmployeeCompensationRevision>(`/employees/${employeeId}/compensation/revisions/${revisionId}/activate`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-profile'] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-history'] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+}
+
+export function useDeleteCompensationRevision(employeeId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (revisionId: number) =>
+      apiDelete<{ id: number }>(`/employees/${employeeId}/compensation/revisions/${revisionId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-profile'] });
+      queryClient.invalidateQueries({ queryKey: ['employees', employeeId, 'compensation-history'] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
     },
   });
 }

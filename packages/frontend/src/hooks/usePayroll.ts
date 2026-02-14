@@ -1,11 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import type { Payroll, PayrollDeduction, PayrollAllowance } from '@farmflow/shared';
+import type {
+  Payroll,
+  PayrollDeduction,
+  PayrollAllowance,
+  PayrollAllowanceInput,
+  PayrollDeductionInput,
+  CompensationTemplate,
+  PayrollGenerationWarning,
+} from '@farmflow/shared';
 
 // --- Response interfaces ---
 
 interface PayrollListItem extends Payroll {
   employeeName?: string | null;
+  compensationRevisionId?: number | null;
+  compensationSnapshot?: Payroll['compensationSnapshot'] | null;
+  totalAllowances?: number;
+  totalDeductions?: number;
 }
 
 interface PayrollListResponse {
@@ -21,6 +33,7 @@ interface PayrollListParams {
   limit?: number;
   employeeId?: number;
   payPeriod?: string;
+  payPeriodMonth?: string;
   status?: string;
 }
 
@@ -30,6 +43,69 @@ interface PayrollDetail extends PayrollListItem {
   allowances: PayrollAllowance[];
   totalDeductions: number;
   totalAllowances: number;
+}
+
+interface PayrollGenerateResponse {
+  data: Payroll[];
+  total: number;
+  meta?: {
+    employeesWithoutCompensation?: number;
+    skipped?: number;
+    warningCount?: number;
+    warnings?: PayrollGenerationWarning[];
+  };
+}
+
+interface PayrollPreviewRow {
+  employeeId: number;
+  employeeName: string;
+  payPeriod: string;
+  workingDays: number;
+  attendedDays: number;
+  baseSalary: number;
+  overtimeHours: number;
+  overtimeRate: number;
+  allowances: PayrollAllowanceInput[];
+  deductions: PayrollDeductionInput[];
+  hasCompensation: boolean;
+  compensationRevisionId: number | null;
+  compensationSnapshot?: Payroll['compensationSnapshot'] | null;
+  warnings: PayrollGenerationWarning[];
+  grossSalaryPreview: number;
+  netSalaryPreview: number;
+  notes?: string;
+}
+
+interface PayrollPreviewResponse {
+  payPeriod: string;
+  startDate: string;
+  endDate: string;
+  rows: PayrollPreviewRow[];
+  summary: {
+    totalEmployees: number;
+    employeesWithCompensation: number;
+    employeesWithoutCompensation: number;
+    warningCount: number;
+  };
+}
+
+interface PayrollPrecheckItem {
+  employeeId: number;
+  employeeName: string;
+  status: 'ok' | 'warning' | 'error';
+  warnings: PayrollGenerationWarning[];
+}
+
+interface PayrollPrecheckResponse {
+  payPeriod: string;
+  summary: {
+    totalEmployees: number;
+    okEmployees: number;
+    warningEmployees: number;
+    errorEmployees: number;
+    warningCount: number;
+  };
+  checks: PayrollPrecheckItem[];
 }
 
 // --- Payroll hooks ---
@@ -64,9 +140,13 @@ export function useCreatePayroll() {
       payPeriod: string;
       baseSalary: number;
       workingDays: number;
+      attendedDays?: number;
       overtimeHours?: number;
       overtimeRate?: number;
       notes?: string;
+      allowances?: PayrollAllowanceInput[];
+      deductions?: PayrollDeductionInput[];
+      compensationRevisionId?: number | null;
     }) => apiPost<Payroll>('/payroll', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
@@ -77,11 +157,40 @@ export function useCreatePayroll() {
 export function useGeneratePayroll() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { payPeriod: string; workingDays: number }) =>
-      apiPost<Payroll[]>('/payroll/generate', data),
+    mutationFn: (data: {
+      payPeriod: string;
+      workingDays?: number;
+      entries?: Array<{
+        employeeId: number;
+        baseSalary: number;
+        workingDays: number;
+        attendedDays?: number;
+        overtimeHours?: number;
+        overtimeRate?: number;
+        notes?: string;
+        allowances?: PayrollAllowanceInput[];
+        deductions?: PayrollDeductionInput[];
+        compensationRevisionId?: number | null;
+      }>;
+    }) =>
+      apiPost<Payroll[]>('/payroll/generate', data) as unknown as Promise<PayrollGenerateResponse>,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
     },
+  });
+}
+
+export function usePayrollGeneratePrecheck() {
+  return useMutation({
+    mutationFn: (data: { payPeriod: string }) =>
+      apiPost<PayrollPrecheckResponse>('/payroll/generate/precheck', data),
+  });
+}
+
+export function usePayrollPreview() {
+  return useMutation({
+    mutationFn: (data: { payPeriod: string; employeeId?: number }) =>
+      apiPost<PayrollPreviewResponse>('/payroll/preview', data),
   });
 }
 
@@ -105,6 +214,17 @@ export function useUpdatePayrollStatus(id: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls', id] });
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+    },
+  });
+}
+
+export function useDeletePayroll() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiDelete<{ message: string }>(`/payroll/${id}`),
+    onSuccess: (_response, id) => {
+      queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payrolls', String(id)] });
     },
   });
 }
@@ -153,5 +273,68 @@ export function useRemoveAllowance(payrollId: string) {
   });
 }
 
+export function useCompensationTemplates(category?: 'allowance' | 'deduction', active = true) {
+  const params = new URLSearchParams();
+  if (category) params.append('category', category);
+  params.append('active', String(active));
+  const queryString = params.toString();
+
+  return useQuery({
+    queryKey: ['compensation-templates', category, active],
+    queryFn: () => apiGet<CompensationTemplate[]>(`/compensation-templates?${queryString}`),
+  });
+}
+
+export function useCreateCompensationTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      category: 'allowance' | 'deduction';
+      defaultAmount?: number;
+      description?: string;
+      isActive?: boolean;
+    }) => apiPost<CompensationTemplate>('/compensation-templates', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compensation-templates'] });
+    },
+  });
+}
+
+export function useUpdateCompensationTemplate(templateId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name?: string;
+      category?: 'allowance' | 'deduction';
+      defaultAmount?: number | null;
+      description?: string | null;
+      isActive?: boolean;
+    }) => apiPut<CompensationTemplate>(`/compensation-templates/${templateId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compensation-templates'] });
+    },
+  });
+}
+
+export function useDeleteCompensationTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: number) => apiDelete<void>(`/compensation-templates/${templateId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['compensation-templates'] });
+    },
+  });
+}
+
 // Re-export types for page components
-export type { PayrollListItem, PayrollListResponse, PayrollDetail };
+export type {
+  PayrollListItem,
+  PayrollListResponse,
+  PayrollDetail,
+  PayrollGenerateResponse,
+  PayrollPreviewRow,
+  PayrollPreviewResponse,
+  PayrollPrecheckResponse,
+  PayrollPrecheckItem,
+};

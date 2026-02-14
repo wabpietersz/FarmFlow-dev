@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import type { Shift, Attendance, LeaveBalance } from '@farmflow/shared';
+import type { Shift, Attendance, LeaveBalance, LeaveType } from '@farmflow/shared';
 
 // --- Response interfaces ---
 
@@ -38,6 +38,19 @@ interface AttendanceSummary {
 interface AttendanceSummaryParams {
   startDate?: string;
   endDate?: string;
+  siteId?: number;
+}
+
+interface AttendanceEmployeeOption {
+  id: number;
+  firstName: string;
+  lastName: string;
+  status: string;
+  siteId: number;
+}
+
+interface AttendanceEmployeeParams {
+  status?: string;
   siteId?: number;
 }
 
@@ -122,6 +135,19 @@ export function useAttendanceSummary(params: AttendanceSummaryParams) {
   });
 }
 
+export function useAttendanceEmployees(params: AttendanceEmployeeParams = {}) {
+  const queryString = new URLSearchParams(
+    Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== '')
+      .map(([k, v]) => [k, String(v)]),
+  ).toString();
+
+  return useQuery({
+    queryKey: ['attendance-employees', params],
+    queryFn: () => apiGet<AttendanceEmployeeOption[]>(`/attendance/employees${queryString ? `?${queryString}` : ''}`),
+  });
+}
+
 export function useRecordAttendance() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -129,6 +155,7 @@ export function useRecordAttendance() {
       employeeId: number;
       attendanceDate: string;
       status: string;
+      leaveType?: LeaveType;
       shiftId?: number;
       notes?: string;
     }) => apiPost<Attendance>('/attendance', data),
@@ -146,7 +173,7 @@ export function useBulkAttendance() {
     mutationFn: (data: {
       attendanceDate: string;
       shiftId?: number;
-      records: Array<{ employeeId: number; status: string; notes?: string }>;
+      records: Array<{ employeeId: number; status: string; leaveType?: LeaveType; notes?: string }>;
     }) => apiPost<Attendance[]>('/attendance/bulk', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] });
@@ -159,7 +186,7 @@ export function useBulkAttendance() {
 export function useUpdateAttendance(id: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { status?: string; shiftId?: number | null; notes?: string | null }) =>
+    mutationFn: (data: { status?: string; leaveType?: LeaveType | null; shiftId?: number | null; notes?: string | null }) =>
       apiPut<Attendance>(`/attendance/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] });
@@ -168,6 +195,8 @@ export function useUpdateAttendance(id: number) {
     },
   });
 }
+
+// ... existing delete attendance hook ...
 
 export function useDeleteAttendance() {
   const queryClient = useQueryClient();
@@ -209,10 +238,23 @@ export function useSetLeaveBalance() {
   return useMutation({
     mutationFn: (data: {
       employeeId: number;
-      leaveType: string;
+      leaveType: LeaveType;
       year: number;
       totalDays: number;
     }) => apiPost<LeaveBalance>('/leave-balances', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
+    },
+  });
+}
+
+export function useBulkSetLeaveBalance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      year: number;
+      balances: Array<{ employeeId: number; leaveType: LeaveType; totalDays: number }>;
+    }) => apiPost<LeaveBalance[]>('/leave-balances/bulk', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
     },
@@ -231,4 +273,10 @@ export function useUpdateLeaveBalance(id: number) {
 }
 
 // Re-export types for page components
-export type { AttendanceListItem, AttendanceListResponse, AttendanceSummary, LeaveBalanceItem };
+export type {
+  AttendanceListItem,
+  AttendanceListResponse,
+  AttendanceSummary,
+  AttendanceEmployeeOption,
+  LeaveBalanceItem,
+};

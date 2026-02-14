@@ -31,3 +31,45 @@ export const bankDetailsFormSchema = z.object({
 });
 
 export type BankDetailsFormValues = z.infer<typeof bankDetailsFormSchema>;
+
+export const compensationFormSchema = z.object({
+  payType: z.enum(['monthly', 'daily', 'hourly']),
+  baseRate: z.coerce.number().positive('Base rate must be positive'),
+  overtimeRate: z.coerce.number().min(0, 'Overtime rate cannot be negative').default(0),
+  effectiveFrom: z.string().min(1, 'Effective date is required'),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export type CompensationFormValues = z.infer<typeof compensationFormSchema>;
+
+export const compensationComponentFormSchema = z.object({
+  componentType: z.enum(['earning', 'deduction']),
+  name: z.string().min(1, 'Component name is required').max(100),
+  calculationType: z.enum(['fixed', 'percentage']),
+  value: z.coerce.number().positive('Value must be positive'),
+  isTaxable: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+});
+
+export const compensationRevisionFormSchema = z.object({
+  payType: z.enum(['monthly', 'daily', 'hourly']),
+  baseRate: z.coerce.number().positive('Base rate must be positive'),
+  overtimeRate: z.coerce.number().min(0, 'Overtime rate cannot be negative').default(0),
+  effectiveFrom: z.string().min(1, 'Effective from date is required'),
+  effectiveTo: z.string().optional().or(z.literal('')),
+  standardHoursPerDay: z.coerce.number().min(1).max(24).default(8),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+  isActive: z.boolean().default(true),
+  components: z.array(compensationComponentFormSchema).default([]),
+}).superRefine((values, ctx) => {
+  if (values.effectiveTo && values.effectiveTo < values.effectiveFrom) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['effectiveTo'],
+      message: 'Effective to date must be on or after effective from date',
+    });
+  }
+});
+
+export type CompensationComponentFormValues = z.infer<typeof compensationComponentFormSchema>;
+export type CompensationRevisionFormValues = z.infer<typeof compensationRevisionFormSchema>;

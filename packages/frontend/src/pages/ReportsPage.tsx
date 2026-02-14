@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import {
   useBatchPerformance,
@@ -155,15 +155,15 @@ function FilterRow({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
-      <div className="flex gap-3 items-end">
+    <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-end">
+      <div className="grid w-full grid-cols-1 gap-3 sm:w-auto sm:grid-cols-2">
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1 block">From</label>
           <Input
             type="date"
             value={startDate}
             onChange={(e) => onStartDateChange(e.target.value)}
-            className="w-[160px]"
+            className="w-full sm:w-[160px]"
           />
         </div>
         <div>
@@ -172,11 +172,11 @@ function FilterRow({
             type="date"
             value={endDate}
             onChange={(e) => onEndDateChange(e.target.value)}
-            className="w-[160px]"
+            className="w-full sm:w-[160px]"
           />
         </div>
       </div>
-      {children}
+      {children ? <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-end">{children}</div> : null}
     </div>
   );
 }
@@ -228,7 +228,7 @@ function BatchPerformanceTab() {
         onEndDateChange={setEndDate}
       >
         <Select value={siteId || 'all'} onValueChange={(v) => setSiteId(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue placeholder="All Sites" />
           </SelectTrigger>
           <SelectContent>
@@ -240,13 +240,13 @@ function BatchPerformanceTab() {
             ))}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
+        <Button variant="outline" size="sm" onClick={handleExport} className="w-full gap-2 sm:w-auto">
           <Download className="h-4 w-4" />
           Export CSV
         </Button>
       </FilterRow>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Total Batches" value={formatNumber(totalBatches)} icon={BarChart3} loading={isLoading} />
         <MetricCard title="Avg FCR" value={avgFcr ? avgFcr.toFixed(2) : '--'} icon={TrendingUp} loading={isLoading} />
         <MetricCard title="Total Mortality" value={formatNumber(totalMortality)} icon={Activity} loading={isLoading} />
@@ -272,7 +272,7 @@ function BatchPerformanceTab() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[760px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Batch Code</TableHead>
@@ -373,7 +373,7 @@ function SalesSummaryTab() {
     <div className="space-y-6">
       <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
         <Select value={buyerId || 'all'} onValueChange={(v) => setBuyerId(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue placeholder="All Buyers" />
           </SelectTrigger>
           <SelectContent>
@@ -383,13 +383,13 @@ function SalesSummaryTab() {
             ))}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
+        <Button variant="outline" size="sm" onClick={handleExport} className="w-full gap-2 sm:w-auto">
           <Download className="h-4 w-4" />
           Export CSV
         </Button>
       </FilterRow>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Total Sales" value={formatNumber(totalSales)} icon={BarChart3} loading={isLoading} />
         <MetricCard title="Total Revenue" value={formatCurrency(totalRevenue)} icon={DollarSign} loading={isLoading} />
         <MetricCard title="Avg Price/Bird" value={formatCurrency(avgPricePerBird)} icon={TrendingUp} loading={isLoading} />
@@ -487,23 +487,23 @@ function MortalityTrendsTab() {
     <div className="space-y-6">
       <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
         <Select value={siteId || 'all'} onValueChange={(v) => { setSiteId(v === 'all' ? '' : v); setBatchId(''); }}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Sites" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="All Sites" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Sites</SelectItem>
             {sites.map((site) => <SelectItem key={site.id} value={String(site.id)}>{site.siteName}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={batchId || 'all'} onValueChange={(v) => setBatchId(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Batches" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="All Batches" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Batches</SelectItem>
             {batchesList.map((batch) => <SelectItem key={batch.id} value={String(batch.id)}>{batch.batchCode}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2"><Download className="h-4 w-4" />Export CSV</Button>
+        <Button variant="outline" size="sm" onClick={handleExport} className="w-full gap-2 sm:w-auto"><Download className="h-4 w-4" />Export CSV</Button>
       </FilterRow>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricCard title="Total Mortality" value={formatNumber(totalMortality)} icon={Activity} loading={isLoading} />
         <MetricCard title="Avg Daily Mortality" value={avgDailyMortality.toFixed(1)} icon={TrendingDown} loading={isLoading} />
         <MetricCard title="Days Tracked" value={formatNumber(trendData.length)} icon={BarChart3} loading={isLoading} />
@@ -570,10 +570,10 @@ function FinancialOverviewTab() {
   return (
     <div className="space-y-6">
       <FilterRow startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate}>
-        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2"><Download className="h-4 w-4" />Export CSV</Button>
+        <Button variant="outline" size="sm" onClick={handleExport} className="w-full gap-2 sm:w-auto"><Download className="h-4 w-4" />Export CSV</Button>
       </FilterRow>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Total Revenue" value={formatCurrency(totalRevenue)} icon={DollarSign} loading={isLoading} />
         <MetricCard title="Total Paid" value={formatCurrency(totalPaid)} icon={TrendingUp} trend="up" loading={isLoading} />
         <MetricCard title="Outstanding" value={formatCurrency(totalOutstanding)} icon={TrendingDown} trend={totalOutstanding > 0 ? 'down' : null} loading={isLoading} />
@@ -656,6 +656,7 @@ function FinancialOverviewTab() {
 
 export default function ReportsPage() {
   const { hasPermission } = useAuthStore();
+  const [activeTab, setActiveTab] = useState('batch-performance');
 
   if (!hasPermission('reports:read')) {
     return (
@@ -674,8 +675,27 @@ export default function ReportsPage() {
         <h1 className="text-2xl font-bold text-foreground">Reports & Analytics</h1>
       </div>
 
-      <Tabs defaultValue="batch-performance">
-        <div className="overflow-x-auto">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <div className="sm:hidden">
+          <Select value={activeTab} onValueChange={setActiveTab}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select report" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="batch-performance">Batch Performance</SelectItem>
+              <SelectItem value="sales">Sales</SelectItem>
+              <SelectItem value="mortality">Mortality</SelectItem>
+              <SelectItem value="financial">Financial</SelectItem>
+              <SelectItem value="batch-comparison">Comparison</SelectItem>
+              {hasPermission('reports:financial:read') && (
+                <SelectItem value="profitability">Profitability</SelectItem>
+              )}
+              <SelectItem value="hr-analytics">HR & Attendance</SelectItem>
+              <SelectItem value="feed-analytics">Feed Analytics</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="hidden overflow-x-auto overflow-y-hidden scrollbar-none pb-1 sm:block">
           <TabsList className="flex w-max">
             <TabsTrigger value="batch-performance" className="gap-2">
               <BarChart3 className="h-4 w-4" />

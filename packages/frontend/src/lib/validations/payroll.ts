@@ -3,8 +3,9 @@ import { z } from 'zod';
 export const payrollFormSchema = z.object({
   employeeId: z.coerce.number().int().positive('Employee is required'),
   payPeriod: z.string().min(1, 'Pay period is required'),
-  baseSalary: z.coerce.number().positive('Base salary must be positive'),
-  workingDays: z.coerce.number().int().positive('Working days must be positive'),
+  baseSalary: z.coerce.number().min(0, 'Base salary cannot be negative'),
+  workingDays: z.coerce.number().min(0, 'Working days cannot be negative'),
+  attendedDays: z.coerce.number().min(0).optional(),
   overtimeHours: z.coerce.number().min(0).default(0),
   overtimeRate: z.coerce.number().min(0).default(0),
   notes: z.string().max(1000).optional(),
@@ -14,7 +15,6 @@ export type PayrollFormValues = z.infer<typeof payrollFormSchema>;
 
 export const generatePayrollFormSchema = z.object({
   payPeriod: z.string().min(1, 'Pay period is required'),
-  workingDays: z.coerce.number().int().positive('Working days must be positive'),
 });
 
 export type GeneratePayrollFormValues = z.infer<typeof generatePayrollFormSchema>;

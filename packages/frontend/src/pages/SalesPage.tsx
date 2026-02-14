@@ -60,6 +60,7 @@ const BUYER_STATUS_COLORS: Record<string, string> = {
 
 export default function SalesPage() {
   const { hasPermission } = useAuthStore();
+  const [activeTab, setActiveTab] = useState('sales');
 
   // Sales state
   const [salesPage, setSalesPage] = useState(1);
@@ -194,11 +195,11 @@ export default function SalesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-foreground">Sales & Buyers</h1>
-        <div className="flex gap-2">
+        <div className="flex w-full gap-2 sm:w-auto">
           {hasPermission('sales:create') && (
-            <Button onClick={() => setShowCreateSale(true)}>
+            <Button onClick={() => setShowCreateSale(true)} className="w-full sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
               New Sale
             </Button>
@@ -206,17 +207,30 @@ export default function SalesPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="sales">
-        <TabsList>
-          <TabsTrigger value="sales" className="gap-2">
-            <ShoppingCart className="h-4 w-4" />
-            Sales
-          </TabsTrigger>
-          <TabsTrigger value="buyers" className="gap-2">
-            <Users2 className="h-4 w-4" />
-            Buyers
-          </TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <div className="sm:hidden">
+          <Select value={activeTab} onValueChange={setActiveTab}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select view" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="sales">Sales</SelectItem>
+              <SelectItem value="buyers">Buyers</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="hidden sm:block">
+          <TabsList>
+            <TabsTrigger value="sales" className="gap-2">
+              <ShoppingCart className="h-4 w-4" />
+              Sales
+            </TabsTrigger>
+            <TabsTrigger value="buyers" className="gap-2">
+              <Users2 className="h-4 w-4" />
+              Buyers
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* SALES TAB */}
         <TabsContent value="sales">
@@ -224,7 +238,7 @@ export default function SalesPage() {
             <CardContent className="pt-6">
               <div className="flex flex-col sm:flex-row gap-4 mb-6">
                 <Select value={salesStatusFilter || 'all'} onValueChange={(v) => { setSalesStatusFilter(v === 'all' ? '' : v); setSalesPage(1); }}>
-                  <SelectTrigger className="w-[180px]">
+                  <SelectTrigger className="w-full sm:w-[180px]">
                     <SelectValue placeholder="All Statuses" />
                   </SelectTrigger>
                   <SelectContent>
@@ -258,7 +272,7 @@ export default function SalesPage() {
                 </div>
               ) : (
                 <>
-                  <Table>
+                  <Table className="min-w-[760px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Sale Code</TableHead>
@@ -301,7 +315,7 @@ export default function SalesPage() {
                     </TableBody>
                   </Table>
 
-                  <div className="flex items-center justify-between pt-4">
+                  <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-muted-foreground">
                       Showing {(salesPage - 1) * 20 + 1} to {Math.min(salesPage * 20, salesTotal)} of {salesTotal}
                     </p>
@@ -325,10 +339,10 @@ export default function SalesPage() {
                   placeholder="Search buyers..."
                   value={buyerSearch}
                   onChange={(e) => { setBuyerSearch(e.target.value); setBuyersPage(1); }}
-                  className="w-[250px]"
+                  className="w-full sm:w-[250px]"
                 />
                 {hasPermission('sales:create') && (
-                  <Button onClick={() => { setEditingBuyer(null); buyerForm.reset(); setShowBuyerDialog(true); }}>
+                  <Button onClick={() => { setEditingBuyer(null); buyerForm.reset(); setShowBuyerDialog(true); }} className="w-full sm:w-auto">
                     <Plus className="h-4 w-4 mr-2" />
                     New Buyer
                   </Button>
@@ -351,7 +365,7 @@ export default function SalesPage() {
                 </div>
               ) : (
                 <>
-                  <Table>
+                  <Table className="min-w-[860px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
@@ -393,7 +407,7 @@ export default function SalesPage() {
                     </TableBody>
                   </Table>
 
-                  <div className="flex items-center justify-between pt-4">
+                  <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-muted-foreground">
                       Showing {(buyersPage - 1) * 20 + 1} to {Math.min(buyersPage * 20, buyersTotal)} of {buyersTotal}
                     </p>

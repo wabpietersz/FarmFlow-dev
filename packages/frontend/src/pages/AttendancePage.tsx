@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
-import { useEmployees } from '@/hooks/useEmployees';
 import {
   useShifts, useCreateShift, useDeleteShift,
   useAttendance, useAttendanceSummary, useRecordAttendance, useBulkAttendance, useDeleteAttendance,
-  useLeaveBalances, useSetLeaveBalance,
+  useLeaveBalances, useSetLeaveBalance, useBulkSetLeaveBalance, useAttendanceEmployees,
 } from '@/hooks/useAttendance';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -21,17 +21,20 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
+  Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription,
 } from '@/components/ui/form';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
-  attendanceFormSchema, shiftFormSchema, leaveBalanceFormSchema,
-  type AttendanceFormValues, type ShiftFormValues, type LeaveBalanceFormValues,
+  attendanceFormSchema, bulkAttendanceFormSchema, shiftFormSchema, leaveBalanceFormSchema, bulkLeaveBalanceFormSchema,
+  type AttendanceFormValues, type BulkAttendanceFormValues, type ShiftFormValues, type LeaveBalanceFormValues, type BulkLeaveBalanceFormValues,
 } from '@/lib/validations/attendance';
-import { Plus, Clock, CalendarDays, Palmtree, Trash2 } from 'lucide-react';
+import { Plus, Clock, CalendarDays, Palmtree, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import { useMemo } from 'react';
+import type { LeaveType } from '@farmflow/shared';
+import { parseApiError } from '@/lib/api';
 
 const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
   present: 'bg-green-100 text-green-800',
@@ -56,17 +59,24 @@ export default function AttendancePage() {
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState('');
   const [showRecordAttendance, setShowRecordAttendance] = useState(false);
+  const [showBulkAttendance, setShowBulkAttendance] = useState(false);
 
   // Leave balance state
   const [leaveEmployeeFilter, setLeaveEmployeeFilter] = useState('');
   const [leaveYear, setLeaveYear] = useState(new Date().getFullYear());
   const [showLeaveBalance, setShowLeaveBalance] = useState(false);
+  const [showBulkLeaveBalance, setShowBulkLeaveBalance] = useState(false);
 
   // Shift state
   const [showShiftDialog, setShowShiftDialog] = useState(false);
 
   // Data hooks
-  const { data: attendanceData, isLoading: attendanceLoading } = useAttendance({
+  const {
+    data: attendanceData,
+    isLoading: attendanceLoading,
+    isError: attendanceError,
+    refetch: refetchAttendance,
+  } = useAttendance({
     page: attendancePage,
     limit: 20,
     startDate: attendanceDate,
@@ -78,7 +88,11 @@ export default function AttendancePage() {
     endDate: attendanceDate,
   });
   const { data: shiftsData, isLoading: shiftsLoading } = useShifts();
-  const { data: employeesData, isError: employeesError } = useEmployees({ limit: 200, status: 'active' });
+  const {
+    data: attendanceEmployeesData,
+    isError: attendanceEmployeesError,
+    isLoading: attendanceEmployeesLoading,
+  } = useAttendanceEmployees({ status: 'active' });
   const { data: leaveBalancesData, isLoading: leavesLoading } = useLeaveBalances({
     employeeId: leaveEmployeeFilter ? Number(leaveEmployeeFilter) : undefined,
     year: leaveYear,
@@ -90,14 +104,23 @@ export default function AttendancePage() {
   const createShiftMutation = useCreateShift();
   const deleteShiftMutation = useDeleteShift();
   const setLeaveBalanceMutation = useSetLeaveBalance();
+  const bulkSetLeaveBalanceMutation = useBulkSetLeaveBalance();
 
   const attendanceList = attendanceData?.data ?? [];
   const attendanceTotal = attendanceData?.total ?? 0;
   const attendanceTotalPages = attendanceData?.totalPages ?? 0;
   const summary = summaryData?.data ?? { totalPresent: 0, totalAbsent: 0, totalOnLeave: 0, totalHalfDay: 0, totalRecords: 0 };
   const shiftsList = shiftsData?.data ?? [];
-  const activeEmployees = (Array.isArray(employeesData?.data) ? employeesData.data : []) as unknown as Array<{ id: number; firstName: string; lastName: string; [key: string]: unknown }>;
+  const activeEmployees = (Array.isArray(attendanceEmployeesData?.data) ? attendanceEmployeesData.data : []) as unknown as Array<{ id: number; firstName: string; lastName: string;[key: string]: unknown }>;
   const leaveBalancesList = leaveBalancesData?.data ?? [];
+  const employeeSelectPlaceholder = attendanceEmployeesError
+    ? 'Failed to load employees'
+    : attendanceEmployeesLoading
+      ? 'Loading employees...'
+      : activeEmployees.length === 0
+        ? 'No active employees found'
+        : 'Select employee';
+  const canBulkRecordAttendance = !attendanceEmployeesLoading && !attendanceEmployeesError && activeEmployees.length > 0;
 
   // Attendance form
   const attendanceForm = useForm<AttendanceFormValues>({
@@ -105,6 +128,17 @@ export default function AttendancePage() {
     defaultValues: {
       employeeId: undefined,
       attendanceDate: new Date().toISOString().split('T')[0],
+      status: 'present',
+      shiftId: undefined,
+      notes: '',
+    },
+  });
+
+  const bulkAttendanceForm = useForm<BulkAttendanceFormValues>({
+    resolver: zodResolver(bulkAttendanceFormSchema),
+    defaultValues: {
+      attendanceDate: new Date().toISOString().split('T')[0],
+      employeeIds: [],
       status: 'present',
       shiftId: undefined,
       notes: '',
@@ -128,36 +162,88 @@ export default function AttendancePage() {
     },
   });
 
+  const recordStatus = useWatch({ control: attendanceForm.control, name: 'status' });
+  const isLeaveStatus = recordStatus === 'on_leave' || recordStatus === 'half_day';
+  const bulkStatus = useWatch({ control: bulkAttendanceForm.control, name: 'status' });
+  const isBulkLeaveStatus = bulkStatus === 'on_leave' || bulkStatus === 'half_day';
+
+  // Bulk Leave balance form
+  const bulkLeaveBalanceForm = useForm<BulkLeaveBalanceFormValues>({
+    resolver: zodResolver(bulkLeaveBalanceFormSchema),
+    defaultValues: {
+      year: new Date().getFullYear(),
+      employeeIds: [],
+      leaveType: 'casual',
+      totalDays: 0,
+    },
+  });
+
+  // Group leave balances by employee
+  const groupedLeaveBalances = useMemo(() => {
+    if (!leaveBalancesList.length) return [];
+
+    // Explicitly type the accumulator
+    const groups: Record<number, {
+      employeeId: number;
+      employeeName: string;
+      balances: typeof leaveBalancesList
+    }> = {};
+
+    leaveBalancesList.forEach(balance => {
+      if (!groups[balance.employeeId]) {
+        groups[balance.employeeId] = {
+          employeeId: balance.employeeId,
+          employeeName: balance.employeeName ?? `Employee #${balance.employeeId}`,
+          balances: []
+        };
+      }
+      groups[balance.employeeId].balances.push(balance);
+    });
+
+    return Object.values(groups).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, [leaveBalancesList]);
+
   const handleRecordAttendance = async (values: AttendanceFormValues) => {
     try {
       await recordAttendanceMutation.mutateAsync({
         employeeId: values.employeeId,
         attendanceDate: values.attendanceDate,
         status: values.status,
+        leaveType: values.leaveType as LeaveType | undefined,
         shiftId: values.shiftId as number | undefined,
         notes: values.notes || undefined,
       });
       toast.success('Attendance recorded');
       attendanceForm.reset();
       setShowRecordAttendance(false);
-    } catch {
-      toast.error('Failed to record attendance');
+    } catch (error) {
+      parseApiError(error, 'Failed to record attendance');
     }
   };
 
-  const handleMarkAllPresent = async () => {
-    if (activeEmployees.length === 0) return;
+  const handleBulkRecordAttendance = async (values: BulkAttendanceFormValues) => {
     try {
       await bulkAttendanceMutation.mutateAsync({
-        attendanceDate,
-        records: activeEmployees.map((emp) => ({
-          employeeId: emp.id,
-          status: 'present',
+        attendanceDate: values.attendanceDate,
+        shiftId: values.shiftId as number | undefined,
+        records: values.employeeIds.map((employeeId) => ({
+          employeeId,
+          status: values.status,
+          leaveType: values.leaveType as LeaveType | undefined,
+          notes: values.notes || undefined,
         })),
       });
-      toast.success(`Marked ${activeEmployees.length} employees as present`);
-    } catch {
-      toast.error('Failed to record bulk attendance');
+      toast.success(`Recorded attendance for ${values.employeeIds.length} employees`);
+      bulkAttendanceForm.reset({
+        attendanceDate: values.attendanceDate,
+        employeeIds: [],
+        status: 'present',
+        shiftId: undefined,
+        notes: '',
+      });
+      setShowBulkAttendance(false);
+    } catch (error) {
+      parseApiError(error, 'Failed to record bulk attendance');
     }
   };
 
@@ -181,11 +267,37 @@ export default function AttendancePage() {
     }
   };
 
+  const handleBulkSetLeaveBalance = async (values: BulkLeaveBalanceFormValues) => {
+    try {
+      if (values.employeeIds.length === 0) {
+        toast.error('Select at least one employee');
+        return;
+      }
+
+      const balances = values.employeeIds.map(empId => ({
+        employeeId: empId,
+        leaveType: values.leaveType as LeaveType,
+        totalDays: values.totalDays,
+      }));
+
+      await bulkSetLeaveBalanceMutation.mutateAsync({
+        year: values.year,
+        balances,
+      });
+
+      toast.success(`Updated leave balances for ${values.employeeIds.length} employees`);
+      bulkLeaveBalanceForm.reset();
+      setShowBulkLeaveBalance(false);
+    } catch {
+      toast.error('Failed to update bulk leave balances');
+    }
+  };
+
   const handleSetLeaveBalance = async (values: LeaveBalanceFormValues) => {
     try {
       await setLeaveBalanceMutation.mutateAsync({
         employeeId: values.employeeId,
-        leaveType: values.leaveType,
+        leaveType: values.leaveType as LeaveType,
         year: values.year,
         totalDays: values.totalDays,
       });
@@ -288,10 +400,26 @@ export default function AttendancePage() {
                 <div className="flex gap-2 ml-auto">
                   {hasPermission('attendance:create') && (
                     <>
-                      <Button variant="outline" onClick={handleMarkAllPresent} disabled={bulkAttendanceMutation.isPending}>
-                        {bulkAttendanceMutation.isPending ? 'Marking...' : 'Mark All Present'}
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          bulkAttendanceForm.reset({
+                            attendanceDate,
+                            employeeIds: [],
+                            status: 'present',
+                            shiftId: undefined,
+                            notes: '',
+                          });
+                          setShowBulkAttendance(true);
+                        }}
+                        disabled={!canBulkRecordAttendance}
+                      >
+                        Bulk Record
                       </Button>
-                      <Button onClick={() => { attendanceForm.reset({ attendanceDate, status: 'present' }); setShowRecordAttendance(true); }}>
+                      <Button
+                        onClick={() => { attendanceForm.reset({ attendanceDate, status: 'present' }); setShowRecordAttendance(true); }}
+                        disabled={attendanceEmployeesLoading || attendanceEmployeesError || activeEmployees.length === 0}
+                      >
                         <Plus className="h-4 w-4 mr-2" />
                         Record
                       </Button>
@@ -305,6 +433,15 @@ export default function AttendancePage() {
                   {Array.from({ length: 5 }).map((_, i) => (
                     <Skeleton key={i} className="h-12 w-full" />
                   ))}
+                </div>
+              ) : attendanceError ? (
+                <div className="text-center py-12 space-y-3">
+                  <CalendarDays className="h-12 w-12 text-red-400 mx-auto" />
+                  <h3 className="text-lg font-medium text-foreground">Failed to load attendance records</h3>
+                  <p className="text-sm text-muted-foreground">Please retry. If this persists, check API permissions and server logs.</p>
+                  <Button variant="outline" onClick={() => { void refetchAttendance(); }}>
+                    Retry
+                  </Button>
                 </div>
               ) : attendanceList.length === 0 ? (
                 <div className="text-center py-12">
@@ -322,6 +459,7 @@ export default function AttendancePage() {
                         <TableHead>Employee</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Leave Type</TableHead>
                         <TableHead className="hidden sm:table-cell">Shift</TableHead>
                         <TableHead className="hidden md:table-cell">Notes</TableHead>
                         {hasPermission('attendance:delete') && <TableHead className="w-[50px]" />}
@@ -338,6 +476,9 @@ export default function AttendancePage() {
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${ATTENDANCE_STATUS_COLORS[record.status] ?? ''}`}>
                               {record.status.replace('_', ' ')}
                             </span>
+                          </TableCell>
+                          <TableCell className="capitalize text-muted-foreground">
+                            {record.leaveType ? (LEAVE_TYPE_LABELS[record.leaveType] || record.leaveType) : '-'}
                           </TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">
                             {record.shiftName ?? '--'}
@@ -398,11 +539,18 @@ export default function AttendancePage() {
                   min={2020}
                   max={2100}
                 />
+
                 {hasPermission('attendance:create') && (
-                  <Button onClick={() => { leaveBalanceForm.reset({ year: leaveYear }); setShowLeaveBalance(true); }} className="ml-auto">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Set Balance
-                  </Button>
+                  <div className="ml-auto flex gap-2">
+                    <Button variant="outline" onClick={() => { bulkLeaveBalanceForm.reset({ year: leaveYear, employeeIds: [] }); setShowBulkLeaveBalance(true); }}>
+                      <Users className="h-4 w-4 mr-2" />
+                      Bulk Set
+                    </Button>
+                    <Button onClick={() => { leaveBalanceForm.reset({ year: leaveYear }); setShowLeaveBalance(true); }}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Set Balance
+                    </Button>
+                  </div>
                 )}
               </div>
 
@@ -424,26 +572,37 @@ export default function AttendancePage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Employee</TableHead>
-                      <TableHead>Leave Type</TableHead>
+                      <TableHead className="w-[300px]">Employee / Leave Type</TableHead>
                       <TableHead>Total Days</TableHead>
                       <TableHead>Used Days</TableHead>
                       <TableHead>Balance</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {leaveBalancesList.map((balance) => (
-                      <TableRow key={balance.id}>
-                        <TableCell className="font-medium">{balance.employeeName ?? '--'}</TableCell>
-                        <TableCell className="capitalize">{LEAVE_TYPE_LABELS[balance.leaveType] ?? balance.leaveType}</TableCell>
-                        <TableCell>{balance.totalDays}</TableCell>
-                        <TableCell>{balance.usedDays}</TableCell>
-                        <TableCell>
-                          <span className={`font-medium ${balance.balanceDays <= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {balance.balanceDays}
-                          </span>
-                        </TableCell>
-                      </TableRow>
+                    {groupedLeaveBalances.map((group) => (
+                      <div key={group.employeeId} style={{ display: 'contents' }}>
+                        {/* Header Row for Employee */}
+                        <TableRow className="bg-muted/30 hover:bg-muted/50">
+                          <TableCell colSpan={4} className="font-semibold py-3">
+                            {group.employeeName}
+                          </TableCell>
+                        </TableRow>
+                        {/* Detail Rows for Leave Types */}
+                        {group.balances.map((balance) => (
+                          <TableRow key={balance.id}>
+                            <TableCell className="pl-8 capitalize text-muted-foreground">
+                              {LEAVE_TYPE_LABELS[balance.leaveType] ?? balance.leaveType}
+                            </TableCell>
+                            <TableCell>{balance.totalDays}</TableCell>
+                            <TableCell>{balance.usedDays}</TableCell>
+                            <TableCell>
+                              <span className={`font-medium ${balance.balanceDays <= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {balance.balanceDays}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </div>
                     ))}
                   </TableBody>
                 </Table>
@@ -521,6 +680,174 @@ export default function AttendancePage() {
         </TabsContent>
       </Tabs>
 
+      {/* Bulk Record Attendance Dialog */}
+      <Dialog open={showBulkAttendance} onOpenChange={setShowBulkAttendance}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Bulk Record Attendance</DialogTitle>
+            <DialogDescription>Apply one attendance status to multiple employees.</DialogDescription>
+          </DialogHeader>
+          <Form {...bulkAttendanceForm}>
+            <form onSubmit={bulkAttendanceForm.handleSubmit(handleBulkRecordAttendance)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={bulkAttendanceForm.control}
+                  name="attendanceDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Date</FormLabel>
+                      <FormControl><Input type="date" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={bulkAttendanceForm.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent position="popper">
+                          <SelectItem value="present">Present</SelectItem>
+                          <SelectItem value="absent">Absent</SelectItem>
+                          <SelectItem value="on_leave">On Leave</SelectItem>
+                          <SelectItem value="half_day">Half Day</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {isBulkLeaveStatus && (
+                <FormField
+                  control={bulkAttendanceForm.control}
+                  name="leaveType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Leave Type</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger><SelectValue placeholder="Select leave type" /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent position="popper">
+                          <SelectItem value="casual">Casual</SelectItem>
+                          <SelectItem value="earned">Earned</SelectItem>
+                          <SelectItem value="medical">Medical</SelectItem>
+                          <SelectItem value="maternity">Maternity</SelectItem>
+                          <SelectItem value="unpaid">Unpaid</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <FormField
+                control={bulkAttendanceForm.control}
+                name="shiftId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Shift (Optional)</FormLabel>
+                    <Select value={field.value ? String(field.value) : undefined} onValueChange={(v) => field.onChange(v ? Number(v) : undefined)}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue placeholder="No shift" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent position="popper" className="max-h-[300px]">
+                        {shiftsList.map((shift) => (
+                          <SelectItem key={shift.id} value={String(shift.id)}>
+                            {shift.shiftName} ({shift.startTime} - {shift.endTime})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={bulkAttendanceForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes (Optional)</FormLabel>
+                    <FormControl><Textarea placeholder="Any notes..." {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={bulkAttendanceForm.control}
+                name="employeeIds"
+                render={() => (
+                  <FormItem>
+                    <div className="mb-2">
+                      <FormLabel className="text-base">Employees</FormLabel>
+                      <FormDescription>Select employees to apply this attendance status.</FormDescription>
+                    </div>
+                    <div className="border rounded-md max-h-[220px] overflow-y-auto p-2 space-y-2">
+                      <div className="flex items-center space-x-2 sticky top-0 bg-background pb-2 border-b z-10">
+                        <Checkbox
+                          checked={activeEmployees.length > 0 && bulkAttendanceForm.watch('employeeIds').length === activeEmployees.length}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              bulkAttendanceForm.setValue('employeeIds', activeEmployees.map((employee) => employee.id));
+                            } else {
+                              bulkAttendanceForm.setValue('employeeIds', []);
+                            }
+                          }}
+                        />
+                        <span className="text-sm font-medium">Select All</span>
+                      </div>
+                      {activeEmployees.map((employee) => (
+                        <FormField
+                          key={employee.id}
+                          control={bulkAttendanceForm.control}
+                          name="employeeIds"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value?.includes(employee.id)}
+                                  onCheckedChange={(checked) => {
+                                    return checked
+                                      ? field.onChange([...field.value, employee.id])
+                                      : field.onChange(field.value?.filter((value) => value !== employee.id));
+                                  }}
+                                />
+                              </FormControl>
+                              <FormLabel className="font-normal cursor-pointer">
+                                {employee.firstName} {employee.lastName}
+                              </FormLabel>
+                            </FormItem>
+                          )}
+                        />
+                      ))}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowBulkAttendance(false)}>Cancel</Button>
+                <Button type="submit" disabled={bulkAttendanceMutation.isPending}>
+                  {bulkAttendanceMutation.isPending ? 'Recording...' : 'Record Attendance'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       {/* Record Attendance Dialog */}
       <Dialog open={showRecordAttendance} onOpenChange={setShowRecordAttendance}>
         <DialogContent className="sm:max-w-[500px]">
@@ -538,7 +865,7 @@ export default function AttendancePage() {
                     <FormLabel>Employee</FormLabel>
                     <Select value={field.value ? String(field.value) : undefined} onValueChange={(v) => field.onChange(Number(v))}>
                       <FormControl>
-                        <SelectTrigger><SelectValue placeholder={employeesError ? 'Failed to load employees' : activeEmployees.length === 0 ? 'Loading employees...' : 'Select employee'} /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder={employeeSelectPlaceholder} /></SelectTrigger>
                       </FormControl>
                       <SelectContent position="popper" className="max-h-[300px]">
                         {activeEmployees.map((emp) => (
@@ -586,6 +913,31 @@ export default function AttendancePage() {
                   )}
                 />
               </div>
+
+              {isLeaveStatus && (
+                <FormField
+                  control={attendanceForm.control}
+                  name="leaveType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Leave Type</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger><SelectValue placeholder="Select leave type" /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent position="popper">
+                          <SelectItem value="casual">Casual</SelectItem>
+                          <SelectItem value="earned">Earned</SelectItem>
+                          <SelectItem value="medical">Medical</SelectItem>
+                          <SelectItem value="maternity">Maternity</SelectItem>
+                          <SelectItem value="unpaid">Unpaid</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={attendanceForm.control}
                 name="shiftId"
@@ -702,7 +1054,7 @@ export default function AttendancePage() {
                     <FormLabel>Employee</FormLabel>
                     <Select value={field.value ? String(field.value) : undefined} onValueChange={(v) => field.onChange(Number(v))}>
                       <FormControl>
-                        <SelectTrigger><SelectValue placeholder={employeesError ? 'Failed to load employees' : activeEmployees.length === 0 ? 'Loading employees...' : 'Select employee'} /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder={employeeSelectPlaceholder} /></SelectTrigger>
                       </FormControl>
                       <SelectContent position="popper" className="max-h-[300px]">
                         {activeEmployees.map((emp) => (
@@ -766,6 +1118,134 @@ export default function AttendancePage() {
                 <Button type="button" variant="outline" onClick={() => setShowLeaveBalance(false)}>Cancel</Button>
                 <Button type="submit" disabled={setLeaveBalanceMutation.isPending}>
                   {setLeaveBalanceMutation.isPending ? 'Saving...' : 'Set Balance'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+      {/* Bulk Set Leave Balance Dialog */}
+      <Dialog open={showBulkLeaveBalance} onOpenChange={setShowBulkLeaveBalance}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Bulk Set Leave Balances</DialogTitle>
+            <DialogDescription>Set leave balances for multiple employees at once.</DialogDescription>
+          </DialogHeader>
+          <Form {...bulkLeaveBalanceForm}>
+            <form onSubmit={bulkLeaveBalanceForm.handleSubmit(handleBulkSetLeaveBalance)} className="space-y-4">
+              <FormField
+                control={bulkLeaveBalanceForm.control}
+                name="year"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Year</FormLabel>
+                    <FormControl><Input type="number" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={bulkLeaveBalanceForm.control}
+                  name="leaveType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Leave Type</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent position="popper">
+                          <SelectItem value="casual">Casual</SelectItem>
+                          <SelectItem value="earned">Earned</SelectItem>
+                          <SelectItem value="medical">Medical</SelectItem>
+                          <SelectItem value="maternity">Maternity</SelectItem>
+                          <SelectItem value="unpaid">Unpaid</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={bulkLeaveBalanceForm.control}
+                  name="totalDays"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Total Days</FormLabel>
+                      <FormControl><Input type="number" min={0} {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={bulkLeaveBalanceForm.control}
+                name="employeeIds"
+                render={() => (
+                  <FormItem>
+                    <div className="mb-4">
+                      <FormLabel className="text-base">Employees</FormLabel>
+                      <FormDescription>Select employees to apply this balance to.</FormDescription>
+                    </div>
+                    <div className="border rounded-md max-h-[200px] overflow-y-auto p-2 space-y-2">
+                      <div className="flex items-center space-x-2 sticky top-0 bg-background pb-2 border-b z-10">
+                        <Checkbox
+                          checked={activeEmployees.length > 0 && bulkLeaveBalanceForm.watch('employeeIds').length === activeEmployees.length}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              bulkLeaveBalanceForm.setValue('employeeIds', activeEmployees.map(e => e.id));
+                            } else {
+                              bulkLeaveBalanceForm.setValue('employeeIds', []);
+                            }
+                          }}
+                        />
+                        <span className="text-sm font-medium">Select All</span>
+                      </div>
+                      {activeEmployees.map((emp) => (
+                        <FormField
+                          key={emp.id}
+                          control={bulkLeaveBalanceForm.control}
+                          name="employeeIds"
+                          render={({ field }) => {
+                            return (
+                              <FormItem
+                                key={emp.id}
+                                className="flex flex-row items-start space-x-3 space-y-0"
+                              >
+                                <FormControl>
+                                  <Checkbox
+                                    checked={field.value?.includes(emp.id)}
+                                    onCheckedChange={(checked) => {
+                                      return checked
+                                        ? field.onChange([...field.value, emp.id])
+                                        : field.onChange(
+                                          field.value?.filter(
+                                            (value) => value !== emp.id
+                                          )
+                                        )
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormLabel className="font-normal cursor-pointer">
+                                  {emp.firstName} {emp.lastName}
+                                </FormLabel>
+                              </FormItem>
+                            )
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowBulkLeaveBalance(false)}>Cancel</Button>
+                <Button type="submit" disabled={bulkSetLeaveBalanceMutation.isPending}>
+                  {bulkSetLeaveBalanceMutation.isPending ? 'Updating...' : 'Update Balances'}
                 </Button>
               </DialogFooter>
             </form>

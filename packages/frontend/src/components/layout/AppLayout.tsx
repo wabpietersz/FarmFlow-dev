@@ -1,17 +1,17 @@
-import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
-import { navigationItems, type NavItem } from '@/config/navigation';
+import {
+  filterVisibleMainNavigation,
+  isHrefActive,
+  isMainNavigationItemActive,
+  mainNavigationItems,
+  type MainNavigationItem,
+  type NavItem,
+} from '@/config/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, LogOut, User } from 'lucide-react';
+import { ChevronDown, ChevronRight, LogOut, User } from 'lucide-react';
 import OfflineBanner from '@/components/layout/OfflineBanner';
 import InstallPrompt from '@/components/layout/InstallPrompt';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
@@ -28,30 +28,56 @@ import MobileBottomNav from '@/components/layout/MobileBottomNav';
 export default function AppLayout() {
   const { currentUser, logout, hasPermission } = useAuthStore();
   const location = useLocation();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const filteredNavItems = navigationItems.filter(
-    (item) => !item.requiredPermission || hasPermission(item.requiredPermission),
+  const visibleMainItems = useMemo(
+    () => filterVisibleMainNavigation(mainNavigationItems, hasPermission),
+    [hasPermission],
+  );
+  const [expandedGroupState, setExpandedGroupState] = useState<Record<string, boolean>>({});
+
+  const groupKeys = useMemo(
+    () => visibleMainItems
+      .filter((item): item is Extract<MainNavigationItem, { type: 'group' }> => item.type === 'group')
+      .map((item) => item.key),
+    [visibleMainItems],
   );
 
-  const isActive = (item: NavItem) => {
-    if (item.href === '/dashboard') return location.pathname === '/dashboard';
-    return location.pathname.startsWith(item.href);
-  };
+  useEffect(() => {
+    setExpandedGroupState((previous) => {
+      const next: Record<string, boolean> = {};
+      groupKeys.forEach((key) => {
+        next[key] = previous[key] ?? true;
+      });
+      return next;
+    });
+  }, [groupKeys]);
 
-  const handleLogout = async () => {
-    await logout();
-  };
+  useEffect(() => {
+    const activeGroup = visibleMainItems.find(
+      (item): item is Extract<MainNavigationItem, { type: 'group' }> =>
+        item.type === 'group' && isMainNavigationItemActive(location.pathname, item),
+    );
+    if (!activeGroup) return;
+    setExpandedGroupState((previous) =>
+      previous[activeGroup.key] === false
+        ? { ...previous, [activeGroup.key]: true }
+        : previous,
+    );
+  }, [location.pathname, visibleMainItems]);
 
   const roleName = currentUser?.userRole
     ? currentUser.userRole.replace(/_/g, ' ')
     : '';
 
+  const handleLogout = async () => {
+    await logout();
+  };
+
   return (
     <div className="min-h-screen bg-muted">
       <InstallPrompt />
       <OfflineBanner />
-      <header className="bg-card border-b border-border sticky top-0 z-50">
+      <header className="bg-card border-b border-border sticky top-0 z-50 safe-area-top">
         <div className="px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <Link to="/dashboard" className="text-lg font-bold text-foreground">
@@ -68,7 +94,7 @@ export default function AppLayout() {
                   <ChevronDown className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <p className="text-sm font-medium">{currentUser?.fullName}</p>
                   <p className="text-xs text-muted-foreground capitalize">{roleName}</p>
@@ -84,81 +110,104 @@ export default function AppLayout() {
         </div>
       </header>
 
-      {/* Mobile sidebar sheet (opened by "More" in bottom nav) */}
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="w-64 p-0">
-          <SheetHeader className="p-4 pb-0">
-            <SheetTitle className="text-lg font-bold">FarmFlow</SheetTitle>
-          </SheetHeader>
-          <Separator className="my-2" />
-          <nav className="p-4 space-y-1">
-            {filteredNavItems.map((item) => (
-              <NavLink
-                key={item.href}
+      <div className="flex min-w-0">
+        <aside className="hidden md:flex md:flex-col w-64 bg-card border-r border-border min-h-[calc(100vh-3.5rem)]">
+          <nav className="p-3 flex-1 space-y-1" aria-label="Main Navigator">
+            {visibleMainItems.map((item) => (
+              <MainNavItemView
+                key={item.key}
                 item={item}
-                active={isActive(item)}
-                onClick={() => setMobileOpen(false)}
+                pathname={location.pathname}
+                expanded={item.type === 'group' ? expandedGroupState[item.key] !== false : undefined}
+                onToggleGroup={(groupKey) => {
+                  setExpandedGroupState((previous) => ({
+                    ...previous,
+                    [groupKey]: previous[groupKey] === false,
+                  }));
+                }}
               />
             ))}
           </nav>
-          <div className="absolute bottom-4 left-4 right-4">
-            <Separator className="mb-3" />
-            <p className="text-xs text-muted-foreground truncate">
-              {currentUser?.fullName}
-            </p>
-            <Badge variant="secondary" className="mt-1 text-xs capitalize">
-              {roleName}
-            </Badge>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      <div className="flex">
-        {/* Desktop sidebar */}
-        <aside className="hidden md:flex md:flex-col w-56 bg-card border-r border-border min-h-[calc(100vh-3.5rem)]">
-          <nav className="p-4 space-y-1 flex-1">
-            {filteredNavItems.map((item) => (
-              <NavLink key={item.href} item={item} active={isActive(item)} />
-            ))}
-          </nav>
-          <div className="p-4 border-t border-border">
-            <p className="text-xs text-muted-foreground truncate">
-              {currentUser?.fullName}
-            </p>
+          <div className="px-4 pb-4 pt-2">
+            <p className="text-xs text-muted-foreground truncate">{currentUser?.fullName}</p>
             <Badge variant="secondary" className="mt-1 text-xs capitalize">
               {roleName}
             </Badge>
           </div>
         </aside>
 
-        {/* Main content — add bottom padding on mobile for bottom nav */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl pb-20 md:pb-8">
+        <main className="min-w-0 w-full flex-1 p-4 sm:p-6 lg:p-8 max-w-full lg:max-w-7xl pb-24 md:pb-8">
           <Outlet />
         </main>
       </div>
 
-      {/* Mobile bottom navigation */}
-      <MobileBottomNav onMoreClick={() => setMobileOpen(true)} />
+      <MobileBottomNav />
     </div>
   );
 }
 
-function NavLink({
+function MainNavItemView({
+  item,
+  pathname,
+  expanded,
+  onToggleGroup,
+}: {
+  item: MainNavigationItem;
+  pathname: string;
+  expanded?: boolean;
+  onToggleGroup?: (groupKey: string) => void;
+}) {
+  if (item.type === 'group') {
+    const Icon = item.icon;
+    const active = isMainNavigationItemActive(pathname, item);
+    const isExpanded = expanded ?? true;
+    return (
+      <div className="space-y-1">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => onToggleGroup?.(item.key)}
+          className={cn(
+            'flex w-full items-center gap-3 min-h-11 px-3 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+            active ? 'bg-muted text-foreground' : 'text-muted-foreground',
+          )}
+        >
+          <Icon className="h-4 w-4" />
+          <span className="flex-1 text-left">{item.label}</span>
+          <ChevronRight className={cn('h-4 w-4 transition-transform', isExpanded && 'rotate-90')} />
+        </button>
+        {isExpanded && (
+          <div className="ml-6 space-y-1">
+            {item.children.map((child) => (
+              <MainNavLink
+                key={child.key}
+                item={child}
+                active={isHrefActive(pathname, child.href)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return <MainNavLink item={item} active={isHrefActive(pathname, item.href)} />;
+}
+
+function MainNavLink({
   item,
   active,
-  onClick,
 }: {
   item: NavItem;
   active: boolean;
-  onClick?: () => void;
 }) {
   const Icon = item.icon;
   return (
     <Link
       to={item.href}
-      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
       className={cn(
-        'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+        'flex items-center gap-3 min-h-11 px-3 py-2 rounded-md text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         active
           ? 'bg-primary text-primary-foreground font-medium'
           : 'text-muted-foreground hover:text-foreground hover:bg-muted',

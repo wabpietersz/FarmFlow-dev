@@ -56,6 +56,36 @@ export async function apiDelete<T>(url: string): Promise<ApiResponse<T>> {
 }
 
 /**
+ * Get the most useful API error message for UI display.
+ */
+export function getApiErrorMessage(error: unknown, fallbackMessage: string): string {
+  const axiosErr = error as {
+    response?: {
+      data?: {
+        error?: string;
+        code?: string;
+        details?: Record<string, string[]>;
+      };
+    };
+  };
+
+  const data = axiosErr?.response?.data;
+
+  if (data?.code === 'VALIDATION_ERROR' && data?.details) {
+    const firstField = Object.values(data.details).find((messages) => Array.isArray(messages) && messages.length > 0);
+    if (firstField?.[0]) {
+      return firstField[0];
+    }
+  }
+
+  if (data?.error && data.error !== 'Validation failed') {
+    return data.error;
+  }
+
+  return fallbackMessage;
+}
+
+/**
  * Parse an API error and show specific toast messages.
  * Handles: Zod validation field errors, business logic errors, generic fallback.
  */
@@ -101,7 +131,7 @@ export function parseApiError(error: unknown, fallbackMessage: string): void {
   }
 
   // Case 3: Fallback
-  toast.error(fallbackMessage);
+  toast.error(getApiErrorMessage(error, fallbackMessage));
 }
 
 export default api;
