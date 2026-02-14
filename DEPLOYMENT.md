@@ -116,6 +116,18 @@ DATABASE_URL=<neon-connection-string> npm run db:migrate
 DATABASE_URL=<neon-connection-string> npm run db:seed
 ```
 
+### Step 5.1: Verify Readiness (Schema + DB)
+
+After migrations, verify runtime readiness before traffic cutover:
+
+```bash
+curl -sSf "https://farmflow-api-xxx-uc.a.run.app/api/health?readiness=true"
+```
+
+Expected:
+- HTTP `200` when DB is reachable and required HR/payroll tables exist.
+- HTTP `503` with `checks.hrPayrollSchema.missingTables` when schema migration is incomplete.
+
 ## Step 6: Update Firebase Auth Authorized Domains
 
 1. Go to Firebase Console > Authentication > Settings

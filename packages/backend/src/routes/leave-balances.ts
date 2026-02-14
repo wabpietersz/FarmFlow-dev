@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
-import { setLeaveBalanceSchema, updateLeaveBalanceSchema } from '../validators/attendance';
+import { setLeaveBalanceSchema, updateLeaveBalanceSchema, bulkSetLeaveBalanceSchema } from '../validators/attendance';
 import { db } from '../db';
 import { leaveBalances, employees } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
@@ -50,7 +50,9 @@ router.get('/', authenticate, requirePermission('attendance:read'), async (req: 
       query = query.where(and(...conditions));
     }
 
-    const results = await query;
+    const results = await query.orderBy(
+      sql`${employees.firstName} ASC, ${employees.lastName} ASC, ${leaveBalances.leaveType} ASC`
+    );
 
     res.json({
       success: true,
@@ -107,6 +109,81 @@ router.get('/:employeeId', authenticate, requirePermission('attendance:read'), a
   }
 });
 
+// POST /api/leave-balances/bulk — bulk create/set leave balances
+router.post('/bulk', authenticate, requirePermission('attendance:create'), validate(bulkSetLeaveBalanceSchema), async (req: Request, res: Response) => {
+  try {
+    const { year, balances } = req.body;
+
+    const results = await db.transaction(async (tx) => {
+      const changed = [];
+      let createdCount = 0;
+      let updatedCount = 0;
+      for (const balance of balances) {
+        // Upsert: update if exists, insert if not
+        const [existing] = await tx
+          .select()
+          .from(leaveBalances)
+          .where(
+            and(
+              eq(leaveBalances.employeeId, balance.employeeId),
+              eq(leaveBalances.leaveType, balance.leaveType),
+              eq(leaveBalances.year, year),
+            ),
+          )
+          .limit(1);
+
+        let result;
+        if (existing) {
+          [result] = await tx
+            .update(leaveBalances)
+            .set({ totalDays: balance.totalDays.toString(), updatedAt: new Date() })
+            .where(eq(leaveBalances.id, existing.id))
+            .returning();
+          updatedCount += 1;
+        } else {
+          [result] = await tx
+            .insert(leaveBalances)
+            .values({
+              employeeId: balance.employeeId,
+              leaveType: balance.leaveType,
+              year,
+              totalDays: balance.totalDays.toString(),
+            })
+            .returning();
+          createdCount += 1;
+        }
+        changed.push(result);
+      }
+      return { changed, createdCount, updatedCount };
+    });
+
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'leave_balance.bulk_update',
+      entityType: 'leave_balance',
+      changes: { year, count: results.changed.length, createdCount: results.createdCount, updatedCount: results.updatedCount },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: results.changed,
+      total: results.changed.length,
+      meta: { createdCount: results.createdCount, updatedCount: results.updatedCount },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to bulk set leave balances', { error });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to bulk set leave balances',
+      code: 'INTERNAL_ERROR',
+      statusCode: 500,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // POST /api/leave-balances — create/set leave balance (upsert)
 router.post('/', authenticate, requirePermission('attendance:create'), validate(setLeaveBalanceSchema), async (req: Request, res: Response) => {
   try {
@@ -147,13 +224,13 @@ router.post('/', authenticate, requirePermission('attendance:create'), validate(
     if (existing) {
       [result] = await db
         .update(leaveBalances)
-        .set({ totalDays, updatedAt: new Date() })
+        .set({ totalDays: totalDays.toString(), updatedAt: new Date() }) // string for decimal
         .where(eq(leaveBalances.id, existing.id))
         .returning();
     } else {
       [result] = await db
         .insert(leaveBalances)
-        .values({ employeeId, leaveType, year, totalDays })
+        .values({ employeeId, leaveType, year, totalDays: totalDays.toString() }) // string for decimal
         .returning();
     }
 
@@ -170,7 +247,7 @@ router.post('/', authenticate, requirePermission('attendance:create'), validate(
       success: true,
       data: {
         ...result,
-        balanceDays: result.totalDays - result.usedDays,
+        balanceDays: Number(result.totalDays) - Number(result.usedDays),
       },
       timestamp: new Date().toISOString(),
     });
@@ -227,7 +304,7 @@ router.put('/:id', authenticate, requirePermission('attendance:update'), validat
       success: true,
       data: {
         ...updated,
-        balanceDays: updated.totalDays - updated.usedDays,
+        balanceDays: Number(updated.totalDays) - Number(updated.usedDays),
       },
       timestamp: new Date().toISOString(),
     });

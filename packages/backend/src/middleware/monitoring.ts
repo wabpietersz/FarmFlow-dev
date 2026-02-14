@@ -6,6 +6,8 @@
  * - Alert threshold checking
  */
 import { Request, Response, NextFunction } from 'express';
+import { db } from '../db';
+import { sql } from 'drizzle-orm';
 import logger from '../lib/logger';
 
 // ==================== In-Memory Metrics ====================
@@ -31,6 +33,15 @@ const metrics: RequestMetrics = {
 };
 
 const WINDOW_SIZE = 60000; // 1-minute window for rate calculation
+const REQUIRED_HR_PAYROLL_TABLES = [
+  'employee_compensation',
+  'employee_compensation_revisions',
+  'employee_compensation_components',
+  'compensation_templates',
+  'payroll',
+  'payroll_deductions',
+  'payroll_allowances',
+] as const;
 
 /**
  * Middleware to collect request metrics.
@@ -124,8 +135,38 @@ export function getMetrics() {
  * Health check handler with dependency status.
  */
 export async function healthCheckHandler(_req: Request, res: Response) {
+  const readinessRequested = _req.query.readiness === 'true';
+
+  let databaseConnected = false;
+  let missingHrPayrollTables: string[] = [];
+  let dbError: string | undefined;
+
+  try {
+    await db.execute(sql`select 1`);
+    databaseConnected = true;
+
+    const checks = await Promise.all(
+      REQUIRED_HR_PAYROLL_TABLES.map(async (tableName) => {
+        const result = await db.execute(sql`
+          select to_regclass(${`public.${tableName}`}) as table_name
+        `);
+        const row = Array.isArray(result) ? (result[0] as { table_name?: string | null } | undefined) : undefined;
+        return { tableName, exists: !!row?.table_name };
+      }),
+    );
+
+    missingHrPayrollTables = checks.filter((item) => !item.exists).map((item) => item.tableName);
+  } catch (error) {
+    dbError = error instanceof Error ? error.message : 'Unknown database error';
+    logger.warn('Health check database probe failed', { error });
+  }
+
+  const hrPayrollSchemaReady = databaseConnected && missingHrPayrollTables.length === 0;
+  const ready = databaseConnected && hrPayrollSchemaReady;
+
   const health: Record<string, unknown> = {
     status: 'ok',
+    ready,
     timestamp: new Date().toISOString(),
     version: '1.0.0',
     uptime: Math.floor((Date.now() - metrics.startTime) / 1000),
@@ -133,7 +174,25 @@ export async function healthCheckHandler(_req: Request, res: Response) {
       rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
       heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
     },
+    checks: {
+      database: {
+        status: databaseConnected ? 'ok' : 'error',
+        error: dbError,
+      },
+      hrPayrollSchema: {
+        status: hrPayrollSchemaReady ? 'ok' : 'error',
+        missingTables: missingHrPayrollTables,
+      },
+    },
   };
+
+  if (readinessRequested && !ready) {
+    res.status(503).json({
+      ...health,
+      status: 'degraded',
+    });
+    return;
+  }
 
   res.json(health);
 }

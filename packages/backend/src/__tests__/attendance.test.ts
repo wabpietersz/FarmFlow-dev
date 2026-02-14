@@ -241,6 +241,30 @@ describe('Attendance Module Routes', () => {
       expect(res.body.success).toBe(true);
     });
 
+    it('GET /api/attendance should fallback when leave_type column is missing', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [mockAttendance], [mockAttendance], [{ total: 1 }]);
+      dbChains[1]!.select.mockImplementation(() => {
+        throw { code: '42703', message: 'column attendance.leave_type does not exist' };
+      });
+
+      const res = await authedRequest('get', '/api/attendance');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('GET /api/attendance should fallback when shifts relation is missing', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [mockAttendance], [mockAttendance], [{ total: 1 }]);
+      dbChains[1]!.select.mockImplementation(() => {
+        throw { code: '42P01', message: 'relation "shifts" does not exist' };
+      });
+
+      const res = await authedRequest('get', '/api/attendance');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
     it('GET /api/attendance/summary should return counts', async () => {
       setupAuth(supervisor);
       setChains([supervisor], [{ totalPresent: 5, totalAbsent: 2, totalOnLeave: 1, totalHalfDay: 0, totalRecords: 8 }]);
@@ -248,6 +272,16 @@ describe('Attendance Module Routes', () => {
       const res = await authedRequest('get', '/api/attendance/summary?startDate=2026-02-01&endDate=2026-02-01');
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+    });
+
+    it('GET /api/attendance/employees should return employee options for attendance', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [{ id: 1, firstName: 'John', lastName: 'Doe', status: 'active', siteId: 1 }]);
+
+      const res = await authedRequest('get', '/api/attendance/employees');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Array.isArray(res.body.data)).toBe(true);
     });
 
     it('POST /api/attendance should record attendance', async () => {
@@ -263,6 +297,40 @@ describe('Attendance Module Routes', () => {
       expect(res.body.success).toBe(true);
     });
 
+    it('POST /api/attendance should fallback when leave_type column is missing', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [], [], [mockAttendance]);
+      dbChains[2]!.insert.mockImplementation(() => {
+        throw { code: '42703', message: 'column "leave_type" of relation "attendance" does not exist' };
+      });
+
+      const res = await authedRequest('post', '/api/attendance').send({
+        employeeId: 1,
+        attendanceDate: '2026-02-01',
+        status: 'present',
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(dbChains[3]!.returning).toHaveBeenCalledWith(expect.any(Object));
+    });
+
+    it('POST /api/attendance should fallback when shift_id column is missing', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [], [], [mockAttendance]);
+      dbChains[2]!.insert.mockImplementation(() => {
+        throw { code: '42703', message: 'column "shift_id" of relation "attendance" does not exist' };
+      });
+
+      const res = await authedRequest('post', '/api/attendance').send({
+        employeeId: 1,
+        attendanceDate: '2026-02-01',
+        status: 'present',
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(dbChains[3]!.returning).toHaveBeenCalledWith(expect.any(Object));
+    });
+
     it('POST /api/attendance should reject duplicate', async () => {
       setupAuth(supervisor);
       setChains([supervisor], [mockAttendance]);
@@ -273,6 +341,33 @@ describe('Attendance Module Routes', () => {
         status: 'present',
       });
       expect(res.status).toBe(409);
+    });
+
+    it('POST /api/attendance should require leaveType for on_leave', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor]);
+
+      const res = await authedRequest('post', '/api/attendance').send({
+        employeeId: 1,
+        attendanceDate: '2026-02-01',
+        status: 'on_leave',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('POST /api/attendance should accept half_day with leaveType', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [], [mockAttendance]);
+
+      const res = await authedRequest('post', '/api/attendance').send({
+        employeeId: 1,
+        attendanceDate: '2026-02-01',
+        status: 'half_day',
+        leaveType: 'casual',
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
     });
 
     it('POST /api/attendance/bulk should record bulk attendance', async () => {
@@ -286,6 +381,40 @@ describe('Attendance Module Routes', () => {
       });
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
+    });
+
+    it('POST /api/attendance/bulk should fallback when leave_type column is missing', async () => {
+      setupAuth(supervisor);
+      // auth, tx duplicate, tx insert (fails), fallback tx duplicate, fallback tx insert
+      setChains([supervisor], [], [], [], [mockAttendance]);
+      dbChains[2]!.insert.mockImplementation(() => {
+        throw { code: '42703', message: 'column "leave_type" of relation "attendance" does not exist' };
+      });
+
+      const res = await authedRequest('post', '/api/attendance/bulk').send({
+        attendanceDate: '2026-02-01',
+        records: [{ employeeId: 1, status: 'present' }],
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(dbChains[4]!.returning).toHaveBeenCalledWith(expect.any(Object));
+    });
+
+    it('POST /api/attendance/bulk should fallback when shift_id column is missing', async () => {
+      setupAuth(supervisor);
+      // auth, tx duplicate, tx insert (fails), fallback tx duplicate, fallback tx insert
+      setChains([supervisor], [], [], [], [mockAttendance]);
+      dbChains[2]!.insert.mockImplementation(() => {
+        throw { code: '42703', message: 'column "shift_id" of relation "attendance" does not exist' };
+      });
+
+      const res = await authedRequest('post', '/api/attendance/bulk').send({
+        attendanceDate: '2026-02-01',
+        records: [{ employeeId: 1, status: 'present' }],
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(dbChains[4]!.returning).toHaveBeenCalledWith(expect.any(Object));
     });
 
     it('PUT /api/attendance/:id should update attendance', async () => {
@@ -361,6 +490,32 @@ describe('Attendance Module Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
     });
+
+    it('POST /api/leave-balances/bulk should create/update balances', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor], [mockLeaveBalance]);
+
+      const res = await authedRequest('post', '/api/leave-balances/bulk').send({
+        year: 2026,
+        balances: [
+          { employeeId: 1, leaveType: 'casual', totalDays: 12.5 },
+        ],
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('POST /api/leave-balances/bulk should validate payload', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor]);
+
+      const res = await authedRequest('post', '/api/leave-balances/bulk').send({
+        year: 2026,
+        balances: [],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
   });
 
   // ==================== PERMISSIONS ====================
@@ -384,6 +539,14 @@ describe('Attendance Module Routes', () => {
         attendanceDate: '2026-02-01',
         status: 'present',
       });
+      expect(res.status).toBe(403);
+    });
+
+    it('GET /api/attendance/employees should return 403 for viewer', async () => {
+      setupAuth(viewer);
+      setChains([viewer]);
+
+      const res = await authedRequest('get', '/api/attendance/employees');
       expect(res.status).toBe(403);
     });
 

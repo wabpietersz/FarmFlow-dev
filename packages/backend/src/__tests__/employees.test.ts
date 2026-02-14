@@ -14,7 +14,7 @@ jest.mock('../lib/audit', () => ({
 }));
 
 // Build a flexible chainable DB mock
-function createChainMock(resolvedValue: unknown = []) {
+function createChainMock(resolvedValue: unknown = [], rejectedValue?: unknown) {
   const chain: Record<string, jest.Mock> = {};
   const methods = [
     'select', 'from', 'where', 'limit', 'offset', 'orderBy',
@@ -28,7 +28,19 @@ function createChainMock(resolvedValue: unknown = []) {
   for (const m of methods) {
     chain[m].mockImplementation(() => {
       // Make the chain thenable (for await)
-      const proxy = { ...chain, then: (resolve: (v: unknown) => void) => resolve(resolvedValue) };
+      const proxy = {
+        ...chain,
+        then: (resolve: (v: unknown) => void, reject?: (reason?: unknown) => void) => {
+          if (rejectedValue !== undefined) {
+            if (reject) {
+              reject(rejectedValue);
+              return;
+            }
+            throw rejectedValue;
+          }
+          resolve(resolvedValue);
+        },
+      };
       return proxy;
     });
   }
@@ -122,9 +134,18 @@ function setupAuth(user: { firebaseUid: string; [key: string]: unknown }) {
   // This is the first DB chain call in each request
 }
 
-function setChains(...resolvedValues: unknown[]) {
+function rejectChain(error: unknown) {
+  return { __reject: error };
+}
+
+function setChains(...resolvedValues: Array<unknown | { __reject: unknown }>) {
   chainIndex = 0;
-  dbChains = resolvedValues.map((v) => createChainMock(v));
+  dbChains = resolvedValues.map((v) => {
+    if (typeof v === 'object' && v !== null && '__reject' in v) {
+      return createChainMock([], v.__reject);
+    }
+    return createChainMock(v);
+  });
 }
 
 function authedRequest(method: 'get' | 'post' | 'put' | 'delete', url: string) {
@@ -228,6 +249,7 @@ describe('Employee Routes', () => {
         [mockEmployee],    // employee lookup
         contacts,          // emergency contacts
         [bank],            // bank details
+        [],                // compensation
       );
 
       const res = await authedRequest('get', '/api/employees/10');
@@ -383,6 +405,185 @@ describe('Employee Routes', () => {
 
       const res = await authedRequest('delete', '/api/employees/999');
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('Employee Compensation', () => {
+    it('PUT /api/employees/:id/compensation should create compensation', async () => {
+      setupAuth(adminUser);
+      const createdComp = {
+        id: 1,
+        employeeId: 10,
+        payType: 'monthly',
+        baseRate: '25000.00',
+        overtimeRate: '120.00',
+        effectiveFrom: '2026-01-01',
+      };
+
+      setChains([adminUser], [mockEmployee], [], [createdComp]);
+
+      const res = await authedRequest('put', '/api/employees/10/compensation').send({
+        payType: 'monthly',
+        baseRate: 25000,
+        overtimeRate: 120,
+        effectiveFrom: '2026-01-01',
+      });
+
+      expect([200, 201]).toContain(res.status);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('PUT /api/employees/:id/compensation should upsert existing compensation', async () => {
+      setupAuth(adminUser);
+      const existingComp = { id: 1, employeeId: 10, payType: 'daily', baseRate: '1000.00' };
+      const updatedComp = { ...existingComp, payType: 'monthly', baseRate: '22000.00' };
+
+      setChains([adminUser], [mockEmployee], [existingComp], [updatedComp]);
+
+      const res = await authedRequest('put', '/api/employees/10/compensation').send({
+        payType: 'monthly',
+        baseRate: 22000,
+        overtimeRate: 100,
+        effectiveFrom: '2026-01-01',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('PUT /api/employees/:id/compensation should return actionable 503 when compensation schema is missing', async () => {
+      setupAuth(adminUser);
+      setChains(
+        [adminUser],
+        [mockEmployee],
+        rejectChain({ code: '42P01', message: 'relation "employee_compensation" does not exist' }),
+      );
+
+      const res = await authedRequest('put', '/api/employees/10/compensation').send({
+        payType: 'monthly',
+        baseRate: 22000,
+        overtimeRate: 100,
+        effectiveFrom: '2026-01-01',
+      });
+
+      expect(res.status).toBe(503);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('COMPENSATION_SCHEMA_NOT_READY');
+      expect(res.body.error).toContain('Run backend migrations');
+    });
+
+    it('GET /api/employees/:id should include compensation object', async () => {
+      setupAuth(adminUser);
+      const compensation = {
+        id: 1,
+        employeeId: 10,
+        payType: 'monthly',
+        baseRate: '22000.00',
+        overtimeRate: '100.00',
+        effectiveFrom: '2026-01-01',
+      };
+
+      setChains([adminUser], [mockEmployee], [], [], [compensation]);
+
+      const res = await authedRequest('get', '/api/employees/10');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.compensation).toBeDefined();
+    });
+
+    it('DELETE /api/employees/:id/compensation should remove compensation', async () => {
+      setupAuth(adminUser);
+      const deletedComp = { id: 1, employeeId: 10 };
+
+      setChains([adminUser], [mockEmployee], [deletedComp]);
+
+      const res = await authedRequest('delete', '/api/employees/10/compensation');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('DELETE /api/employees/:id/compensation should return actionable 503 when compensation schema is missing', async () => {
+      setupAuth(adminUser);
+      setChains(
+        [adminUser],
+        [mockEmployee],
+        rejectChain({ code: '42P01', message: 'relation "employee_compensation" does not exist' }),
+      );
+
+      const res = await authedRequest('delete', '/api/employees/10/compensation');
+      expect(res.status).toBe(503);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('COMPENSATION_SCHEMA_NOT_READY');
+      expect(res.body.error).toContain('Run backend migrations');
+    });
+
+    it('PUT /api/employees/:id/compensation/revisions/:revisionId should allow editing an ongoing revision', async () => {
+      setupAuth(adminUser);
+      const existingRevision = {
+        id: 20,
+        employeeId: 10,
+        payType: 'monthly',
+        baseRate: '20000.00',
+        overtimeRate: '100.00',
+        effectiveFrom: '2026-02-01',
+        effectiveTo: null,
+        standardHoursPerDay: '8.00',
+        notes: null,
+        isActive: false,
+      };
+      const updatedRevision = {
+        ...existingRevision,
+        baseRate: '22000.00',
+      };
+
+      setChains(
+        [adminUser],       // auth
+        [mockEmployee],    // employee lookup
+        [existingRevision],// existing revision lookup
+        [],                // overlap check
+        [updatedRevision], // update returning
+        [],                // deactivate ended revisions update
+        [],                // revision components
+      );
+
+      const res = await authedRequest('put', '/api/employees/10/compensation/revisions/20').send({
+        baseRate: 22000,
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('DELETE /api/employees/:id/compensation/revisions/:revisionId should delete a compensation revision', async () => {
+      setupAuth(adminUser);
+      const revision = {
+        id: 20,
+        employeeId: 10,
+        payType: 'monthly',
+        baseRate: '20000.00',
+        overtimeRate: '100.00',
+        effectiveFrom: '2026-02-01',
+        effectiveTo: null,
+        standardHoursPerDay: '8.00',
+        notes: null,
+        isActive: true,
+      };
+
+      setChains(
+        [adminUser],       // auth
+        [mockEmployee],    // employee lookup
+        [revision],        // target revision lookup
+        [revision],        // delete returning
+        [],                // deactivate ended revisions update
+        [],                // current revision lookup after delete
+        [],                // delete legacy compensation fallback
+      );
+
+      const res = await authedRequest('delete', '/api/employees/10/compensation/revisions/20');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBe(20);
     });
   });
 });

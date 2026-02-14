@@ -3,7 +3,10 @@ import {
   serial,
   varchar,
   integer,
+  decimal,
+  boolean,
   date,
+  text,
   timestamp,
   index,
 } from 'drizzle-orm/pg-core';
@@ -61,3 +64,74 @@ export const bankDetails = pgTable('bank_details', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const employeeCompensation = pgTable(
+  'employee_compensation',
+  {
+    id: serial('id').primaryKey(),
+    employeeId: integer('employee_id')
+      .references(() => employees.id, { onDelete: 'cascade' })
+      .unique()
+      .notNull(),
+    payType: varchar('pay_type', { length: 20 }).notNull(),
+    baseRate: decimal('base_rate', { precision: 12, scale: 2 }).notNull(),
+    overtimeRate: decimal('overtime_rate', { precision: 10, scale: 2 }).default('0').notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_employee_compensation_employee_id').on(table.employeeId),
+    index('idx_employee_compensation_pay_type').on(table.payType),
+  ],
+);
+
+export const employeeCompensationRevisions = pgTable(
+  'employee_compensation_revisions',
+  {
+    id: serial('id').primaryKey(),
+    employeeId: integer('employee_id')
+      .references(() => employees.id, { onDelete: 'cascade' })
+      .notNull(),
+    payType: varchar('pay_type', { length: 20 }).notNull(),
+    baseRate: decimal('base_rate', { precision: 12, scale: 2 }).notNull(),
+    overtimeRate: decimal('overtime_rate', { precision: 10, scale: 2 }).default('0').notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    effectiveTo: date('effective_to'),
+    standardHoursPerDay: decimal('standard_hours_per_day', { precision: 4, scale: 2 }).default('8.00').notNull(),
+    notes: text('notes'),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_employee_comp_revisions_employee_id').on(table.employeeId),
+    index('idx_employee_comp_revisions_effective_from').on(table.effectiveFrom),
+    index('idx_employee_comp_revisions_effective_to').on(table.effectiveTo),
+    index('idx_employee_comp_revisions_active').on(table.isActive),
+  ],
+);
+
+export const employeeCompensationComponents = pgTable(
+  'employee_compensation_components',
+  {
+    id: serial('id').primaryKey(),
+    revisionId: integer('revision_id')
+      .references(() => employeeCompensationRevisions.id, { onDelete: 'cascade' })
+      .notNull(),
+    componentType: varchar('component_type', { length: 20 }).notNull(),
+    name: varchar('name', { length: 100 }).notNull(),
+    calculationType: varchar('calculation_type', { length: 20 }).notNull(),
+    value: decimal('value', { precision: 12, scale: 2 }).notNull(),
+    isTaxable: boolean('is_taxable').default(false).notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_employee_comp_components_revision_id').on(table.revisionId),
+    index('idx_employee_comp_components_type').on(table.componentType),
+    index('idx_employee_comp_components_active').on(table.isActive),
+  ],
+);

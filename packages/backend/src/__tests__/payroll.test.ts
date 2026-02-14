@@ -210,8 +210,8 @@ describe('Payroll Module Routes', () => {
 
     it('POST /api/payroll should create draft payroll', async () => {
       setupAuth(accountant);
-      // auth, employee check, attendance count, insert
-      setChains([accountant], [mockEmployee], [{ present: 20, halfDays: 2 }], [mockPayroll]);
+      // auth, employee check, existing payroll check, attendance count, insert
+      setChains([accountant], [mockEmployee], [], [{ present: 20, halfDays: 2 }], [mockPayroll]);
 
       const res = await authedRequest('post', '/api/payroll').send({
         employeeId: 1,
@@ -221,6 +221,38 @@ describe('Payroll Module Routes', () => {
       });
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
+    });
+
+    it('POST /api/payroll should store decimal attendedDays for half-day precision', async () => {
+      setupAuth(accountant);
+      setChains([accountant], [mockEmployee], [], [{ present: 20, halfDays: 1 }], [mockPayroll]);
+
+      const res = await authedRequest('post', '/api/payroll').send({
+        employeeId: 1,
+        payPeriod: '2026-02-01',
+        baseSalary: 15000,
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      const insertChain = dbChains.find((chain) => chain.values.mock.calls.length > 0);
+      const insertedValues = insertChain?.values.mock.calls[0]?.[0] as { attendedDays: string };
+      expect(insertedValues.attendedDays).toBe('19.5');
+    });
+
+    it('POST /api/payroll should return 409 when payroll already exists in same month', async () => {
+      setupAuth(accountant);
+      setChains([accountant], [mockEmployee], [{ id: 9 }]);
+
+      const res = await authedRequest('post', '/api/payroll').send({
+        employeeId: 1,
+        payPeriod: '2026-02-15',
+        baseSalary: 15000,
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('PAYROLL_ALREADY_EXISTS');
     });
 
     it('POST /api/payroll should return 404 for missing employee', async () => {
@@ -238,11 +270,23 @@ describe('Payroll Module Routes', () => {
 
     it('POST /api/payroll/generate should generate payroll for active employees', async () => {
       setupAuth(accountant);
-      // auth, active employees, then for each: check existing, count attendance, insert
+      // auth, active employees, existing payroll check, revisions, components, attendance, insert
       setChains(
         [accountant],
-        [mockEmployee],
-        [], // no existing payroll
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [{
+          id: 10,
+          employeeId: 1,
+          payType: 'monthly',
+          baseRate: '15000.00',
+          overtimeRate: '100.00',
+          standardHoursPerDay: '8.00',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isActive: true,
+        }],
+        [],
         [{ present: 20, halfDays: 2 }],
         [mockPayroll],
       );
@@ -253,6 +297,178 @@ describe('Payroll Module Routes', () => {
       });
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
+    });
+
+    it('POST /api/payroll/generate should calculate monthly baseSalary from compensation', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [{
+          id: 20,
+          employeeId: 1,
+          payType: 'monthly',
+          baseRate: '25000.00',
+          overtimeRate: '120.00',
+          standardHoursPerDay: '8.00',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isActive: true,
+        }],
+        [],
+        [{ present: 20, halfDays: 2 }],
+        [mockPayroll],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      const insertedValues = dbChains[6]!.values.mock.calls[0]?.[0] as { baseSalary: string };
+      expect(insertedValues.baseSalary).toBe('25000.00');
+    });
+
+    it('POST /api/payroll/generate should calculate daily baseSalary from compensation', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [{
+          id: 21,
+          employeeId: 1,
+          payType: 'daily',
+          baseRate: '1000.00',
+          overtimeRate: '75.00',
+          standardHoursPerDay: '8.00',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isActive: true,
+        }],
+        [],
+        [{ present: 22, halfDays: 0 }],
+        [mockPayroll],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      const insertedValues = dbChains[6]!.values.mock.calls[0]?.[0] as { baseSalary: string };
+      expect(insertedValues.baseSalary).toBe('22000.00');
+    });
+
+    it('POST /api/payroll/generate should calculate hourly baseSalary from compensation', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [{
+          id: 22,
+          employeeId: 1,
+          payType: 'hourly',
+          baseRate: '100.00',
+          overtimeRate: '60.00',
+          standardHoursPerDay: '8.00',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isActive: true,
+        }],
+        [],
+        [{ present: 22, halfDays: 0 }],
+        [mockPayroll],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      const insertedValues = dbChains[6]!.values.mock.calls[0]?.[0] as { baseSalary: string };
+      expect(insertedValues.baseSalary).toBe('17600.00');
+    });
+
+    it('POST /api/payroll/generate should allow manual-style generation without compensation and return warnings', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [],
+        [{ present: 20, halfDays: 0 }],
+        [mockPayroll],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.total).toBe(1);
+      expect(res.body.meta.employeesWithoutCompensation).toBe(1);
+      expect(res.body.meta.skipped).toBe(0);
+      expect(res.body.meta.warningCount).toBeGreaterThan(0);
+    });
+
+    it('POST /api/payroll/generate should populate overtimeRate from compensation', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [{
+          id: 23,
+          employeeId: 1,
+          payType: 'monthly',
+          baseRate: '25000.00',
+          overtimeRate: '135.50',
+          standardHoursPerDay: '8.00',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isActive: true,
+        }],
+        [],
+        [{ present: 20, halfDays: 0 }],
+        [mockPayroll],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(201);
+      const insertedValues = dbChains[6]!.values.mock.calls[0]?.[0] as { overtimeRate: string | null };
+      expect(insertedValues.overtimeRate).toBe('135.50');
+    });
+
+    it('POST /api/payroll/generate/precheck should return structured warnings', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ id: 1, firstName: 'Test', lastName: 'Employee' }],
+        [],
+        [],
+      );
+
+      const res = await authedRequest('post', '/api/payroll/generate/precheck').send({
+        payPeriod: '2026-02-01',
+        workingDays: 22,
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.summary.totalEmployees).toBe(1);
+      expect(res.body.data.summary.warningEmployees).toBe(1);
+      expect(res.body.data.checks[0].warnings[0].code).toBe('MISSING_COMPENSATION');
     });
 
     it('PUT /api/payroll/:id should update draft payroll', async () => {
@@ -274,6 +490,31 @@ describe('Payroll Module Routes', () => {
         notes: 'Updated',
       });
       expect(res.status).toBe(400);
+    });
+
+    it('DELETE /api/payroll/:id should delete draft payroll', async () => {
+      setupAuth(accountant);
+      setChains([accountant], [{ id: 1, employeeId: 1, status: 'draft' }], []);
+
+      const res = await authedRequest('delete', '/api/payroll/1');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('DELETE /api/payroll/:id should reject delete on non-draft payroll', async () => {
+      setupAuth(accountant);
+      setChains([accountant], [{ id: 1, employeeId: 1, status: 'approved' }]);
+
+      const res = await authedRequest('delete', '/api/payroll/1');
+      expect(res.status).toBe(400);
+    });
+
+    it('DELETE /api/payroll/:id should return 404 when payroll is missing', async () => {
+      setupAuth(accountant);
+      setChains([accountant], []);
+
+      const res = await authedRequest('delete', '/api/payroll/999');
+      expect(res.status).toBe(404);
     });
   });
 
@@ -413,6 +654,14 @@ describe('Payroll Module Routes', () => {
       setChains([viewer]);
 
       const res = await authedRequest('get', '/api/payroll');
+      expect(res.status).toBe(403);
+    });
+
+    it('DELETE /api/payroll/:id should return 403 for supervisor (no payroll:delete)', async () => {
+      setupAuth(supervisor);
+      setChains([supervisor]);
+
+      const res = await authedRequest('delete', '/api/payroll/1');
       expect(res.status).toBe(403);
     });
   });

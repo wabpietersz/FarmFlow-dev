@@ -43,6 +43,34 @@
       "when": 1770981865956,
       "tag": "0005_early_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771052482795,
+      "tag": "0006_soft_wraith",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771056781413,
+      "tag": "0007_parallel_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771070400000,
+      "tag": "0008_steady_vermin",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771071000000,
+      "tag": "0009_solid_captain_britain",
+      "breakpoints": true
     }
   ]
 }

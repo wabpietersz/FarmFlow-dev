@@ -13,7 +13,7 @@ import {
   requestTimeout,
   additionalSecurityHeaders,
 } from './middleware/security';
-import { metricsCollector } from './middleware/monitoring';
+import { healthCheckHandler, metricsCollector } from './middleware/monitoring';
 import routes from './routes';
 
 const app = express();
@@ -69,9 +69,7 @@ app.use('/api/auth', authRateLimiter);
 app.use('/api', routes);
 
 // Also mount health check at root for load balancer
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
-});
+app.get('/health', healthCheckHandler);
 
 // Error handling
 app.use(notFoundHandler);

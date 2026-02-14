@@ -3,13 +3,15 @@ import {
   serial,
   varchar,
   integer,
+  boolean,
   decimal,
   date,
   text,
   timestamp,
+  jsonb,
   index,
 } from 'drizzle-orm/pg-core';
-import { employees } from './employees';
+import { employees, employeeCompensationRevisions } from './employees';
 import { users } from './users';
 
 export const payroll = pgTable(
@@ -22,7 +24,7 @@ export const payroll = pgTable(
     payPeriod: date('pay_period').notNull(),
     baseSalary: decimal('base_salary', { precision: 12, scale: 2 }).notNull(),
     workingDays: integer('working_days').notNull(),
-    attendedDays: integer('attended_days').notNull(),
+    attendedDays: decimal('attended_days', { precision: 6, scale: 1 }).notNull(),
     overtimeHours: decimal('overtime_hours', { precision: 8, scale: 2 }).default('0'),
     overtimeRate: decimal('overtime_rate', { precision: 10, scale: 2 }),
     grossSalary: decimal('gross_salary', { precision: 12, scale: 2 }).notNull(),
@@ -30,6 +32,9 @@ export const payroll = pgTable(
     status: varchar('status', { length: 50 }).default('draft').notNull(),
     approvedBy: integer('approved_by').references(() => users.id),
     paidDate: date('paid_date'),
+    compensationRevisionId: integer('compensation_revision_id')
+      .references(() => employeeCompensationRevisions.id),
+    compensationSnapshot: jsonb('compensation_snapshot'),
     notes: text('notes'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -38,6 +43,7 @@ export const payroll = pgTable(
     index('idx_payroll_employee_id').on(table.employeeId),
     index('idx_payroll_pay_period').on(table.payPeriod),
     index('idx_payroll_status').on(table.status),
+    index('idx_payroll_compensation_revision_id').on(table.compensationRevisionId),
   ],
 );
 
@@ -60,3 +66,21 @@ export const payrollAllowances = pgTable('payroll_allowances', {
   amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
   remarks: text('remarks'),
 });
+
+export const compensationTemplates = pgTable(
+  'compensation_templates',
+  {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    category: varchar('category', { length: 20 }).notNull(),
+    defaultAmount: decimal('default_amount', { precision: 12, scale: 2 }),
+    description: text('description'),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_compensation_templates_category').on(table.category),
+    index('idx_compensation_templates_active').on(table.isActive),
+  ],
+);

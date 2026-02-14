@@ -15,6 +15,7 @@ import shiftRoutes from './shifts';
 import attendanceRoutes from './attendance';
 import leaveBalanceRoutes from './leave-balances';
 import payrollRoutes from './payroll';
+import compensationTemplateRoutes from './compensation-templates';
 import { healthCheckHandler, metricsHandler } from '../middleware/monitoring';
 import { authenticate, requirePermission } from '../middleware/auth';
 
@@ -63,5 +64,6 @@ router.use('/shifts', shiftRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/leave-balances', leaveBalanceRoutes);
 router.use('/payroll', payrollRoutes);
+router.use('/compensation-templates', compensationTemplateRoutes);
 
 export default router;
