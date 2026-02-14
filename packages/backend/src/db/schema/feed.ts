@@ -114,6 +114,8 @@ export const feedProductionMaterials = pgTable('feed_production_materials', {
     .notNull(),
   plannedQuantity: decimal('planned_quantity', { precision: 10, scale: 2 }).notNull(),
   actualQuantity: decimal('actual_quantity', { precision: 10, scale: 2 }),
+  actualCost: decimal('actual_cost', { precision: 12, scale: 2 }),
+  weightedCostPerUnit: decimal('weighted_cost_per_unit', { precision: 10, scale: 2 }),
   unit: varchar('unit', { length: 20 }).notNull(),
 });
 
@@ -159,6 +161,8 @@ export const inventoryAuditTrail = pgTable(
     referenceId: integer('reference_id'),
     referenceType: varchar('reference_type', { length: 50 }),
     notes: text('notes'),
+    lotId: integer('lot_id'),
+    costAtTime: decimal('cost_at_time', { precision: 10, scale: 2 }),
     performedBy: integer('performed_by').references(() => users.id),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
@@ -240,6 +244,54 @@ export const purchaseOrderItems = pgTable(
   (table) => [
     index('idx_poi_order').on(table.purchaseOrderId),
     index('idx_poi_inventory').on(table.inventoryItemId),
+  ],
+);
+
+// --- Inventory Lots (FIFO Cost Tracking) ---
+
+export const inventoryLots = pgTable(
+  'inventory_lots',
+  {
+    id: serial('id').primaryKey(),
+    inventoryItemId: integer('inventory_item_id')
+      .references(() => feedInventory.id)
+      .notNull(),
+    purchaseOrderItemId: integer('purchase_order_item_id').references(() => purchaseOrderItems.id),
+    lotCode: varchar('lot_code', { length: 50 }).unique().notNull(),
+    receivedQuantity: decimal('received_quantity', { precision: 10, scale: 2 }).notNull(),
+    remainingQuantity: decimal('remaining_quantity', { precision: 10, scale: 2 }).notNull(),
+    costPerUnit: decimal('cost_per_unit', { precision: 10, scale: 2 }).notNull(),
+    receivedDate: date('received_date').notNull(),
+    expiryDate: date('expiry_date'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_lots_inventory_item').on(table.inventoryItemId),
+    index('idx_lots_remaining').on(table.remainingQuantity),
+    index('idx_lots_received_date').on(table.receivedDate),
+  ],
+);
+
+// --- Production Material Lots (FIFO Consumption Tracking) ---
+
+export const productionMaterialLots = pgTable(
+  'production_material_lots',
+  {
+    id: serial('id').primaryKey(),
+    productionMaterialId: integer('production_material_id')
+      .references(() => feedProductionMaterials.id, { onDelete: 'cascade' })
+      .notNull(),
+    inventoryLotId: integer('inventory_lot_id')
+      .references(() => inventoryLots.id)
+      .notNull(),
+    quantityUsed: decimal('quantity_used', { precision: 10, scale: 2 }).notNull(),
+    costPerUnit: decimal('cost_per_unit', { precision: 10, scale: 2 }).notNull(),
+    lineCost: decimal('line_cost', { precision: 12, scale: 2 }).notNull(),
+  },
+  (table) => [
+    index('idx_pml_material').on(table.productionMaterialId),
+    index('idx_pml_lot').on(table.inventoryLotId),
   ],
 );
 

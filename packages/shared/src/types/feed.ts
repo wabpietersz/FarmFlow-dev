@@ -53,6 +53,8 @@ export interface FeedInventory {
   costPerUnit: number;
   reorderLevel?: number | null;
   lastRestockDate?: Date | null;
+  lotCount?: number;
+  lots?: InventoryLot[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -93,7 +95,10 @@ export interface FeedProductionMaterial {
   inventoryItemId: number;
   plannedQuantity: number;
   actualQuantity?: number | null;
+  actualCost?: number | null;
+  weightedCostPerUnit?: number | null;
   unit: string;
+  lotDetails?: ProductionMaterialLotDetail[];
 }
 
 // --- Feed Distribution ---
@@ -157,7 +162,62 @@ export interface InventoryAuditEntry {
   referenceId?: number | null;
   referenceType?: string | null;
   notes?: string | null;
+  lotId?: number | null;
+  costAtTime?: number | null;
   performedBy?: number | null;
+  createdAt: Date;
+}
+
+// --- Inventory Lot interfaces (FIFO Cost Tracking) ---
+
+export interface InventoryLot {
+  id: number;
+  inventoryItemId: number;
+  purchaseOrderItemId?: number | null;
+  lotCode: string;
+  receivedQuantity: number;
+  remainingQuantity: number;
+  costPerUnit: number;
+  receivedDate: string;
+  expiryDate?: string | null;
+  notes?: string | null;
+  poOrderCode?: string | null;
+  supplierName?: string | null;
+  createdAt: Date;
+}
+
+export interface ProductionMaterialLotDetail {
+  id: number;
+  productionMaterialId: number;
+  inventoryLotId: number;
+  lotCode: string;
+  quantityUsed: number;
+  costPerUnit: number;
+  lineCost: number;
+  poOrderCode?: string | null;
+  supplierName?: string | null;
+  receivedDate: string;
+}
+
+export interface ProductionCostSummary {
+  totalMaterialCost: number;
+  costPerOutputUnit: number;
+  lotSourceCount: number;
+}
+
+export interface ProductionCostBreakdown {
+  bySupplier: { supplierName: string; totalCost: number; percentage: number }[];
+  byPurchaseOrder: { poOrderCode: string; supplierName: string; totalCost: number; percentage: number }[];
+}
+
+export interface LotConsumptionHistory {
+  id: number;
+  productionCode: string;
+  productionDate: string;
+  ingredientName: string;
+  quantityUsed: number;
+  costPerUnit: number;
+  lineCost: number;
   createdAt: Date;
 }
 

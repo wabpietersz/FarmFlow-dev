@@ -29,6 +29,9 @@ import {
   useUpdatePurchaseOrderStatus,
   useReceivePurchaseOrder,
   usePurchaseOrder,
+  useInventoryLots,
+  useProductionCostBreakdown,
+  useLotConsumptionHistory,
 } from '@/hooks/useFeed';
 import { useBatches } from '@/hooks/useBatches';
 import { Button } from '@/components/ui/button';
@@ -197,21 +200,58 @@ const EMPTY_DISTRIBUTION_FORM: DistributionForm = {
   notes: '',
 };
 
+function formatQuantity(value: number, maxFractionDigits = 2) {
+  const normalized = Number.isFinite(value) ? value : 0;
+  return normalized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: maxFractionDigits });
+}
+
 // --- Helper Component ---
 
-function ReceivePOContent({ poId, onClose, receivePOMutation }: { poId: number; onClose: () => void; receivePOMutation: ReturnType<typeof useReceivePurchaseOrder> }) {
+function ReceivePOContent(
+  {
+    poId,
+    onClose,
+    receivePOMutation,
+    inventoryById,
+  }: {
+    poId: number;
+    onClose: () => void;
+    receivePOMutation: ReturnType<typeof useReceivePurchaseOrder>;
+    inventoryById: Map<number, { quantity: number | string; unit: string }>;
+  },
+) {
   const { data: poDetailData } = usePurchaseOrder(poId);
-  const poDetail = poDetailData as unknown as { data?: { purchaseOrder: { orderCode: string; status: string }; items: { id: number; ingredientName?: string; orderedQuantity: string; receivedQuantity: string; unit: string }[] } };
+  const poDetail = poDetailData as unknown as {
+    data?: {
+      purchaseOrder: { orderCode: string; status: string };
+      items: {
+        id: number;
+        inventoryItemId: number;
+        ingredientName?: string;
+        orderedQuantity: string;
+        receivedQuantity: string;
+        unit: string;
+      }[];
+    };
+  };
   const items = poDetail?.data?.items ?? [];
   const [receiveAmounts, setReceiveAmounts] = useState<Record<number, string>>({});
 
   const handleReceive = async () => {
-    const receiveItems = items
-      .filter((item) => Number(receiveAmounts[item.id] || 0) > 0)
-      .map((item) => ({
+    const receiveItems = [];
+    for (const item of items) {
+      const receiveNow = Number(receiveAmounts[item.id] || 0);
+      if (!receiveNow || receiveNow <= 0) continue;
+      const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
+      if (receiveNow > remaining) {
+        toast.error(`Received quantity for ${item.ingredientName ?? `Item #${item.id}`} exceeds remaining amount`);
+        return;
+      }
+      receiveItems.push({
         itemId: item.id,
-        receivedQuantity: Number(receiveAmounts[item.id]),
-      }));
+        receivedQuantity: receiveNow,
+      });
+    }
 
     if (receiveItems.length === 0) {
       toast.error('Enter at least one received quantity');
@@ -246,23 +286,43 @@ function ReceivePOContent({ poId, onClose, receivePOMutation }: { poId: number; 
             <TableBody>
               {items.map((item) => {
                 const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
+                const receiveNow = Number(receiveAmounts[item.id] || 0);
+                const projectedReceived = Number(item.receivedQuantity) + receiveNow;
+                const projectedRemaining = Number(item.orderedQuantity) - projectedReceived;
+                const inventoryItem = inventoryById.get(item.inventoryItemId);
+                const currentStock = inventoryItem ? Number(inventoryItem.quantity) : null;
+                const projectedStock = currentStock != null ? currentStock + receiveNow : null;
+                const unit = inventoryItem?.unit ?? item.unit;
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="text-sm">{item.ingredientName ?? `Item #${item.id}`}</TableCell>
-                    <TableCell className="text-right text-sm">{Number(item.orderedQuantity)} {item.unit}</TableCell>
-                    <TableCell className="text-right text-sm">{Number(item.receivedQuantity)} {item.unit}</TableCell>
+                    <TableCell className="text-right text-sm">{formatQuantity(Number(item.orderedQuantity))} {item.unit}</TableCell>
+                    <TableCell className="text-right text-sm">{formatQuantity(Number(item.receivedQuantity))} {item.unit}</TableCell>
                     <TableCell className="text-right">
                       {remaining > 0 ? (
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max={remaining}
-                          placeholder="0"
-                          className="w-20 ml-auto text-right"
-                          value={receiveAmounts[item.id] || ''}
-                          onChange={(e) => setReceiveAmounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        />
+                        <div className="space-y-1">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max={remaining}
+                            placeholder="0"
+                            className="w-24 ml-auto text-right"
+                            value={receiveAmounts[item.id] || ''}
+                            onChange={(e) => setReceiveAmounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          />
+                          {receiveNow > 0 && (
+                            <div className="text-[11px] text-muted-foreground text-right">
+                              Received: {formatQuantity(Number(item.receivedQuantity))}{' -> '}{formatQuantity(projectedReceived)} {item.unit}
+                              {projectedRemaining >= 0 ? ` (remaining ${formatQuantity(projectedRemaining)})` : ''}
+                            </div>
+                          )}
+                          {receiveNow > 0 && currentStock != null && projectedStock != null && (
+                            <div className="text-[11px] text-green-700 text-right">
+                              Stock: {formatQuantity(currentStock)}{' -> '}{formatQuantity(projectedStock)} {unit}
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-green-600">Fully received</span>
                       )}
@@ -331,6 +391,9 @@ export default function FeedPage() {
   const [inventoryForm, setInventoryForm] = useState<InventoryForm>(EMPTY_INVENTORY_FORM);
   const [showRestockDialog, setShowRestockDialog] = useState<number | null>(null);
   const [restockQuantity, setRestockQuantity] = useState('');
+  const [showLotsDialog, setShowLotsDialog] = useState<number | null>(null);
+  const [showLotHistoryDialog, setShowLotHistoryDialog] = useState<number | null>(null);
+  const [showCostBreakdownDialog, setShowCostBreakdownDialog] = useState<number | null>(null);
 
   // =====================
   // PRODUCTION STATE
@@ -395,6 +458,7 @@ export default function FeedPage() {
     limit: 20,
     search: inventorySearch || undefined,
   });
+  const { data: inventoryLookupData } = useInventory({ page: 1, limit: 500 });
 
   const createSupplierMutation = useCreateSupplier();
   const updateSupplierMutation = useUpdateSupplier(editingSupplier ? String(editingSupplier.id) : '0');
@@ -411,6 +475,11 @@ export default function FeedPage() {
   const createInventoryMutation = useCreateInventory();
   const updateInventoryMutation = useUpdateInventory(editingInventory ? String(editingInventory.id) : '0');
   const restockInventoryMutation = useRestockInventory();
+
+  // Lot hooks (FIFO)
+  const { data: lotsData, isLoading: lotsLoading } = useInventoryLots(showLotsDialog ?? undefined, true);
+  const { data: costBreakdownData, isLoading: costBreakdownLoading } = useProductionCostBreakdown(showCostBreakdownDialog ?? undefined);
+  const { data: lotHistoryData, isLoading: lotHistoryLoading } = useLotConsumptionHistory(showLotHistoryDialog ?? undefined);
 
   // Production hooks
   const { data: productionsData, isLoading: productionsLoading } = useProductions({
@@ -432,6 +501,7 @@ export default function FeedPage() {
     feedType: distributionFeedTypeFilter || undefined,
   });
   const { data: completedProductionsData } = useProductions({ page: 1, limit: 100, status: 'completed' });
+  const { data: distributionProductionDetailData } = useProduction(distributionForm.productionBatchId ? distributionForm.productionBatchId : undefined);
   const { data: batchesData } = useBatches({ page: 1, limit: 100 });
 
   const createDistributionMutation = useCreateDistribution();
@@ -462,6 +532,7 @@ export default function FeedPage() {
   const recipesTotal = recipesData?.total ?? 0;
 
   const inventoryList = inventoryData?.data ?? [];
+  const inventoryLookupList = inventoryLookupData?.data ?? [];
   const inventoryTotalPages = inventoryData?.totalPages ?? 0;
   const inventoryTotal = inventoryData?.total ?? 0;
 
@@ -476,7 +547,53 @@ export default function FeedPage() {
   const activeRecipes = activeRecipesData?.data ?? [];
   const completedProductions = completedProductionsData?.data ?? [];
   const farmBatches = batchesData?.data ?? [];
-  const completionDetail = (completionDetailData as unknown as { data?: { materials?: { inventoryItemId: number; ingredientName?: string; plannedQuantity: string; actualQuantity?: string | null; unit: string; availableQuantity?: string; costPerUnit?: string }[] } })?.data;
+  const completionDetail = (completionDetailData as unknown as {
+    data?: {
+      materials?: {
+        inventoryItemId: number;
+        ingredientName?: string;
+        plannedQuantity: string;
+        actualQuantity?: string | null;
+        unit: string;
+        availableQuantity?: string;
+        costPerUnit?: string;
+      }[];
+    };
+  })?.data;
+  const distributionProductionDetail = (distributionProductionDetailData as unknown as {
+    data?: {
+      production?: { productionCode?: string; actualQuantity?: string | number | null; unit?: string };
+      totalDistributed?: number;
+      availableForDistribution?: number;
+    };
+  })?.data;
+
+  const inventoryById = new Map(
+    inventoryLookupList.map((item) => [
+      item.id,
+      { quantity: item.quantity, unit: item.unit },
+    ]),
+  );
+
+  const editingInventoryItem = editingInventory ? inventoryById.get(editingInventory.id) : null;
+  const editedQuantity = inventoryForm.quantity !== '' ? Number(inventoryForm.quantity) : null;
+  const currentEditQuantity = editingInventoryItem ? Number(editingInventoryItem.quantity) : null;
+  const editQuantityDelta = editedQuantity != null && currentEditQuantity != null
+    ? editedQuantity - currentEditQuantity
+    : null;
+
+  const restockItem = showRestockDialog ? inventoryById.get(showRestockDialog) : null;
+  const restockAmount = restockQuantity !== '' ? Number(restockQuantity) : 0;
+  const restockCurrentQuantity = restockItem ? Number(restockItem.quantity) : null;
+  const restockAfterQuantity = restockCurrentQuantity != null ? restockCurrentQuantity + restockAmount : null;
+
+  const distributionQuantity = distributionForm.quantity !== '' ? Number(distributionForm.quantity) : 0;
+  const distributionAvailableBefore = distributionProductionDetail?.availableForDistribution != null
+    ? Number(distributionProductionDetail.availableForDistribution)
+    : null;
+  const distributionAvailableAfter = distributionAvailableBefore != null
+    ? distributionAvailableBefore - distributionQuantity
+    : null;
 
   // =====================
   // SUPPLIER HANDLERS
@@ -1349,6 +1466,7 @@ export default function FeedPage() {
                         <TableHead className="hidden sm:table-cell">Cost/Unit</TableHead>
                         <TableHead className="hidden sm:table-cell">Reorder Level</TableHead>
                         <TableHead className="hidden md:table-cell">Last Restock</TableHead>
+                        <TableHead className="hidden md:table-cell">Lots</TableHead>
                         <TableHead>Stock</TableHead>
                         <TableHead className="w-[150px]" />
                       </TableRow>
@@ -1377,6 +1495,21 @@ export default function FeedPage() {
                               {item.lastRestockDate
                                 ? new Date(item.lastRestockDate).toLocaleDateString()
                                 : '--'}
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              {item.lotCount != null && item.lotCount > 0 ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 gap-1 text-xs"
+                                  onClick={() => setShowLotsDialog(item.id)}
+                                >
+                                  <Package className="h-3 w-3" />
+                                  {item.lotCount} lots
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">--</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               {isLowStock ? (
@@ -1575,6 +1708,11 @@ export default function FeedPage() {
                                 {(prod.status === 'planned' || prod.status === 'cancelled') && hasPermission('feed_production:delete') && (
                                   <Button variant="ghost" size="icon" className="text-red-600" onClick={() => setShowDeleteProductionConfirm(prod.id)}>
                                     <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {prod.status === 'completed' && (
+                                  <Button variant="ghost" size="icon" title="Cost Breakdown" onClick={() => setShowCostBreakdownDialog(prod.id)}>
+                                    <Eye className="h-4 w-4 text-purple-600" />
                                   </Button>
                                 )}
                               </div>
@@ -2366,6 +2504,18 @@ export default function FeedPage() {
                 onChange={(e) => setInventoryForm((prev) => ({ ...prev, reorderLevel: e.target.value }))}
               />
             </div>
+            {editingInventory && editedQuantity != null && currentEditQuantity != null && editQuantityDelta != null && (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
+                <p className="font-medium">Quantity Impact</p>
+                <p className="text-muted-foreground">
+                  Current: {formatQuantity(currentEditQuantity)} {inventoryForm.unit}
+                </p>
+                <p className={editQuantityDelta >= 0 ? 'text-green-700' : 'text-red-700'}>
+                  After update: {formatQuantity(editedQuantity)} {inventoryForm.unit}
+                  {' '}({editQuantityDelta >= 0 ? '+' : ''}{formatQuantity(editQuantityDelta)})
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -2420,6 +2570,17 @@ export default function FeedPage() {
               onChange={(e) => setRestockQuantity(e.target.value)}
             />
           </div>
+          {restockCurrentQuantity != null && restockAfterQuantity != null && (
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
+              <p className="font-medium">Quantity Impact</p>
+              <p className="text-muted-foreground">
+                Current: {formatQuantity(restockCurrentQuantity)} {restockItem?.unit ?? 'kg'}
+              </p>
+              <p className="text-green-700">
+                After restock: {formatQuantity(restockAfterQuantity)} {restockItem?.unit ?? 'kg'} (+{formatQuantity(restockAmount)})
+              </p>
+            </div>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
@@ -2564,19 +2725,26 @@ export default function FeedPage() {
               <div className="space-y-2">
                 <Label>Materials to consume</Label>
                 <div className="border rounded-md p-3 space-y-2 text-sm">
-                  {completionDetail.materials.map((m) => (
-                    <div key={m.inventoryItemId} className="flex justify-between">
-                      <span>{m.ingredientName ?? `Item #${m.inventoryItemId}`}</span>
-                      <span className="text-muted-foreground">
-                        {Number(m.plannedQuantity).toLocaleString()} {m.unit}
-                        {m.availableQuantity && (
-                          <span className={Number(m.availableQuantity) < Number(m.plannedQuantity) ? ' text-red-600' : ' text-green-600'}>
-                            {' '}(avail: {Number(m.availableQuantity).toLocaleString()})
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
+                  {completionDetail.materials.map((m) => {
+                    const planned = Number(m.plannedQuantity);
+                    const available = m.availableQuantity != null ? Number(m.availableQuantity) : null;
+                    const after = available != null ? available - planned : null;
+                    return (
+                      <div key={m.inventoryItemId} className="flex justify-between gap-4">
+                        <span>{m.ingredientName ?? `Item #${m.inventoryItemId}`}</span>
+                        <div className="text-right">
+                          <div className="text-muted-foreground">
+                            Deduct {formatQuantity(planned)} {m.unit}
+                          </div>
+                          {available != null && after != null && (
+                            <div className={after < 0 ? 'text-red-600' : 'text-green-700'}>
+                              {formatQuantity(available)}{' -> '}{formatQuantity(after)} {m.unit}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2700,6 +2868,31 @@ export default function FeedPage() {
                 />
               </div>
             </div>
+            {distributionForm.productionBatchId && (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
+                <p className="font-medium">Quantity Impact</p>
+                {!distributionProductionDetail ? (
+                  <p className="text-muted-foreground">Loading production availability...</p>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground">
+                      Production: {distributionProductionDetail.production?.productionCode ?? `#${distributionForm.productionBatchId}`}
+                    </p>
+                    {distributionAvailableBefore != null && (
+                      <p className="text-muted-foreground">
+                        Available before: {formatQuantity(distributionAvailableBefore)} {distributionProductionDetail.production?.unit ?? distributionForm.unit}
+                      </p>
+                    )}
+                    {distributionAvailableAfter != null && distributionQuantity > 0 && (
+                      <p className={distributionAvailableAfter < 0 ? 'text-red-700' : 'text-green-700'}>
+                        Available after: {formatQuantity(distributionAvailableAfter)} {distributionProductionDetail.production?.unit ?? distributionForm.unit}
+                        {' '}({distributionQuantity > 0 ? '-' : ''}{formatQuantity(distributionQuantity)})
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="distDate">Distribution Date *</Label>
               <Input
@@ -3008,7 +3201,7 @@ export default function FeedPage() {
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Receive Items</DialogTitle>
-            <DialogDescription>Enter received quantities for purchase order items.</DialogDescription>
+            <DialogDescription>Enter received quantities for purchase order items. Stock impact is shown before confirmation.</DialogDescription>
           </DialogHeader>
           <ReceivePOContent
             poId={showPoDetail!}
@@ -3017,6 +3210,7 @@ export default function FeedPage() {
               setShowPoDetail(null);
             }}
             receivePOMutation={receivePOMutation}
+            inventoryById={inventoryById}
           />
         </DialogContent>
       </Dialog>
@@ -3088,6 +3282,267 @@ export default function FeedPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setViewingRecipe(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= */}
+      {/* INVENTORY LOTS DIALOG     */}
+      {/* ========================= */}
+      <Dialog open={showLotsDialog !== null} onOpenChange={(open) => { if (!open) setShowLotsDialog(null); }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Inventory Lots — {(lotsData as unknown as { data?: { ingredientName?: string } })?.data?.ingredientName ?? 'Loading...'}</DialogTitle>
+            <DialogDescription>
+              FIFO cost tracking: lots are consumed oldest-first during production.
+            </DialogDescription>
+          </DialogHeader>
+          {lotsLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-4 mb-4">
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Total Qty: </span>
+                  <span className="font-medium">{(lotsData as unknown as { data?: { totalQuantity?: number } })?.data?.totalQuantity?.toLocaleString() ?? '--'}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Weighted Avg Cost: </span>
+                  <span className="font-medium">Rs. {Number((lotsData as unknown as { data?: { weightedAvgCost?: number } })?.data?.weightedAvgCost ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Active Lots: </span>
+                  <span className="font-medium">{(lotsData as unknown as { data?: { lotCount?: number } })?.data?.lotCount ?? 0}</span>
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Lot Code</TableHead>
+                    <TableHead>PO</TableHead>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Received</TableHead>
+                    <TableHead className="text-right">Remaining</TableHead>
+                    <TableHead className="text-right">Cost/Unit</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="w-[60px]" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {((lotsData as unknown as { data?: { lots?: Array<{ id: number; lotCode: string; poOrderCode: string | null; supplierName: string | null; receivedQuantity: string; remainingQuantity: string; costPerUnit: string; receivedDate: string }> } })?.data?.lots ?? []).map((lot) => {
+                    const remaining = Number(lot.remainingQuantity);
+                    const received = Number(lot.receivedQuantity);
+                    const pct = received > 0 ? (remaining / received) * 100 : 0;
+                    const colorClass = remaining <= 0 ? 'text-muted-foreground bg-muted/30' : pct < 10 ? 'bg-red-50/50' : pct < 50 ? 'bg-yellow-50/30' : '';
+                    return (
+                      <TableRow key={lot.id} className={colorClass}>
+                        <TableCell className="font-mono text-xs">{lot.lotCode}</TableCell>
+                        <TableCell className="text-xs">{lot.poOrderCode ?? '--'}</TableCell>
+                        <TableCell className="text-xs">{lot.supplierName ?? '--'}</TableCell>
+                        <TableCell className="text-right">{received.toLocaleString()}</TableCell>
+                        <TableCell className="text-right font-medium">{remaining.toLocaleString()}</TableCell>
+                        <TableCell className="text-right">Rs. {Number(lot.costPerUnit).toFixed(2)}</TableCell>
+                        <TableCell className="text-xs">{new Date(lot.receivedDate).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            title="View consumption history"
+                            onClick={() => setShowLotHistoryDialog(lot.id)}
+                          >
+                            <Eye className="h-3 w-3" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLotsDialog(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= */}
+      {/* LOT CONSUMPTION HISTORY   */}
+      {/* ========================= */}
+      <Dialog open={showLotHistoryDialog !== null} onOpenChange={(open) => { if (!open) setShowLotHistoryDialog(null); }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lot Consumption History — {(lotHistoryData as unknown as { data?: { lot?: { lotCode?: string } } })?.data?.lot?.lotCode ?? 'Loading...'}</DialogTitle>
+            <DialogDescription>
+              Productions that consumed from this lot.
+            </DialogDescription>
+          </DialogHeader>
+          {lotHistoryLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-4 mb-4">
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Received: </span>
+                  <span className="font-medium">{(lotHistoryData as unknown as { data?: { lot?: { receivedQuantity?: number } } })?.data?.lot?.receivedQuantity ?? '--'}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Remaining: </span>
+                  <span className="font-medium">{(lotHistoryData as unknown as { data?: { lot?: { remainingQuantity?: number } } })?.data?.lot?.remainingQuantity ?? '--'}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Cost/Unit: </span>
+                  <span className="font-medium">Rs. {Number((lotHistoryData as unknown as { data?: { lot?: { costPerUnit?: number } } })?.data?.lot?.costPerUnit ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Total Consumed: </span>
+                  <span className="font-medium">{(lotHistoryData as unknown as { data?: { totalConsumed?: number } })?.data?.totalConsumed ?? 0}</span>
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Production Code</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Qty Used</TableHead>
+                    <TableHead className="text-right">Cost/Unit</TableHead>
+                    <TableHead className="text-right">Line Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {((lotHistoryData as unknown as { data?: { consumptions?: Array<{ id: number; productionCode: string; productionDate: string; quantityUsed: string; costPerUnit: string; lineCost: string }> } })?.data?.consumptions ?? []).map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="font-mono text-xs">{c.productionCode}</TableCell>
+                      <TableCell className="text-xs">{new Date(c.productionDate).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right">{Number(c.quantityUsed).toLocaleString()}</TableCell>
+                      <TableCell className="text-right">Rs. {Number(c.costPerUnit).toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-medium">Rs. {Number(c.lineCost).toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {((lotHistoryData as unknown as { data?: { consumptions?: unknown[] } })?.data?.consumptions ?? []).length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                        No productions have consumed from this lot yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLotHistoryDialog(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= */}
+      {/* PRODUCTION COST BREAKDOWN */}
+      {/* ========================= */}
+      <Dialog open={showCostBreakdownDialog !== null} onOpenChange={(open) => { if (!open) setShowCostBreakdownDialog(null); }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Cost Breakdown — {(costBreakdownData as unknown as { data?: { productionCode?: string } })?.data?.productionCode ?? 'Loading...'}</DialogTitle>
+            <DialogDescription>
+              FIFO lot-level cost analysis showing which stock was consumed and from which source.
+            </DialogDescription>
+          </DialogHeader>
+          {costBreakdownLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-4 mb-4">
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Total Cost: </span>
+                  <span className="font-semibold">Rs. {Number((costBreakdownData as unknown as { data?: { totalCost?: number } })?.data?.totalCost ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Cost/Unit Output: </span>
+                  <span className="font-semibold">Rs. {Number((costBreakdownData as unknown as { data?: { costPerUnit?: number } })?.data?.costPerUnit ?? 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* By Supplier */}
+              <h4 className="text-sm font-medium mb-2">Cost by Supplier</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Total Cost</TableHead>
+                    <TableHead className="text-right">%</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {((costBreakdownData as unknown as { data?: { bySupplier?: Array<{ supplierName: string; totalCost: number; percentage: number }> } })?.data?.bySupplier ?? []).map((s) => (
+                    <TableRow key={s.supplierName}>
+                      <TableCell>{s.supplierName}</TableCell>
+                      <TableCell className="text-right">Rs. {s.totalCost.toFixed(2)}</TableCell>
+                      <TableCell className="text-right">{s.percentage.toFixed(1)}%</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* By PO */}
+              <h4 className="text-sm font-medium mb-2 mt-4">Cost by Purchase Order</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>PO Code</TableHead>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Total Cost</TableHead>
+                    <TableHead className="text-right">%</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {((costBreakdownData as unknown as { data?: { byPurchaseOrder?: Array<{ poOrderCode: string; supplierName: string; totalCost: number; percentage: number }> } })?.data?.byPurchaseOrder ?? []).map((po) => (
+                    <TableRow key={po.poOrderCode}>
+                      <TableCell className="font-mono text-xs">{po.poOrderCode}</TableCell>
+                      <TableCell>{po.supplierName}</TableCell>
+                      <TableCell className="text-right">Rs. {po.totalCost.toFixed(2)}</TableCell>
+                      <TableCell className="text-right">{po.percentage.toFixed(1)}%</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* Lot Details */}
+              <h4 className="text-sm font-medium mb-2 mt-4">Lot-Level Detail</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Ingredient</TableHead>
+                    <TableHead>Lot Code</TableHead>
+                    <TableHead>PO</TableHead>
+                    <TableHead className="text-right">Qty Used</TableHead>
+                    <TableHead className="text-right">Cost/Unit</TableHead>
+                    <TableHead className="text-right">Line Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {((costBreakdownData as unknown as { data?: { lotDetails?: Array<{ materialId: number; ingredientName: string; lotCode: string; poOrderCode: string | null; quantityUsed: string; costPerUnit: string; lineCost: string }> } })?.data?.lotDetails ?? []).map((ld, idx) => (
+                    <TableRow key={`${ld.materialId}-${idx}`}>
+                      <TableCell>{ld.ingredientName}</TableCell>
+                      <TableCell className="font-mono text-xs">{ld.lotCode}</TableCell>
+                      <TableCell className="text-xs">{ld.poOrderCode ?? '--'}</TableCell>
+                      <TableCell className="text-right">{Number(ld.quantityUsed).toLocaleString()}</TableCell>
+                      <TableCell className="text-right">Rs. {Number(ld.costPerUnit).toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-medium">Rs. {Number(ld.lineCost).toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCostBreakdownDialog(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

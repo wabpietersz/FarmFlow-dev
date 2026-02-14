@@ -462,3 +462,23 @@ IMP-B4 (Dynamic Cost) ─→ IMP-B5 (Demand Reorder) ─────────
 - Falls back to generic message if no specific error available
 - Updated all 18 catch blocks in FeedPage.tsx to use `parseApiError` instead of generic `toast.error`
 - Affected: Supplier, Recipe, Inventory, Production, Distribution, PO handlers
+
+---
+
+## Sprint IMP-E: Quantity Impact Previews (~4h) — COMPLETE
+
+### Task IMP-E1: Frontend — Pre-Action Quantity Indicators (4h)
+- File: `packages/frontend/src/pages/FeedPage.tsx`
+- Add reusable quantity preview formatting helper for consistent display.
+- Inventory edit dialog: show `current → new` quantity and signed delta before save.
+- Restock dialog: show `current → projected` quantity and additive delta before restock.
+- Complete production dialog: show per-material deduction with `available → projected` quantity.
+- Distribution dialog (when linked to a production batch): show `available for distribution before → after`.
+- Purchase order receive dialog: show per-line `received before → after` and stock `before → after` preview where inventory snapshot is available.
+
+**Acceptance Criteria:**
+- [x] All quantity-changing feed flows show impact preview before submission.
+- [x] Users can see both absolute before/after values and signed delta.
+- [x] Negative projections are visibly highlighted in the dialog.
+- [x] Frontend build compiles after changes.
+- [x] Existing frontend lint baseline remains unchanged (project has unrelated pre-existing lint errors).

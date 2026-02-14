@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '@/lib/api';
-import type { Supplier, FeedRecipe, FeedInventory, FeedProductionBatch, FeedDistribution, SystemConfig } from '@farmflow/shared';
+import type { Supplier, FeedRecipe, FeedInventory, FeedProductionBatch, FeedDistribution, SystemConfig, InventoryLot, ProductionMaterialLotDetail, ProductionCostBreakdown, LotConsumptionHistory } from '@farmflow/shared';
 
 // --- Response interfaces ---
 
@@ -720,6 +720,7 @@ export function useReceivePurchaseOrder() {
       queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
       queryClient.invalidateQueries({ queryKey: ['purchase-orders', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-lots'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-alerts'] });
       queryClient.invalidateQueries({ queryKey: ['reorder-suggestions'] });
     },
@@ -731,6 +732,66 @@ export function useSupplierPurchaseOrders(supplierId: number | undefined) {
     queryKey: ['purchase-orders', 'supplier', supplierId],
     queryFn: () => apiGet<{ data: unknown[] }>(`/feed/suppliers/${supplierId}/purchase-orders`),
     enabled: !!supplierId,
+  });
+}
+
+// --- Inventory Lot hooks (FIFO) ---
+
+interface InventoryLotsResponse {
+  data: {
+    ingredientName: string;
+    totalQuantity: number;
+    weightedAvgCost: number;
+    lotCount: number;
+    lots: InventoryLot[];
+  };
+}
+
+export function useInventoryLots(inventoryItemId: number | undefined, includeEmpty = false) {
+  return useQuery({
+    queryKey: ['inventory-lots', inventoryItemId, includeEmpty],
+    queryFn: () => apiGet<InventoryLotsResponse>(`/feed/inventory/${inventoryItemId}/lots?includeEmpty=${includeEmpty}`),
+    enabled: !!inventoryItemId,
+  });
+}
+
+// --- Production Cost Breakdown hooks ---
+
+interface ProductionCostBreakdownResponse {
+  data: {
+    productionCode: string;
+    totalCost: number;
+    costPerUnit: number;
+    lotDetails: Array<ProductionMaterialLotDetail & { ingredientName: string; poOrderCode: string | null; supplierName: string | null }>;
+    bySupplier: ProductionCostBreakdown['bySupplier'];
+    byPurchaseOrder: ProductionCostBreakdown['byPurchaseOrder'];
+  };
+}
+
+export function useProductionCostBreakdown(productionId: number | undefined) {
+  return useQuery({
+    queryKey: ['production-cost-breakdown', productionId],
+    queryFn: () => apiGet<ProductionCostBreakdownResponse>(`/feed/production/${productionId}/cost-breakdown`),
+    enabled: !!productionId,
+  });
+}
+
+// --- Lot Consumption History hooks ---
+
+interface LotConsumptionHistoryResponse {
+  data: {
+    lot: { id: number; lotCode: string; receivedQuantity: number; remainingQuantity: number; costPerUnit: number; receivedDate: string };
+    consumptions: LotConsumptionHistory[];
+    totalConsumed: number;
+    totalCostConsumed: number;
+  };
+}
+
+export function useLotConsumptionHistory(lotId: number | undefined) {
+  return useQuery({
+    queryKey: ['lot-consumption-history', lotId],
+    queryFn: () => apiGet<LotConsumptionHistoryResponse>(`/feed/lots/${lotId}/consumption-history`),
+    enabled: !!lotId,
   });
 }
 

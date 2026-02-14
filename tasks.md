@@ -728,6 +728,8 @@
 | **Sprint IMP-A** | IMP-A1 to IMP-A6 | ✅ Complete | 100% |
 | **Sprint IMP-B** | IMP-B1 to IMP-B6 | ✅ Complete | 100% |
 | **Sprint IMP-C** | IMP-C1 to IMP-C2 | ✅ Complete | 100% |
+| **Sprint IMP-D** | IMP-D1 to IMP-D2 | ✅ Complete | 100% |
+| **Sprint IMP-E** | IMP-E1 | ✅ Complete | 100% |
 
 ---
 
@@ -739,6 +741,17 @@
   - [x] Show ingredient summary in recipe table (line level)
   - [x] Add "View" button and read-only dialog
   - [x] Add Status dropdown to Edit Recipe form
+
+### Sprint IMP-E: Quantity Impact Indicators (New)
+
+- [x] Task IMP-E1: Feed Management Quantity Preview UX (4h)
+  - [x] Inventory edit dialog shows quantity `before -> after` and signed delta
+  - [x] Restock dialog shows projected stock after restock
+  - [x] Complete production dialog shows per-material inventory deduction impact
+  - [x] Distribution dialog shows linked production quantity impact before submit
+  - [x] PO receive dialog shows per-line receive progression and stock increase preview
+  - [x] Frontend build passes after implementation
+  - [x] Frontend lint baseline unchanged (existing unrelated lint errors remain in other files)
 
 ---
 

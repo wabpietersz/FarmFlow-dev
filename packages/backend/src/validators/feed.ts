@@ -139,7 +139,11 @@ export const createDistributionSchema = z.object({
 export const inventoryAdjustmentSchema = z.object({
   quantity: z.number().refine((v) => v !== 0, { message: 'Adjustment quantity cannot be zero' }),
   reason: z.string().min(1, 'Reason is required').max(500),
-});
+  costPerUnit: z.number().positive('Cost per unit must be positive').optional(),
+}).refine(
+  (data) => data.quantity <= 0 || data.costPerUnit !== undefined,
+  { message: 'Cost per unit is required for positive adjustments (adding stock)', path: ['costPerUnit'] },
+);
 
 // --- Purchase Order validators ---
 

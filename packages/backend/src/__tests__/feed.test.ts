@@ -1163,7 +1163,10 @@ describe('Feed Production & Distribution Routes', () => {
           [mockSubmittedPO],     // existing submitted PO
           [poItem],              // PO line item lookup
           [],                    // update PO item received qty
-          [mockInventoryItem1],  // inventory lookup
+          [mockInventoryItem1],  // inventory lookup (for lot creation)
+          [{ total: 0 }],        // lot count for generateLotCode
+          [{ id: 1, lotCode: 'LOT-20260213-001', inventoryItemId: 1, receivedQuantity: '500', remainingQuantity: '500', costPerUnit: '5.00', receivedDate: '2026-02-13' }], // insert lot returning
+          [{ totalValue: '2500.00', totalQty: '500.00' }], // recalculate weighted average cost
           [],                    // inventory update
           [],                    // audit trail insert
           [{ ...poItem, receivedQuantity: '500.00' }], // all items check for status determination

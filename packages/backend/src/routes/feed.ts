@@ -35,6 +35,8 @@ import {
   inventoryAlerts,
   purchaseOrders,
   purchaseOrderItems,
+  inventoryLots,
+  productionMaterialLots,
   reportSchedules,
   batches,
 } from '../db/schema';
@@ -656,10 +658,25 @@ router.get('/inventory', authenticate, requirePermission('feed_inventory:read'),
     }
     const [{ total }] = await countQuery;
 
-    // Add low-stock flag
+    // Add low-stock flag and lot count
+    const itemIds = results.map((r) => r.id);
+    let lotCounts: Record<number, number> = {};
+    if (itemIds.length > 0) {
+      const lotCountRows = await db
+        .select({
+          inventoryItemId: inventoryLots.inventoryItemId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(inventoryLots)
+        .where(sql`${inventoryLots.inventoryItemId} IN (${sql.join(itemIds.map(id => sql`${id}`), sql`, `)}) AND ${inventoryLots.remainingQuantity}::numeric > 0`)
+        .groupBy(inventoryLots.inventoryItemId);
+      lotCounts = Object.fromEntries(lotCountRows.map((r) => [r.inventoryItemId, r.count]));
+    }
+
     const dataWithFlag = results.map((item) => ({
       ...item,
       lowStock: item.reorderLevel ? Number(item.quantity) < Number(item.reorderLevel) : false,
+      lotCount: lotCounts[item.id] ?? 0,
     }));
 
     res.json({
@@ -819,6 +836,97 @@ async function generateProductionCode(date: string): Promise<string> {
   return `${prefix}${seq}`;
 }
 
+// Helper: generate lot code LOT-YYYYMMDD-NNN (or LOT-ADJ-YYYYMMDD-NNN for adjustments)
+async function generateLotCode(date: string, prefix = 'LOT'): Promise<string> {
+  const dateStr = date.replace(/-/g, '').slice(0, 8);
+  const lotPrefix = `${prefix}-${dateStr}-`;
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(inventoryLots)
+    .where(ilike(inventoryLots.lotCode, `${lotPrefix}%`));
+  const seq = String((result?.total ?? 0) + 1).padStart(3, '0');
+  return `${lotPrefix}${seq}`;
+}
+
+// Helper: recalculate weighted average cost from all remaining lots for an inventory item
+async function recalculateWeightedAverageCost(inventoryItemId: number): Promise<number> {
+  const [result] = await db
+    .select({
+      totalValue: sql<string>`COALESCE(SUM(${inventoryLots.remainingQuantity}::numeric * ${inventoryLots.costPerUnit}::numeric), 0)`,
+      totalQty: sql<string>`COALESCE(SUM(${inventoryLots.remainingQuantity}::numeric), 0)`,
+    })
+    .from(inventoryLots)
+    .where(and(
+      eq(inventoryLots.inventoryItemId, inventoryItemId),
+      sql`${inventoryLots.remainingQuantity}::numeric > 0`,
+    ));
+
+  const totalValue = Number(result?.totalValue ?? 0);
+  const totalQty = Number(result?.totalQty ?? 0);
+
+  if (totalQty === 0) return 0;
+  return Math.round((totalValue / totalQty) * 100) / 100;
+}
+
+// Helper: FIFO consumption — consume inventory from oldest lots first
+interface LotConsumption {
+  lotId: number;
+  lotCode: string;
+  quantityUsed: number;
+  costPerUnit: number;
+  lineCost: number;
+  previousRemaining: number;
+  newRemaining: number;
+}
+
+async function consumeInventoryFIFO(
+  inventoryItemId: number,
+  requiredQuantity: number,
+): Promise<{ lotConsumptions: LotConsumption[]; totalCost: number }> {
+  // Fetch available lots in FIFO order (oldest first)
+  const availableLots = await db
+    .select()
+    .from(inventoryLots)
+    .where(and(
+      eq(inventoryLots.inventoryItemId, inventoryItemId),
+      sql`${inventoryLots.remainingQuantity}::numeric > 0`,
+    ))
+    .orderBy(asc(inventoryLots.receivedDate), asc(inventoryLots.id));
+
+  const totalAvailable = availableLots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
+  if (totalAvailable < requiredQuantity) {
+    throw new Error(`Insufficient lot quantity for inventory item ${inventoryItemId}: available ${totalAvailable}, needed ${requiredQuantity}`);
+  }
+
+  const lotConsumptions: LotConsumption[] = [];
+  let remaining = requiredQuantity;
+  let totalCost = 0;
+
+  for (const lot of availableLots) {
+    if (remaining <= 0) break;
+
+    const lotRemaining = Number(lot.remainingQuantity);
+    const consume = Math.min(remaining, lotRemaining);
+    const cost = Number(lot.costPerUnit);
+    const lineCost = Math.round(consume * cost * 100) / 100;
+
+    lotConsumptions.push({
+      lotId: lot.id,
+      lotCode: lot.lotCode,
+      quantityUsed: consume,
+      costPerUnit: cost,
+      lineCost,
+      previousRemaining: lotRemaining,
+      newRemaining: Math.round((lotRemaining - consume) * 100) / 100,
+    });
+
+    totalCost += lineCost;
+    remaining = Math.round((remaining - consume) * 100) / 100;
+  }
+
+  return { lotConsumptions, totalCost: Math.round(totalCost * 100) / 100 };
+}
+
 // GET /api/feed/production — list production batches
 router.get('/production', authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
   try {
@@ -966,6 +1074,8 @@ router.get('/production/:id', authenticate, requirePermission('feed_production:r
         ingredientName: feedInventory.ingredientName,
         plannedQuantity: feedProductionMaterials.plannedQuantity,
         actualQuantity: feedProductionMaterials.actualQuantity,
+        actualCost: feedProductionMaterials.actualCost,
+        weightedCostPerUnit: feedProductionMaterials.weightedCostPerUnit,
         unit: feedProductionMaterials.unit,
         availableQuantity: feedInventory.quantity,
         costPerUnit: feedInventory.costPerUnit,
@@ -974,17 +1084,71 @@ router.get('/production/:id', authenticate, requirePermission('feed_production:r
       .leftJoin(feedInventory, eq(feedProductionMaterials.inventoryItemId, feedInventory.id))
       .where(eq(feedProductionMaterials.productionBatchId, prodId));
 
+    // Fetch lot details for each material (only for completed productions)
+    const materialIds = materials.map((m) => m.id);
+    let lotDetailsByMaterial: Record<number, Array<{
+      id: number; productionMaterialId: number; inventoryLotId: number; lotCode: string;
+      quantityUsed: string; costPerUnit: string; lineCost: string;
+      poOrderCode: string | null; supplierName: string | null; receivedDate: string | null;
+    }>> = {};
+
+    if (materialIds.length > 0 && production.status === 'completed') {
+      const allLotDetails = await db
+        .select({
+          id: productionMaterialLots.id,
+          productionMaterialId: productionMaterialLots.productionMaterialId,
+          inventoryLotId: productionMaterialLots.inventoryLotId,
+          lotCode: inventoryLots.lotCode,
+          quantityUsed: productionMaterialLots.quantityUsed,
+          costPerUnit: productionMaterialLots.costPerUnit,
+          lineCost: productionMaterialLots.lineCost,
+          poOrderCode: purchaseOrders.orderCode,
+          supplierName: suppliers.supplierName,
+          receivedDate: inventoryLots.receivedDate,
+        })
+        .from(productionMaterialLots)
+        .innerJoin(inventoryLots, eq(productionMaterialLots.inventoryLotId, inventoryLots.id))
+        .leftJoin(purchaseOrderItems, eq(inventoryLots.purchaseOrderItemId, purchaseOrderItems.id))
+        .leftJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+        .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+        .where(sql`${productionMaterialLots.productionMaterialId} IN (${sql.join(materialIds.map(id => sql`${id}`), sql`, `)})`);
+
+      lotDetailsByMaterial = {};
+      for (const ld of allLotDetails) {
+        if (!lotDetailsByMaterial[ld.productionMaterialId]) {
+          lotDetailsByMaterial[ld.productionMaterialId] = [];
+        }
+        lotDetailsByMaterial[ld.productionMaterialId].push(ld);
+      }
+    }
+
+    const materialsWithLots = materials.map((m) => ({
+      ...m,
+      lotDetails: lotDetailsByMaterial[m.id] ?? [],
+    }));
+
     // Get total distributed from this production
     const [distributed] = await db
       .select({ total: sql<number>`coalesce(sum(${feedDistributions.quantity}::numeric), 0)::numeric` })
       .from(feedDistributions)
       .where(eq(feedDistributions.productionBatchId, prodId));
 
+    // Cost summary
+    const totalMaterialCost = materialsWithLots.reduce((sum, m) => sum + Number(m.actualCost ?? 0), 0);
+    const lotSourceCount = materialsWithLots.reduce((sum, m) => sum + (m.lotDetails?.length ?? 0), 0);
+
     res.json({
       success: true,
       data: {
         production,
-        materials,
+        materials: materialsWithLots,
+        costSummary: {
+          totalMaterialCost: Math.round(totalMaterialCost * 100) / 100,
+          costPerOutputUnit: production.actualQuantity
+            ? Math.round((totalMaterialCost / Number(production.actualQuantity)) * 100) / 100
+            : 0,
+          lotSourceCount,
+        },
         totalDistributed: Number(distributed?.total ?? 0),
         availableForDistribution: production.actualQuantity
           ? Number(production.actualQuantity) - Number(distributed?.total ?? 0)
@@ -1164,8 +1328,8 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
     }
 
     // Validate all materials and check inventory sufficiency
-    let totalCost = 0;
-    const inventoryDeductions: { id: number; currentQty: number; deductQty: number; costPerUnit: number }[] = [];
+    let totalProductionCost = 0;
+    const materialResults: { inventoryItemId: number; actualQuantity: number; actualCost: number; weightedCostPerUnit: number; lotConsumptions: LotConsumption[] }[] = [];
 
     for (const mat of materialUpdates as { inventoryItemId: number; actualQuantity: number }[]) {
       const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, mat.inventoryItemId)).limit(1);
@@ -1185,50 +1349,113 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
         return;
       }
 
-      totalCost += mat.actualQuantity * Number(invItem.costPerUnit);
-      inventoryDeductions.push({
-        id: invItem.id,
-        currentQty: Number(invItem.quantity),
-        deductQty: mat.actualQuantity,
-        costPerUnit: Number(invItem.costPerUnit),
-      });
+      // FIFO lot consumption
+      try {
+        const { lotConsumptions, totalCost } = await consumeInventoryFIFO(mat.inventoryItemId, mat.actualQuantity);
+        materialResults.push({
+          inventoryItemId: mat.inventoryItemId,
+          actualQuantity: mat.actualQuantity,
+          actualCost: totalCost,
+          weightedCostPerUnit: Math.round((totalCost / mat.actualQuantity) * 100) / 100,
+          lotConsumptions,
+        });
+        totalProductionCost += totalCost;
+      } catch (err) {
+        // Fallback to simple cost if no lots exist (legacy data)
+        const simpleCost = mat.actualQuantity * Number(invItem.costPerUnit);
+        materialResults.push({
+          inventoryItemId: mat.inventoryItemId,
+          actualQuantity: mat.actualQuantity,
+          actualCost: Math.round(simpleCost * 100) / 100,
+          weightedCostPerUnit: Number(invItem.costPerUnit),
+          lotConsumptions: [],
+        });
+        totalProductionCost += simpleCost;
+        logger.warn('FIFO consumption fallback for production', { prodId, inventoryItemId: mat.inventoryItemId, error: (err as Error).message });
+      }
     }
 
-    // Deduct from inventory and create audit trail entries
-    for (const ded of inventoryDeductions) {
-      await db
-        .update(feedInventory)
-        .set({
-          quantity: String(ded.currentQty - ded.deductQty),
-          updatedAt: new Date(),
-        })
-        .where(eq(feedInventory.id, ded.id));
+    // Apply lot deductions, update inventory, create audit trail and material lot records
+    for (const matResult of materialResults) {
+      const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, matResult.inventoryItemId)).limit(1);
+      const prevQty = Number(invItem!.quantity);
+      const newQty = Math.round((prevQty - matResult.actualQuantity) * 100) / 100;
 
-      // Create audit trail entry for each deduction
-      await db.insert(inventoryAuditTrail).values({
-        inventoryItemId: ded.id,
-        changeType: 'production_deduction',
-        previousQuantity: String(ded.currentQty),
-        changeQuantity: String(-ded.deductQty),
-        newQuantity: String(ded.currentQty - ded.deductQty),
-        referenceId: prodId,
-        referenceType: 'production_batch',
-        notes: `Production ${existing.productionCode}`,
-        performedBy: req.user!.id,
-      });
-    }
+      // Deduct from individual lots
+      for (const lc of matResult.lotConsumptions) {
+        await db.update(inventoryLots).set({
+          remainingQuantity: String(lc.newRemaining),
+        }).where(eq(inventoryLots.id, lc.lotId));
+      }
 
-    // Update material actual quantities
-    for (const mat of materialUpdates as { inventoryItemId: number; actualQuantity: number }[]) {
-      await db
+      // Recalculate inventory weighted average cost and update quantity
+      const weightedAvgCost = await recalculateWeightedAverageCost(matResult.inventoryItemId);
+      await db.update(feedInventory).set({
+        quantity: String(newQty),
+        costPerUnit: String(weightedAvgCost || Number(invItem!.costPerUnit)),
+        updatedAt: new Date(),
+      }).where(eq(feedInventory.id, matResult.inventoryItemId));
+
+      // Create audit trail entries for each lot consumed
+      for (const lc of matResult.lotConsumptions) {
+        await db.insert(inventoryAuditTrail).values({
+          inventoryItemId: matResult.inventoryItemId,
+          changeType: 'production_deduction',
+          previousQuantity: String(lc.previousRemaining),
+          changeQuantity: String(-lc.quantityUsed),
+          newQuantity: String(lc.newRemaining),
+          referenceId: prodId,
+          referenceType: 'production_batch',
+          lotId: lc.lotId,
+          costAtTime: String(lc.costPerUnit),
+          notes: `Production ${existing.productionCode} — ${lc.lotCode}`,
+          performedBy: req.user!.id,
+        });
+      }
+
+      // If no lots (legacy fallback), create a simple audit trail entry
+      if (matResult.lotConsumptions.length === 0) {
+        await db.insert(inventoryAuditTrail).values({
+          inventoryItemId: matResult.inventoryItemId,
+          changeType: 'production_deduction',
+          previousQuantity: String(prevQty),
+          changeQuantity: String(-matResult.actualQuantity),
+          newQuantity: String(newQty),
+          referenceId: prodId,
+          referenceType: 'production_batch',
+          notes: `Production ${existing.productionCode}`,
+          performedBy: req.user!.id,
+        });
+      }
+
+      // Update production material with actual cost and quantity
+      const [updatedMat] = await db
         .update(feedProductionMaterials)
-        .set({ actualQuantity: String(mat.actualQuantity) })
+        .set({
+          actualQuantity: String(matResult.actualQuantity),
+          actualCost: String(matResult.actualCost),
+          weightedCostPerUnit: String(matResult.weightedCostPerUnit),
+        })
         .where(
           and(
             eq(feedProductionMaterials.productionBatchId, prodId),
-            eq(feedProductionMaterials.inventoryItemId, mat.inventoryItemId),
+            eq(feedProductionMaterials.inventoryItemId, matResult.inventoryItemId),
           ),
-        );
+        )
+        .returning();
+
+      // Create production material lot records for traceability
+      if (updatedMat && matResult.lotConsumptions.length > 0) {
+        for (const lc of matResult.lotConsumptions) {
+          await db.insert(productionMaterialLots).values({
+            productionMaterialId: updatedMat.id,
+            inventoryLotId: lc.lotId,
+            quantityUsed: String(lc.quantityUsed),
+            costPerUnit: String(lc.costPerUnit),
+            lineCost: String(lc.lineCost),
+          });
+        }
+      }
     }
 
     // Update production batch
@@ -1237,7 +1464,7 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
       .set({
         status: 'completed',
         actualQuantity: String(actualQuantity),
-        productionCost: String(Math.round(totalCost * 100) / 100),
+        productionCost: String(Math.round(totalProductionCost * 100) / 100),
         updatedAt: new Date(),
       })
       .where(eq(feedProductionBatches.id, prodId))
@@ -1250,8 +1477,13 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
       entityId: prodId,
       changes: {
         actualQuantity,
-        productionCost: Math.round(totalCost * 100) / 100,
+        productionCost: Math.round(totalProductionCost * 100) / 100,
         materialsConsumed: materialUpdates.length,
+        fifoConsumption: materialResults.map((m) => ({
+          inventoryItemId: m.inventoryItemId,
+          actualCost: m.actualCost,
+          lotsUsed: m.lotConsumptions.length,
+        })),
       },
     });
 
@@ -1293,6 +1525,142 @@ router.delete('/production/:id', authenticate, requirePermission('feed_productio
   } catch (error) {
     logger.error('Failed to delete production batch', { error });
     res.status(500).json({ success: false, error: 'Failed to delete production batch', code: 'DELETE_PRODUCTION_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// GET /api/feed/production/:id/cost-breakdown — detailed cost analysis by supplier and PO
+router.get('/production/:id/cost-breakdown', authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
+  try {
+    const prodId = Number(req.params.id as string);
+
+    const [production] = await db.select().from(feedProductionBatches).where(eq(feedProductionBatches.id, prodId)).limit(1);
+    if (!production) {
+      res.status(404).json({ success: false, error: 'Production batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    // Get all lot consumption records for this production
+    const lotDetails = await db
+      .select({
+        materialId: productionMaterialLots.productionMaterialId,
+        ingredientName: feedInventory.ingredientName,
+        lotCode: inventoryLots.lotCode,
+        quantityUsed: productionMaterialLots.quantityUsed,
+        costPerUnit: productionMaterialLots.costPerUnit,
+        lineCost: productionMaterialLots.lineCost,
+        poOrderCode: purchaseOrders.orderCode,
+        supplierName: suppliers.supplierName,
+        receivedDate: inventoryLots.receivedDate,
+      })
+      .from(productionMaterialLots)
+      .innerJoin(feedProductionMaterials, eq(productionMaterialLots.productionMaterialId, feedProductionMaterials.id))
+      .innerJoin(inventoryLots, eq(productionMaterialLots.inventoryLotId, inventoryLots.id))
+      .leftJoin(feedInventory, eq(feedProductionMaterials.inventoryItemId, feedInventory.id))
+      .leftJoin(purchaseOrderItems, eq(inventoryLots.purchaseOrderItemId, purchaseOrderItems.id))
+      .leftJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+      .where(eq(feedProductionMaterials.productionBatchId, prodId));
+
+    const totalCost = lotDetails.reduce((sum, ld) => sum + Number(ld.lineCost), 0);
+
+    // Group by supplier
+    const bySupplierMap = new Map<string, number>();
+    for (const ld of lotDetails) {
+      const name = ld.supplierName ?? 'Manual/Legacy';
+      bySupplierMap.set(name, (bySupplierMap.get(name) ?? 0) + Number(ld.lineCost));
+    }
+    const bySupplier = Array.from(bySupplierMap.entries()).map(([supplierName, cost]) => ({
+      supplierName,
+      totalCost: Math.round(cost * 100) / 100,
+      percentage: totalCost > 0 ? Math.round((cost / totalCost) * 10000) / 100 : 0,
+    }));
+
+    // Group by PO
+    const byPOMap = new Map<string, { supplierName: string; totalCost: number }>();
+    for (const ld of lotDetails) {
+      const code = ld.poOrderCode ?? 'No PO';
+      const existing = byPOMap.get(code);
+      byPOMap.set(code, {
+        supplierName: ld.supplierName ?? 'Manual/Legacy',
+        totalCost: (existing?.totalCost ?? 0) + Number(ld.lineCost),
+      });
+    }
+    const byPurchaseOrder = Array.from(byPOMap.entries()).map(([poOrderCode, data]) => ({
+      poOrderCode,
+      supplierName: data.supplierName,
+      totalCost: Math.round(data.totalCost * 100) / 100,
+      percentage: totalCost > 0 ? Math.round((data.totalCost / totalCost) * 10000) / 100 : 0,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        productionCode: production.productionCode,
+        totalCost: Math.round(totalCost * 100) / 100,
+        costPerUnit: production.actualQuantity
+          ? Math.round((totalCost / Number(production.actualQuantity)) * 100) / 100
+          : 0,
+        lotDetails,
+        bySupplier,
+        byPurchaseOrder,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch production cost breakdown', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch production cost breakdown', code: 'COST_BREAKDOWN_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// GET /api/feed/lots/:id/consumption-history — which productions consumed from a specific lot
+router.get('/lots/:id/consumption-history', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
+  try {
+    const lotId = Number(req.params.id as string);
+
+    const [lot] = await db.select().from(inventoryLots).where(eq(inventoryLots.id, lotId)).limit(1);
+    if (!lot) {
+      res.status(404).json({ success: false, error: 'Inventory lot not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    const consumptions = await db
+      .select({
+        id: productionMaterialLots.id,
+        productionCode: feedProductionBatches.productionCode,
+        productionDate: feedProductionBatches.productionDate,
+        ingredientName: feedInventory.ingredientName,
+        quantityUsed: productionMaterialLots.quantityUsed,
+        costPerUnit: productionMaterialLots.costPerUnit,
+        lineCost: productionMaterialLots.lineCost,
+        createdAt: feedProductionBatches.createdAt,
+      })
+      .from(productionMaterialLots)
+      .innerJoin(feedProductionMaterials, eq(productionMaterialLots.productionMaterialId, feedProductionMaterials.id))
+      .innerJoin(feedProductionBatches, eq(feedProductionMaterials.productionBatchId, feedProductionBatches.id))
+      .leftJoin(feedInventory, eq(feedProductionMaterials.inventoryItemId, feedInventory.id))
+      .where(eq(productionMaterialLots.inventoryLotId, lotId))
+      .orderBy(desc(feedProductionBatches.productionDate));
+
+    res.json({
+      success: true,
+      data: {
+        lot: {
+          id: lot.id,
+          lotCode: lot.lotCode,
+          receivedQuantity: Number(lot.receivedQuantity),
+          remainingQuantity: Number(lot.remainingQuantity),
+          costPerUnit: Number(lot.costPerUnit),
+          receivedDate: lot.receivedDate,
+        },
+        consumptions,
+        totalConsumed: consumptions.reduce((sum, c) => sum + Number(c.quantityUsed), 0),
+        totalCostConsumed: consumptions.reduce((sum, c) => sum + Number(c.lineCost), 0),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch lot consumption history', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch lot consumption history', code: 'LOT_HISTORY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 
@@ -1868,11 +2236,73 @@ router.get('/inventory/:id/audit-trail', authenticate, requirePermission('feed_i
   }
 });
 
+// GET /api/feed/inventory/:id/lots — get inventory lots for an item (FIFO order)
+router.get('/inventory/:id/lots', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
+  try {
+    const itemId = Number(req.params.id as string);
+    const { includeEmpty = 'false' } = req.query;
+
+    const [item] = await db.select().from(feedInventory).where(eq(feedInventory.id, itemId)).limit(1);
+    if (!item) {
+      res.status(404).json({ success: false, error: 'Inventory item not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+
+    let lotsQuery = db
+      .select({
+        id: inventoryLots.id,
+        inventoryItemId: inventoryLots.inventoryItemId,
+        purchaseOrderItemId: inventoryLots.purchaseOrderItemId,
+        lotCode: inventoryLots.lotCode,
+        receivedQuantity: inventoryLots.receivedQuantity,
+        remainingQuantity: inventoryLots.remainingQuantity,
+        costPerUnit: inventoryLots.costPerUnit,
+        receivedDate: inventoryLots.receivedDate,
+        expiryDate: inventoryLots.expiryDate,
+        notes: inventoryLots.notes,
+        createdAt: inventoryLots.createdAt,
+        poOrderCode: purchaseOrders.orderCode,
+        supplierName: suppliers.supplierName,
+      })
+      .from(inventoryLots)
+      .leftJoin(purchaseOrderItems, eq(inventoryLots.purchaseOrderItemId, purchaseOrderItems.id))
+      .leftJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+      .where(eq(inventoryLots.inventoryItemId, itemId))
+      .orderBy(asc(inventoryLots.receivedDate), asc(inventoryLots.id))
+      .$dynamic();
+
+    if (includeEmpty !== 'true') {
+      lotsQuery = lotsQuery.where(and(
+        eq(inventoryLots.inventoryItemId, itemId),
+        sql`${inventoryLots.remainingQuantity}::numeric > 0`,
+      ));
+    }
+
+    const lots = await lotsQuery;
+
+    res.json({
+      success: true,
+      data: {
+        ingredientName: item.ingredientName,
+        totalQuantity: Number(item.quantity),
+        weightedAvgCost: Number(item.costPerUnit),
+        lotCount: lots.length,
+        lots,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch inventory lots', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch inventory lots', code: 'INVENTORY_LOTS_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
 // POST /api/feed/inventory/:id/adjust — manual inventory adjustment with audit trail
 router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inventory:update'), validate(inventoryAdjustmentSchema), async (req: Request, res: Response) => {
   try {
     const itemId = Number(req.params.id as string);
-    const { quantity, reason } = req.body;
+    const { quantity, reason, costPerUnit } = req.body;
 
     const [item] = await db.select().from(feedInventory).where(eq(feedInventory.id, itemId)).limit(1);
     if (!item) {
@@ -1888,9 +2318,45 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
       return;
     }
 
-    // Update inventory
+    let lotInfo: { lotCode: string; lotId: number } | null = null;
+
+    // For positive adjustments (adding stock), create an adjustment lot
+    if (quantity > 0 && costPerUnit) {
+      const today = new Date().toISOString().split('T')[0];
+      const lotCode = await generateLotCode(today, 'LOT-ADJ');
+      const [newLot] = await db.insert(inventoryLots).values({
+        inventoryItemId: itemId,
+        lotCode,
+        receivedQuantity: String(quantity),
+        remainingQuantity: String(quantity),
+        costPerUnit: String(costPerUnit),
+        receivedDate: today,
+        notes: `Manual adjustment: ${reason}`,
+      }).returning();
+      lotInfo = { lotCode, lotId: newLot.id };
+    }
+
+    // For negative adjustments, deduct from oldest lots (FIFO)
+    if (quantity < 0) {
+      try {
+        const { lotConsumptions } = await consumeInventoryFIFO(itemId, Math.abs(quantity));
+        // Apply lot deductions
+        for (const lc of lotConsumptions) {
+          await db.update(inventoryLots).set({
+            remainingQuantity: String(lc.newRemaining),
+          }).where(eq(inventoryLots.id, lc.lotId));
+        }
+      } catch {
+        // If FIFO consumption fails (e.g., no lots yet for legacy data), proceed with simple deduction
+        logger.warn('FIFO deduction skipped for adjustment — no lots available', { itemId });
+      }
+    }
+
+    // Update inventory quantity and recalculate weighted average cost
+    const weightedAvgCost = await recalculateWeightedAverageCost(itemId);
     await db.update(feedInventory).set({
       quantity: String(newQuantity),
+      costPerUnit: String(weightedAvgCost || Number(item.costPerUnit)),
       updatedAt: new Date(),
     }).where(eq(feedInventory.id, itemId));
 
@@ -1901,7 +2367,10 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
       previousQuantity: String(previousQuantity),
       changeQuantity: String(quantity),
       newQuantity: String(newQuantity),
+      lotId: lotInfo?.lotId ?? null,
+      costAtTime: costPerUnit ? String(costPerUnit) : null,
       performedBy: req.user!.id,
+      notes: reason,
     });
 
     createAuditLog({
@@ -1909,10 +2378,10 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
       action: 'inventory_adjusted',
       entityType: 'feed_inventory',
       entityId: itemId,
-      changes: { previousQuantity, changeQuantity: quantity, newQuantity, reason },
+      changes: { previousQuantity, changeQuantity: quantity, newQuantity, reason, lotCode: lotInfo?.lotCode },
     });
 
-    res.json({ success: true, data: { id: itemId, previousQuantity, changeQuantity: quantity, newQuantity, reason }, timestamp: new Date().toISOString() });
+    res.json({ success: true, data: { id: itemId, previousQuantity, changeQuantity: quantity, newQuantity, reason, lot: lotInfo }, timestamp: new Date().toISOString() });
   } catch (error) {
     logger.error('Failed to adjust inventory', { error });
     res.status(500).json({ success: false, error: 'Failed to adjust inventory', code: 'ADJUST_INVENTORY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
@@ -2576,6 +3045,7 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('fee
     }
 
     const receivedItemIds: number[] = [];
+    const createdLots: { lotCode: string; inventoryItemId: number; quantity: number; costPerUnit: number }[] = [];
 
     for (const receiveItem of receiveItems as { itemId: number; receivedQuantity: number }[]) {
       // Fetch the PO line item
@@ -2606,19 +3076,36 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('fee
         receivedQuantity: String(newReceivedQty),
       }).where(eq(purchaseOrderItems.id, receiveItem.itemId));
 
-      // Auto-restock inventory
+      // Auto-restock inventory + create lot
       const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, poItem.inventoryItemId)).limit(1);
       if (invItem) {
         const prevQty = Number(invItem.quantity);
         const newQty = prevQty + receiveItem.receivedQuantity;
+        const today = new Date().toISOString().split('T')[0];
+
+        // Create inventory lot (FIFO cost tracking)
+        const lotCode = await generateLotCode(today);
+        const [newLot] = await db.insert(inventoryLots).values({
+          inventoryItemId: poItem.inventoryItemId,
+          purchaseOrderItemId: poItem.id,
+          lotCode,
+          receivedQuantity: String(receiveItem.receivedQuantity),
+          remainingQuantity: String(receiveItem.receivedQuantity),
+          costPerUnit: poItem.unitPrice,
+          receivedDate: today,
+        }).returning();
+
+        // Update inventory quantity and weighted average cost
+        const weightedAvgCost = await recalculateWeightedAverageCost(poItem.inventoryItemId);
+
         await db.update(feedInventory).set({
           quantity: String(newQty),
-          lastRestockDate: new Date().toISOString().split('T')[0],
-          costPerUnit: poItem.unitPrice, // Update cost from PO price
+          lastRestockDate: today,
+          costPerUnit: String(weightedAvgCost),
           updatedAt: new Date(),
         }).where(eq(feedInventory.id, poItem.inventoryItemId));
 
-        // Create audit trail entry
+        // Create audit trail entry with lot reference
         await db.insert(inventoryAuditTrail).values({
           inventoryItemId: poItem.inventoryItemId,
           changeType: 'purchase_receive',
@@ -2627,9 +3114,13 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('fee
           newQuantity: String(newQty),
           referenceId: poId,
           referenceType: 'purchase_order',
-          notes: `PO ${existing.orderCode} item received`,
+          lotId: newLot.id,
+          costAtTime: poItem.unitPrice,
+          notes: `PO ${existing.orderCode} — ${lotCode} received`,
           performedBy: req.user!.id,
         });
+
+        createdLots.push({ lotCode, inventoryItemId: poItem.inventoryItemId, quantity: receiveItem.receivedQuantity, costPerUnit: Number(poItem.unitPrice) });
       }
 
       receivedItemIds.push(receiveItem.itemId);
@@ -2655,10 +3146,10 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('fee
       action: 'purchase_order_received',
       entityType: 'purchase_order',
       entityId: poId,
-      changes: { receivedItems: receivedItemIds, newStatus, previousStatus: existing.status },
+      changes: { receivedItems: receivedItemIds, newStatus, previousStatus: existing.status, lotsCreated: createdLots },
     });
 
-    res.json({ success: true, data: updatedPO, timestamp: new Date().toISOString() });
+    res.json({ success: true, data: { ...updatedPO, lotsCreated: createdLots }, timestamp: new Date().toISOString() });
   } catch (error) {
     logger.error('Failed to receive purchase order items', { error });
     res.status(500).json({ success: false, error: 'Failed to receive purchase order items', code: 'PO_RECEIVE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });

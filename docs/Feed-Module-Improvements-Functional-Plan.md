@@ -308,3 +308,21 @@ The current Feed Management module has **structural disconnects** in its data fl
 **Scope:** All form dialogs in Feed Management — Supplier, Recipe, Inventory, Production, Distribution, Purchase Order create/edit/receive.
 
 **Implementation:** Reusable `parseApiError(error, fallbackMessage)` utility in `lib/api.ts` applied to all 18 catch blocks.
+
+### FR-IMP-C3: Pre-Action Quantity Impact Indicators
+
+**Problem:** Users execute inventory-affecting actions without seeing a clear before/after quantity impact first, increasing mistakes in feed stock handling.
+
+**Solution:** Show projected quantity changes directly in action dialogs before submission.
+
+**Scope:** Feed Management quantity-changing flows:
+- Inventory edit (absolute quantity overwrite)
+- Inventory restock (additive quantity)
+- Production completion (material deductions per inventory item)
+- Distribution linked to completed production (available-for-distribution reduction)
+- Purchase order receiving (per-line received progression + inventory stock increase when inventory snapshot is available)
+
+**Implementation Rules:**
+- Every quantity-changing dialog must display `before → after` preview once user enters a quantity.
+- Delta sign must be explicit (`+` for increments, `-` for deductions).
+- Negative projections must be visually warned before submit.
