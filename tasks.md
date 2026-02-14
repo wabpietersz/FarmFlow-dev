@@ -1,8 +1,85 @@
 # FarmFlow Development Task Tracker
 
-> Last updated: 2026-02-11
+> Last updated: 2026-02-14
 > Plan doc: `FarmFlow-Implementation-Plan-Final.md`
 > Total weeks: 24 (Phase 1: Weeks 1-12 MVP, Phase 2: Weeks 13-24 Enhancements)
+
+---
+
+## Attendance & Payroll Improvement Sprints (AP-A/AP-B/AP-C)
+
+Reference doc: `docs/Attendance-Payroll-Improvement-Plan.md`
+
+- [x] Sprint AP-A: DB schema changes (`attendance.leave_type`, decimal leave balances, decimal payroll attended days)
+- [x] Sprint AP-A: Shared types (`Attendance.leaveType`, `BulkSetLeaveBalanceRequest`)
+- [x] Sprint AP-A: Backend validators (`leaveType` conditional validation, bulk leave schema)
+- [x] Sprint AP-A: Backend routes (leaveType-aware attendance CRUD, `/leave-balances/bulk`, leave-balance ordering, payroll attendedDays precision)
+- [x] Sprint AP-A: Frontend validations/hooks/UI (leave type picker, grouped leave balances, bulk leave dialog)
+- [x] Sprint AP-A: Backend tests updated/expanded for attendance + leave balance bulk flow
+- [x] Sprint AP-B: DB schema (`employee_compensation`)
+- [x] Sprint AP-B: Shared types (`PayType`, `EmployeeCompensation`, `UpsertCompensationRequest`)
+- [x] Sprint AP-B: Backend compensation CRUD + payroll generate auto-fill logic
+- [x] Sprint AP-B: Frontend compensation card/form/hooks + payroll generate messaging
+- [x] Sprint AP-B: Backend tests for compensation CRUD + payroll compensation calculations
+- [x] Sprint AP-C: DB schema (`compensation_templates`)
+- [x] Sprint AP-C: Backend template CRUD routes + validators
+- [x] Sprint AP-C: Frontend template-aware allowance/deduction dialogs + template management UI
+- [x] Sprint AP-C: Backend template tests
+- [x] Final verification: `shared`/`backend`/`frontend` builds passed, backend Jest suite passed (`262` tests), migration generated (`0007_parallel_the_professor.sql`)
+
+## Attendance & Payroll Expansion Sprints (AP-D/AP-E/AP-F)
+
+Reference doc: `docs/Attendance-Payroll-Improvement-Plan.md` (AP-D/AP-E/AP-F addendum)
+
+- [x] Sprint AP-D0 (Hotfix): Diagnose and fix `PUT /employees/:id/compensation` save failure (500)
+- [x] Sprint AP-D1: Backend error mapping for compensation upsert (missing table, constraint, validation)
+- [x] Sprint AP-D2: Add HR/payroll schema readiness health check + deployment migration verification step
+- [x] Sprint AP-D3: Frontend compensation save UX hardening (detailed API errors, inline failure messaging, retry-safe form behavior)
+- [x] Sprint AP-D4: Compensation save reliability tests (backend + frontend)
+- [x] Sprint AP-E1: DB migration for versioned compensation revisions (`employee_compensation_revisions`)
+- [x] Sprint AP-E2: DB migration for recurring compensation components (`employee_compensation_components`)
+- [x] Sprint AP-E3: Shared types update for revision history + components
+- [x] Sprint AP-E4: Backend compensation revision/history endpoints
+- [x] Sprint AP-E5: Frontend compensation UX expansion (profile summary, history timeline, recurring components editor)
+- [x] Sprint AP-E6: Validation rules for overlapping effective periods and component bounds
+- [x] Sprint AP-F1: Payroll generation selects compensation revision by pay-period window
+- [x] Sprint AP-F2: Payroll compensation snapshot persistence (`compensation_revision_id` + snapshot payload)
+- [x] Sprint AP-F3: Payroll gross/net engine alignment with recurring components
+- [x] Sprint AP-F4: Payroll pre-generation validation report and warning reason codes
+- [x] Sprint AP-F5: Payroll UI updates (pre-check panel, generation exception summary, snapshot visibility in detail)
+- [x] Sprint AP-F6: Backend payroll tests for revision selection, period correctness, and warning metadata
+
+## Attendance & Payroll UX Sprint (AP-G)
+
+Reference doc: `docs/Attendance-Payroll-Improvement-Plan.md` (AP-G addendum)
+
+- [x] Sprint AP-G1: Backend payroll preview endpoint (`POST /api/payroll/preview`) with month-based attendance + compensation defaults
+- [x] Sprint AP-G2: Backend payroll create/generate payload expansion for editable row inputs (allowances include/exclude, overtime, notes, attended days)
+- [x] Sprint AP-G3: Payroll generation compatibility mode retained (`workingDays` legacy path) with warning-first handling for missing compensation
+- [x] Sprint AP-G4: Payroll list enhancements (period filter support + allowances/deductions totals in list response)
+- [x] Sprint AP-G5: Frontend bulk generate dialog redesigned to editable employee table with inline calculations and selection controls
+- [x] Sprint AP-G6: Frontend single payroll creation aligned to same editable defaults flow as bulk generation
+- [x] Sprint AP-G7: Payroll detail view expanded with explicit breakdown (prorated base, attendance, overtime, totals)
+- [x] Sprint AP-G8: Backend/frontend type and validation updates for new payroll request shapes
+
+## Navigation UX Improvement Sprint (NAV-A/NAV-B/NAV-C/NAV-D)
+
+Reference doc:
+- `docs/Navigation-UX-Plan.md`
+
+- [x] NAV-PLAN-1: Define target IA and module grouping requirements in functional plan doc
+- [x] NAV-PLAN-2: Define implementation sequence, file targets, acceptance criteria, and QA matrix
+- [x] NAV-A1: Grouped main navigator model (Dashboard, People, Operational, Feed, Reports) with top-level icons
+- [x] NAV-A2: Active-route helper behavior for top-level links and grouped child links
+- [x] NAV-B1: Desktop sidebar refactor to grouped sections without separator lines
+- [x] NAV-B2: Desktop fixed-size behavior (no expand/collapse resize shifts while navigating)
+- [x] NAV-C1: Mobile bottom tabs updated to Dashboard / People / Operational / Feed / Reports
+- [x] NAV-C2: Mobile grouped flow via animated bottom slate expanding from selected icon
+- [x] NAV-C3: Admin pages (`Users`, `Settings`) moved to profile dropdown path on mobile/desktop
+- [x] NAV-D1: Accessibility hardening (`aria-current`, `aria-expanded`, focus visibility, touch targets)
+- [x] NAV-D2: RBAC navigator visibility filtering retained per permission
+- [x] NAV-D3: Build/test + runtime smoke checks completed for responsive nav behavior
+- [x] NAV-REL-1: Final single-cutover implementation pass after explicit go-ahead
 
 ---
 
@@ -581,7 +658,7 @@
 
 ## Improvements: Feed Module Data Integrity & Purchase Orders
 
-> **Plan docs:** `docs/Feed-Module-Improvements-Functional-Plan.md`, `docs/Feed-Module-Improvements-Implementation-Plan.md`
+> **Plan doc:** `docs/Feed-Module-Improvements-Plan.md`
 > **Estimated effort:** ~80 hours (2 sprints)
 > **Status:** COMPLETE
 
