@@ -21,6 +21,7 @@
     "test:frontend": "npm run test -w packages/frontend",
     "db:migrate": "npm run db:migrate -w packages/backend",
     "db:seed": "npm run db:seed -w packages/backend",
+    "db:seed:treasury-sample": "npm run db:seed:treasury-sample -w packages/backend",
     "db:reset": "npm run db:reset -w packages/backend",
     "start": "./start-dev.sh",
     "dev": "npm run build:shared && concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",

@@ -74,6 +74,7 @@ export const queryPersister = createSyncStoragePersister({
             'sites',
             'batches',
             'sales',
+            'treasury',
             'attendance',
             'payroll',
             'feed',

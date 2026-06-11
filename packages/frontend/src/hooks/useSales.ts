@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import type { Buyer, Sale, Payment, CreatePaymentRequest } from '@farmflow/shared';
+import type { Buyer, Sale } from '@farmflow/shared';
 
 // --- Response interfaces ---
 
 interface BuyerListResponse {
-  data: Buyer[];
+  data: BuyerListItem[];
   total: number;
   page: number;
   limit: number;
@@ -19,15 +19,73 @@ interface BuyerListParams {
   status?: string;
 }
 
-interface BuyerDetail {
-  buyer: Buyer;
-  salesHistory: SaleListItem[];
+export interface BuyerBalanceSummary {
+  totalSales: number;
+  totalReceiptsCompleted: number;
+  totalAppliedToSales: number;
+  outstandingBalance: number;
+  advanceCredit: number;
+  netBalance: number;
 }
 
-interface SaleListItem extends Sale {
+export type BuyerListItem = Omit<
+  Buyer,
+  'totalSales' | 'totalReceiptsCompleted' | 'totalAppliedToSales' | 'outstandingBalance' | 'advanceCredit' | 'netBalance'
+> &
+  BuyerBalanceSummary;
+
+export interface ReceiptSummary {
+  id: string;
+  receiptId: number;
+  receiptCode: string;
+  receiptDate: string;
+  paymentAmount: number;
+  paymentMethod: string;
+  financeAccountId?: number | null;
+  financeAccountName?: string | null;
+  treasuryTransactionId?: number | null;
+  treasuryReversalTransactionId?: number | null;
+  referenceNumber?: string | null;
+  chequeNumber?: string | null;
+  chequeDate?: string | null;
+  bankName?: string | null;
+  paymentStatus: string;
+  notes?: string | null;
+  appliedAmount: number;
+  unappliedAmount: number;
+}
+
+export interface BuyerLedgerEntry {
+  id: string;
+  entryType: 'sale' | 'receipt';
+  entryDate: string;
+  referenceCode: string;
+  description: string;
+  amount: number;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+  status: string;
+  paymentMethod?: string | null;
+}
+
+interface BuyerDetail {
+  buyer: BuyerListItem;
+  summary: BuyerBalanceSummary;
+  salesHistory: SaleListItem[];
+  receipts: ReceiptSummary[];
+  ledger: BuyerLedgerEntry[];
+}
+
+export interface SaleListItem extends Sale {
   buyerName?: string | null;
   batchCode?: string | null;
   siteName?: string | null;
+  totalPaid?: number;
+  outstandingBalance?: number;
+  settlementStatus?: string;
+  buyerAdvanceCredit?: number;
+  buyerNetBalance?: number;
 }
 
 interface SaleListResponse {
@@ -50,10 +108,100 @@ interface SaleListParams {
 
 interface SaleDetail {
   sale: SaleListItem;
-  buyer: Buyer;
-  payments: Payment[];
+  buyer: BuyerListItem | null;
+  lorryLines: SaleLorryRow[];
+  payments: SalePaymentRow[];
   totalPaid: number;
   outstandingBalance: number;
+  availableBuyerCredit: number;
+  buyerBalance: BuyerBalanceSummary;
+}
+
+export interface SaleLorryRow {
+  id?: number;
+  saleId?: number;
+  lineSequence?: number;
+  lorryNumber: string;
+  birdsCount: number;
+  previousWeight: number;
+  loadedWeight: number;
+  netWeight?: number;
+  notes?: string | null;
+}
+
+export interface SalePaymentRow {
+  id: string;
+  source: 'legacy' | 'receipt_line';
+  saleId: number;
+  receiptId?: number | null;
+  receiptCode?: string | null;
+  paymentAmount: string;
+  paymentDate: string;
+  paymentMethod: string;
+  financeAccountId?: number | null;
+  financeAccountName?: string | null;
+  treasuryTransactionId?: number | null;
+  treasuryReversalTransactionId?: number | null;
+  referenceNumber?: string | null;
+  chequeNumber?: string | null;
+  chequeDate?: string | null;
+  bankName?: string | null;
+  paymentStatus: string;
+  notes?: string | null;
+}
+
+export interface CreateSalePayload {
+  batchId: number;
+  buyerId: number;
+  saleDate: string;
+  pricePerKg: number;
+  totalBirds?: number;
+  totalWeight?: number;
+  lorries?: Array<{
+    lorryNumber: string;
+    birdsCount: number;
+    previousWeight: number;
+    loadedWeight: number;
+    notes?: string;
+  }>;
+  notes?: string;
+}
+
+export interface UpdateSalePayload {
+  status?: 'draft' | 'reviewed' | 'completed' | 'cancelled';
+  pricePerKg?: number;
+  lorries?: Array<{
+    lorryNumber: string;
+    birdsCount: number;
+    previousWeight: number;
+    loadedWeight: number;
+    notes?: string;
+  }>;
+  notes?: string | null;
+}
+
+export interface CreateReceiptPayload {
+  paymentAmount?: number;
+  paymentDate?: string;
+  paymentMethod?: 'cash' | 'cheque' | 'bank_transfer';
+  financeAccountId?: number;
+  referenceNumber?: string;
+  chequeNumber?: string;
+  chequeDate?: string;
+  bankName?: string;
+  notes?: string;
+  receiptDate?: string;
+  receiptNotes?: string;
+  lines?: Array<{
+    paymentAmount: number;
+    paymentMethod: 'cash' | 'cheque' | 'bank_transfer';
+    financeAccountId?: number;
+    referenceNumber?: string;
+    chequeNumber?: string;
+    chequeDate?: string;
+    bankName?: string;
+    notes?: string;
+  }>;
 }
 
 // --- Buyer hooks ---
@@ -67,7 +215,7 @@ export function useBuyers(params: BuyerListParams) {
 
   return useQuery({
     queryKey: ['buyers', params],
-    queryFn: () => apiGet<Buyer[]>(`/buyers?${queryString}`) as unknown as Promise<BuyerListResponse>,
+    queryFn: () => apiGet<BuyerListItem[]>(`/buyers?${queryString}`) as unknown as Promise<BuyerListResponse>,
   });
 }
 
@@ -138,11 +286,12 @@ export function useSale(id: string | undefined) {
 export function useCreateSale() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { batchId: number; buyerId: number; saleDate: string; totalBirds: number; totalWeight: number; pricePerKg: number; notes?: string }) =>
+    mutationFn: (data: CreateSalePayload) =>
       apiPost<Sale>('/sales', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['buyers'] });
     },
   });
 }
@@ -150,11 +299,12 @@ export function useCreateSale() {
 export function useUpdateSale(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { status?: string; notes?: string }) =>
+    mutationFn: (data: UpdateSalePayload) =>
       apiPut<Sale>(`/sales/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
       queryClient.invalidateQueries({ queryKey: ['sales', id] });
+      queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
@@ -165,12 +315,14 @@ export function useUpdateSale(id: string) {
 export function useCreatePayment(saleId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: Omit<CreatePaymentRequest, 'saleId'>) =>
-      apiPost<Payment>(`/sales/${saleId}/payments`, data),
+    mutationFn: (data: CreateReceiptPayload) =>
+      apiPost<{ receipt: { id: number; receiptCode: string }; lines: Array<{ id: number }> }>(`/sales/${saleId}/payments`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales', saleId] });
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['treasury'] });
     },
   });
 }
@@ -178,11 +330,13 @@ export function useCreatePayment(saleId: string) {
 export function useUpdatePayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ paymentId, data }: { paymentId: number; data: { paymentStatus?: string; notes?: string } }) =>
-      apiPut<Payment>(`/payments/${paymentId}`, data),
+    mutationFn: ({ paymentId, data }: { paymentId: string; data: { paymentStatus?: string; notes?: string; financeAccountId?: number } }) =>
+      apiPut<SalePaymentRow>(`/payments/${paymentId}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['treasury'] });
     },
   });
 }

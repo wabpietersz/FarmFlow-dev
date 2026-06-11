@@ -68,6 +68,12 @@ export interface Payroll {
   status: PayrollStatus;
   approvedBy?: number | null;
   paidDate?: Date | null;
+  financeAccountId?: number | null;
+  financeAccountName?: string | null;
+  treasuryTransactionId?: number | null;
+  paymentMethod?: 'cash' | 'cheque' | 'bank_transfer' | null;
+  chequeLeafId?: number | null;
+  chequeNumber?: string | null;
   compensationRevisionId?: number | null;
   compensationSnapshot?: PayrollCompensationSnapshot | null;
   notes?: string | null;

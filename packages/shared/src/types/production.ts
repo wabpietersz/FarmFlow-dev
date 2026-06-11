@@ -72,9 +72,32 @@ export interface Vaccination {
   batchId: number;
   vaccineType: string;
   vaccinationDate: Date;
+  inventoryItemId?: number | null;
+  quantityUsed?: number | null;
+  unit?: string | null;
+  inventoryCost?: number | null;
   notes?: string | null;
   recordedBy?: number | null;
   createdAt: Date;
+}
+
+export interface ChickPlacement {
+  id: number;
+  batchId: number;
+  supplierId?: number | null;
+  supplierName?: string | null;
+  contractId?: number | null;
+  contractCode?: string | null;
+  placementDate: Date | string;
+  invoiceReference?: string | null;
+  deliveredQuantity: number;
+  mortalityOnArrival: number;
+  acceptedQuantity: number;
+  unitCost: number;
+  batchOpeningCost: number;
+  notes?: string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
 export interface CreateBatchRequest {

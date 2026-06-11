@@ -57,5 +57,26 @@ export const createVaccinationSchema = z.object({
   batchId: z.number().int().positive('Batch is required'),
   vaccineType: z.string().min(1, 'Vaccine type is required').max(100),
   vaccinationDate: z.string().min(1, 'Vaccination date is required'),
+  inventoryItemId: z.number().int().positive().optional(),
+  quantityUsed: z.number().positive().optional(),
+  notes: z.string().max(1000).optional(),
+}).superRefine((data, ctx) => {
+  if ((data.inventoryItemId && !data.quantityUsed) || (!data.inventoryItemId && data.quantityUsed)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Inventory item and quantity must be provided together',
+      path: ['quantityUsed'],
+    });
+  }
+});
+
+export const createChickPlacementSchema = z.object({
+  supplierId: z.number().int().positive().optional(),
+  contractId: z.number().int().positive().optional(),
+  placementDate: z.string().min(1, 'Placement date is required'),
+  invoiceReference: z.string().max(100).optional(),
+  deliveredQuantity: z.number().int().positive('Delivered quantity is required'),
+  mortalityOnArrival: z.number().int().min(0).optional().default(0),
+  unitCost: z.number().nonnegative('Unit cost cannot be negative'),
   notes: z.string().max(1000).optional(),
 });

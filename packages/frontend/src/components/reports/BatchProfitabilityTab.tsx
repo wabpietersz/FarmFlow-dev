@@ -134,7 +134,7 @@ export default function BatchProfitabilityTab() {
         {[
           { title: 'Total Revenue', value: formatCurrency(totals?.totalRevenue ?? 0), icon: DollarSign },
           { title: 'Total Feed Cost', value: formatCurrency(totals?.totalFeedCost ?? 0), icon: TrendingDown },
-          { title: 'Total Labor Cost', value: formatCurrency(totals?.totalLaborCost ?? 0), icon: TrendingDown },
+          { title: 'Total Inventory Cost', value: formatCurrency(totals?.totalInventoryCost ?? 0), icon: TrendingDown },
           { title: 'Avg Profit Margin', value: `${(totals?.averageProfitMargin ?? 0).toFixed(1)}%`, icon: TrendingUp },
         ].map((card) => (
           <Card key={card.title}>
@@ -211,6 +211,7 @@ export default function BatchProfitabilityTab() {
                     <TableHead className="text-right">Birds Sold</TableHead>
                     <TableHead className="text-right">Revenue</TableHead>
                     <TableHead className="text-right">Feed Cost</TableHead>
+                    <TableHead className="text-right">Inventory Cost</TableHead>
                     <TableHead className="text-right">Labor Cost</TableHead>
                     <TableHead className="text-right">Gross Margin</TableHead>
                     <TableHead className="text-right">Margin %</TableHead>
@@ -225,6 +226,7 @@ export default function BatchProfitabilityTab() {
                       <TableCell className="text-right">{batch.birdsSold.toLocaleString()}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.revenue)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.feedCost)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(batch.inventoryCost)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.laborCost)}</TableCell>
                       <TableCell className={`text-right font-medium ${batch.grossMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {formatCurrency(batch.grossMargin)}

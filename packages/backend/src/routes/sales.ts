@@ -1,14 +1,40 @@
 import { Router, type Request, type Response } from 'express';
+import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
-import { createSaleSchema, updateSaleSchema, createPaymentSchema } from '../validators/sales';
+import { createPaymentSchema, createSaleSchema, updateSaleSchema } from '../validators/sales';
 import { db } from '../db';
-import { sales, buyers, batches, payments, sites } from '../db/schema';
-import { eq, and, sql, desc, gte, lte } from 'drizzle-orm';
+import { batches, buyers, buyerReceiptAllocations, payments, saleLorries, sales, sites } from '../db/schema';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
+import {
+  autoApplyBuyerCreditToSale,
+  createBuyerReceiptForSale,
+  getBuyerBalanceSummary,
+  getSaleFinancialSummary,
+  listSaleLorries,
+  normalizeSaleLorries,
+} from '../lib/sales-ledger';
+import { postBuyerReceiptLineToTreasury } from '../lib/treasury';
+import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
+
+function normalizeSaleWorkflowStatus(status: string) {
+  return status === 'pending' ? 'reviewed' : status;
+}
+
+function canTakeReceipts(status: string) {
+  return ['reviewed', 'pending', 'completed'].includes(status);
+}
+
+type EditableLorryLine = {
+  lorryNumber: string;
+  birdsCount: number;
+  previousWeight: number;
+  loadedWeight: number;
+  notes?: string | null;
+};
 
 // GET /api/sales — list all sales
 router.get('/', authenticate, requirePermission('sales:read'), async (req: Request, res: Response) => {
@@ -43,7 +69,11 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
 
     const conditions = [];
     if (status && status !== 'all') {
-      conditions.push(eq(sales.status, status as string));
+      if (status === 'reviewed') {
+        conditions.push(sql`${sales.status} IN ('reviewed', 'pending')`);
+      } else {
+        conditions.push(eq(sales.status, status as string));
+      }
     }
     if (buyerId) {
       conditions.push(eq(sales.buyerId, Number(buyerId)));
@@ -57,8 +87,6 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
     if (endDate) {
       conditions.push(lte(sales.saleDate, endDate as string));
     }
-
-    // Site restriction for farm managers
     if (req.user!.siteId) {
       conditions.push(eq(batches.siteId, req.user!.siteId));
     }
@@ -67,12 +95,8 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
       query = query.where(and(...conditions));
     }
 
-    const results = await query
-      .orderBy(desc(sales.createdAt))
-      .limit(limitNum)
-      .offset(offset);
+    const results = await query.orderBy(desc(sales.createdAt)).limit(limitNum).offset(offset);
 
-    // Count query — needs same joins for site filtering
     let countQuery = db
       .select({ total: sql<number>`count(*)::int` })
       .from(sales)
@@ -83,9 +107,27 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
     }
     const [{ total }] = await countQuery;
 
+    const enrichedResults = await Promise.all(
+      results.map(async (sale) => {
+        const [financial, buyerSummary] = await Promise.all([
+          getSaleFinancialSummary(sale.id, Number(sale.totalAmount)),
+          getBuyerBalanceSummary(sale.buyerId),
+        ]);
+        return {
+          ...sale,
+          status: normalizeSaleWorkflowStatus(sale.status),
+          totalPaid: financial.totalPaid,
+          outstandingBalance: financial.outstandingBalance,
+          settlementStatus: financial.settlementStatus,
+          buyerAdvanceCredit: buyerSummary.advanceCredit,
+          buyerNetBalance: buyerSummary.netBalance,
+        };
+      }),
+    );
+
     res.json({
       success: true,
-      data: results,
+      data: enrichedResults,
       total,
       page: pageNum,
       limit: limitNum,
@@ -98,7 +140,7 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
   }
 });
 
-// GET /api/sales/:id — sale detail with buyer, batch, payments, outstanding
+// GET /api/sales/:id — sale detail with buyer, lorries, receipts, and balances
 router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.id as string);
@@ -134,30 +176,35 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
       return;
     }
 
-    // Get buyer details
-    const [buyer] = await db.select().from(buyers).where(eq(buyers.id, sale.buyerId)).limit(1);
-
-    // Get payments
-    const salePayments = await db
-      .select()
-      .from(payments)
-      .where(eq(payments.saleId, saleId))
-      .orderBy(desc(payments.paymentDate));
-
-    // Calculate outstanding balance
-    const totalPaid = salePayments
-      .filter((p) => p.paymentStatus === 'completed')
-      .reduce((sum, p) => sum + Number(p.paymentAmount), 0);
-    const outstandingBalance = Number(sale.totalAmount) - totalPaid;
+    const [buyer, lorryLines, financial, buyerSummary] = await Promise.all([
+      db.select().from(buyers).where(eq(buyers.id, sale.buyerId)).limit(1).then((rows) => rows[0] ?? null),
+      listSaleLorries(saleId),
+      getSaleFinancialSummary(saleId, Number(sale.totalAmount)),
+      getBuyerBalanceSummary(sale.buyerId),
+    ]);
 
     res.json({
       success: true,
       data: {
-        sale,
-        buyer,
-        payments: salePayments,
-        totalPaid,
-        outstandingBalance,
+        sale: {
+          ...sale,
+          status: normalizeSaleWorkflowStatus(sale.status),
+          settlementStatus: financial.settlementStatus,
+          totalPaid: financial.totalPaid,
+          outstandingBalance: financial.outstandingBalance,
+        },
+        buyer: buyer
+          ? {
+              ...buyer,
+              ...buyerSummary,
+            }
+          : null,
+        lorryLines,
+        payments: financial.payments,
+        totalPaid: financial.totalPaid,
+        outstandingBalance: financial.outstandingBalance,
+        availableBuyerCredit: buyerSummary.advanceCredit,
+        buyerBalance: buyerSummary,
       },
       timestamp: new Date().toISOString(),
     });
@@ -170,9 +217,8 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
 // POST /api/sales — create sale with auto-generated saleCode
 router.post('/', authenticate, requirePermission('sales:create'), validate(createSaleSchema), async (req: Request, res: Response) => {
   try {
-    const { batchId, buyerId, saleDate, totalBirds, totalWeight, pricePerKg, notes } = req.body;
+    const { batchId, buyerId, saleDate, totalBirds: requestedBirds, totalWeight: requestedWeight, pricePerKg, lorries, notes } = req.body;
 
-    // Validate batch exists and is ready
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
     if (!batch) {
       res.status(400).json({ success: false, error: 'Batch not found', code: 'BATCH_NOT_FOUND', statusCode: 400, timestamp: new Date().toISOString() });
@@ -182,14 +228,11 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
       res.status(400).json({ success: false, error: 'Batch is not ready for sale', code: 'BATCH_NOT_READY', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
-
-    // Site restriction for farm managers
     if (req.user!.siteId && batch.siteId !== req.user!.siteId) {
       res.status(403).json({ success: false, error: 'You can only create sales for your own site', code: 'FORBIDDEN', statusCode: 403, timestamp: new Date().toISOString() });
       return;
     }
 
-    // Validate buyer exists and is active
     const [buyer] = await db.select().from(buyers).where(eq(buyers.id, buyerId)).limit(1);
     if (!buyer) {
       res.status(400).json({ success: false, error: 'Buyer not found', code: 'BUYER_NOT_FOUND', statusCode: 400, timestamp: new Date().toISOString() });
@@ -200,7 +243,27 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
       return;
     }
 
-    // Auto-generate saleCode: SALE-YYYYMMDD-XXX
+    const totals = lorries?.length
+      ? normalizeSaleLorries(lorries)
+      : {
+          lines: [] as Array<{
+            lineSequence: number;
+            lorryNumber: string;
+            birdsCount: number;
+            previousWeight: number;
+            loadedWeight: number;
+            netWeight: number;
+            notes: string | null;
+          }>,
+          totalBirds: requestedBirds,
+          totalWeight: requestedWeight,
+        };
+
+    if (totals.totalBirds > batch.chicksPlaced) {
+      res.status(400).json({ success: false, error: 'Sale birds cannot exceed birds placed in the batch', code: 'SALE_BIRDS_EXCEED_BATCH', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+
     const dateStr = saleDate.replace(/-/g, '');
     const [countResult] = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -208,9 +271,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
       .where(sql`${sales.saleCode} LIKE ${'SALE-' + dateStr + '-%'}`);
     const seq = String((countResult.count ?? 0) + 1).padStart(3, '0');
     const saleCode = `SALE-${dateStr}-${seq}`;
-
-    // Calculate totalAmount
-    const totalAmount = (totalWeight * pricePerKg).toFixed(2);
+    const totalAmount = (totals.totalWeight * pricePerKg).toFixed(2);
 
     const [newSale] = await db
       .insert(sales)
@@ -219,27 +280,54 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
         batchId,
         buyerId,
         saleDate,
-        totalBirds,
-        totalWeight: totalWeight.toFixed(2),
+        totalBirds: totals.totalBirds,
+        totalWeight: totals.totalWeight.toFixed(2),
         pricePerKg: pricePerKg.toFixed(2),
         totalAmount,
-        status: 'pending',
+        status: 'draft',
         notes: notes || null,
       })
       .returning();
+
+    if (totals.lines.length > 0) {
+      await db.insert(saleLorries).values(
+        totals.lines.map((line) => ({
+          saleId: newSale.id,
+          lineSequence: line.lineSequence,
+          lorryNumber: line.lorryNumber,
+          birdsCount: line.birdsCount,
+          previousWeight: line.previousWeight.toFixed(2),
+          loadedWeight: line.loadedWeight.toFixed(2),
+          netWeight: line.netWeight.toFixed(2),
+          notes: line.notes,
+        })),
+      );
+    }
+
+    const [createdSale] = await db.select().from(sales).where(eq(sales.id, newSale.id)).limit(1);
 
     createAuditLog({
       userId: req.user!.id,
       action: 'sale_created',
       entityType: 'sale',
       entityId: newSale.id,
-      changes: { saleCode, batchId, buyerId, totalBirds, totalWeight, pricePerKg, totalAmount },
+      changes: {
+        saleCode,
+        batchId,
+        buyerId,
+        totalBirds: totals.totalBirds,
+        totalWeight: totals.totalWeight,
+        pricePerKg,
+        totalAmount,
+        lorryCount: totals.lines.length,
+      },
     });
 
-    res.status(201).json({ success: true, data: newSale, timestamp: new Date().toISOString() });
+    res.status(201).json({ success: true, data: createdSale, timestamp: new Date().toISOString() });
   } catch (error) {
     logger.error('Failed to create sale', { error });
-    res.status(500).json({ success: false, error: 'Failed to create sale', code: 'CREATE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+    const message = error instanceof Error ? error.message : 'Failed to create sale';
+    res.status(500).json({ success: false, error: message, code: 'CREATE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 
@@ -254,35 +342,153 @@ router.put('/:id', authenticate, requirePermission('sales:update'), validate(upd
       return;
     }
 
-    // If cancelling, check for completed payments
-    if (req.body.status === 'cancelled') {
-      const [completedPayment] = await db
-        .select({ id: payments.id })
-        .from(payments)
-        .where(and(eq(payments.saleId, saleId), eq(payments.paymentStatus, 'completed')))
+    const hasDraftDetailUpdates =
+      req.body.pricePerKg !== undefined ||
+      req.body.lorries !== undefined;
+
+    const updatePayload: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+
+    if (req.body.notes !== undefined) {
+      updatePayload.notes = req.body.notes;
+    }
+
+    if (hasDraftDetailUpdates) {
+      if (existing.status !== 'draft') {
+        res.status(400).json({ success: false, error: 'Lorries and pricing can only be edited while the sale is in draft', code: 'SALE_NOT_DRAFT', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      const effectivePricePerKg = req.body.pricePerKg ?? Number(existing.pricePerKg);
+      const lorryLines: EditableLorryLine[] = req.body.lorries ?? (await listSaleLorries(saleId));
+      const totals = normalizeSaleLorries(
+        lorryLines.map((line: EditableLorryLine) => ({
+          lorryNumber: line.lorryNumber,
+          birdsCount: Number(line.birdsCount),
+          previousWeight: Number(line.previousWeight),
+          loadedWeight: Number(line.loadedWeight),
+          notes: line.notes ?? undefined,
+        })),
+      );
+
+      const [batch] = await db.select().from(batches).where(eq(batches.id, existing.batchId)).limit(1);
+      if (!batch) {
+        res.status(400).json({ success: false, error: 'Batch not found for sale', code: 'BATCH_NOT_FOUND', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+      if (totals.totalBirds > batch.chicksPlaced) {
+        res.status(400).json({ success: false, error: 'Sale birds cannot exceed birds placed in the batch', code: 'SALE_BIRDS_EXCEED_BATCH', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      updatePayload.pricePerKg = effectivePricePerKg.toFixed(2);
+      updatePayload.totalBirds = totals.totalBirds;
+      updatePayload.totalWeight = totals.totalWeight.toFixed(2);
+      updatePayload.totalAmount = (totals.totalWeight * effectivePricePerKg).toFixed(2);
+
+      await db.delete(saleLorries).where(eq(saleLorries.saleId, saleId));
+      await db.insert(saleLorries).values(
+        totals.lines.map((line) => ({
+          saleId,
+          lineSequence: line.lineSequence,
+          lorryNumber: line.lorryNumber,
+          birdsCount: line.birdsCount,
+          previousWeight: line.previousWeight.toFixed(2),
+          loadedWeight: line.loadedWeight.toFixed(2),
+          netWeight: line.netWeight.toFixed(2),
+          notes: line.notes,
+        })),
+      );
+    }
+
+    const existingWorkflowStatus = normalizeSaleWorkflowStatus(existing.status);
+    const requestedStatus = req.body.status ? normalizeSaleWorkflowStatus(req.body.status) : undefined;
+
+    if (requestedStatus === 'cancelled') {
+      const [legacyPayment] = await db.select({ id: payments.id }).from(payments).where(eq(payments.saleId, saleId)).limit(1);
+      const [allocatedReceipt] = await db
+        .select({ id: buyerReceiptAllocations.id })
+        .from(buyerReceiptAllocations)
+        .where(eq(buyerReceiptAllocations.saleId, saleId))
         .limit(1);
 
-      if (completedPayment) {
-        res.status(400).json({ success: false, error: 'Cannot cancel a sale with completed payments', code: 'SALE_HAS_PAYMENTS', statusCode: 400, timestamp: new Date().toISOString() });
+      if (legacyPayment || allocatedReceipt) {
+        res.status(400).json({ success: false, error: 'Cannot cancel a sale with payments or receipt allocations', code: 'SALE_HAS_PAYMENTS', statusCode: 400, timestamp: new Date().toISOString() });
         return;
       }
     }
 
+    if (requestedStatus === 'reviewed') {
+      if (!['draft', 'reviewed'].includes(existingWorkflowStatus)) {
+        res.status(400).json({ success: false, error: 'Only draft sales can be moved to reviewed', code: 'INVALID_STATUS_TRANSITION', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      const effectiveLorries: EditableLorryLine[] = req.body.lorries ? req.body.lorries : await listSaleLorries(saleId);
+      if (!effectiveLorries.length) {
+        res.status(400).json({ success: false, error: 'Add at least one lorry before reviewing the sale', code: 'SALE_REQUIRES_LORRIES', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      const normalized = normalizeSaleLorries(
+        effectiveLorries.map((line: EditableLorryLine) => ({
+          lorryNumber: line.lorryNumber,
+          birdsCount: Number(line.birdsCount),
+          previousWeight: Number(line.previousWeight),
+          loadedWeight: Number(line.loadedWeight),
+          notes: line.notes ?? undefined,
+        })),
+      );
+      if (normalized.totalWeight <= 0 || normalized.totalBirds <= 0) {
+        res.status(400).json({ success: false, error: 'Sale must have valid lorry totals before review', code: 'SALE_INVALID_TOTALS', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      updatePayload.status = 'reviewed';
+    } else if (requestedStatus === 'completed') {
+      if (!['reviewed', 'completed'].includes(existingWorkflowStatus)) {
+        res.status(400).json({ success: false, error: 'Only reviewed sales can be moved to completed', code: 'INVALID_STATUS_TRANSITION', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      const financial = await getSaleFinancialSummary(saleId, Number(updatePayload.totalAmount ?? existing.totalAmount));
+      if (financial.outstandingBalance > 0.01) {
+        res.status(400).json({ success: false, error: 'Fully settle the sale before marking it completed', code: 'SALE_HAS_OUTSTANDING_BALANCE', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+
+      updatePayload.status = 'completed';
+    } else if (requestedStatus !== undefined) {
+      updatePayload.status = requestedStatus;
+    }
+
     const [updated] = await db
       .update(sales)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set(updatePayload)
       .where(eq(sales.id, saleId))
       .returning();
+
+    if (requestedStatus === 'reviewed' && existingWorkflowStatus === 'draft') {
+      await autoApplyBuyerCreditToSale(existing.buyerId, saleId, Number(updated.totalAmount));
+    }
 
     createAuditLog({
       userId: req.user!.id,
       action: 'sale_updated',
       entityType: 'sale',
       entityId: saleId,
-      changes: { before: { status: existing.status }, after: { status: updated.status } },
+      changes: { before: { status: existing.status, totalAmount: existing.totalAmount }, after: updatePayload },
     });
 
-    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        status: normalizeSaleWorkflowStatus(updated.status),
+      },
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     logger.error('Failed to update sale', { error });
     res.status(500).json({ success: false, error: 'Failed to update sale', code: 'UPDATE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
@@ -300,15 +506,15 @@ router.delete('/:id', authenticate, requirePermission('sales:delete'), async (re
       return;
     }
 
-    // Check for any payments
-    const [existingPayment] = await db
-      .select({ id: payments.id })
-      .from(payments)
-      .where(eq(payments.saleId, saleId))
+    const [legacyPayment] = await db.select({ id: payments.id }).from(payments).where(eq(payments.saleId, saleId)).limit(1);
+    const [allocatedReceipt] = await db
+      .select({ id: buyerReceiptAllocations.id })
+      .from(buyerReceiptAllocations)
+      .where(eq(buyerReceiptAllocations.saleId, saleId))
       .limit(1);
 
-    if (existingPayment) {
-      res.status(400).json({ success: false, error: 'Cannot delete a sale with payments', code: 'SALE_HAS_PAYMENTS', statusCode: 400, timestamp: new Date().toISOString() });
+    if (legacyPayment || allocatedReceipt) {
+      res.status(400).json({ success: false, error: 'Cannot delete a sale with payments or receipt allocations', code: 'SALE_HAS_PAYMENTS', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
@@ -333,79 +539,90 @@ router.delete('/:id', authenticate, requirePermission('sales:delete'), async (re
   }
 });
 
-// POST /api/sales/:saleId/payments — add payment to a sale
+// POST /api/sales/:saleId/payments — add a buyer receipt allocated to a sale
 router.post('/:saleId/payments', authenticate, requirePermission('payments:create'), validate(createPaymentSchema), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.saleId as string);
 
-    // Validate sale exists and is pending
     const [sale] = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1);
     if (!sale) {
       res.status(404).json({ success: false, error: 'Sale not found', code: 'SALE_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
     }
-    if (sale.status !== 'pending') {
-      res.status(400).json({ success: false, error: 'Payments can only be added to pending sales', code: 'SALE_NOT_PENDING', statusCode: 400, timestamp: new Date().toISOString() });
+    if (sale.status === 'cancelled') {
+      res.status(400).json({ success: false, error: 'Payments cannot be added to cancelled sales', code: 'SALE_CANCELLED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (!canTakeReceipts(sale.status)) {
+      res.status(400).json({ success: false, error: 'Review the sale before recording receipts', code: 'SALE_NOT_REVIEWED', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
-    // Calculate outstanding balance
-    const [paidResult] = await db
-      .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
-      .from(payments)
-      .where(and(eq(payments.saleId, saleId), eq(payments.paymentStatus, 'completed')));
-    const totalPaid = paidResult?.total ?? 0;
-    const outstanding = Number(sale.totalAmount) - totalPaid;
+    const lines = req.body.lines?.length
+      ? req.body.lines
+      : [
+          {
+            paymentAmount: req.body.paymentAmount,
+            paymentMethod: req.body.paymentMethod,
+            financeAccountId: req.body.financeAccountId,
+            referenceNumber: req.body.referenceNumber,
+            chequeNumber: req.body.chequeNumber,
+            chequeDate: req.body.chequeDate,
+            bankName: req.body.bankName,
+            notes: req.body.notes,
+          },
+        ];
 
-    // Validate payment does not exceed outstanding
-    if (req.body.paymentAmount > outstanding + 0.01) {
-      res.status(400).json({
-        success: false,
-        error: `Payment amount exceeds outstanding balance of ${outstanding.toFixed(2)}`,
-        code: 'PAYMENT_EXCEEDS_BALANCE',
-        statusCode: 400,
-        timestamp: new Date().toISOString(),
-      });
-      return;
-    }
+    const receiptDate = req.body.receiptDate ?? req.body.paymentDate;
+    const receiptNotes = req.body.receiptNotes ?? req.body.notes;
 
-    // Cheque payments default to 'pending', cash/bank_transfer to 'completed'
-    const paymentStatus = req.body.paymentMethod === 'cheque' ? 'pending' : 'completed';
+    const receiptResult = await createBuyerReceiptForSale({
+      buyerId: sale.buyerId,
+      saleId,
+      receiptDate,
+      notes: receiptNotes || null,
+      lines,
+      recordedBy: req.user!.id,
+    });
 
-    const [newPayment] = await db
-      .insert(payments)
-      .values({
-        saleId,
-        paymentAmount: req.body.paymentAmount.toFixed(2),
-        paymentDate: req.body.paymentDate,
-        paymentMethod: req.body.paymentMethod,
-        chequeNumber: req.body.chequeNumber || null,
-        chequeDate: req.body.chequeDate || null,
-        bankName: req.body.bankName || null,
-        paymentStatus,
-        notes: req.body.notes || null,
-        recordedBy: req.user!.id,
-      })
-      .returning();
-
-    // Auto-complete sale if fully paid
-    const newTotalPaid = totalPaid + (paymentStatus === 'completed' ? req.body.paymentAmount : 0);
-    if (newTotalPaid >= Number(sale.totalAmount) - 0.01) {
-      await db.update(sales).set({ status: 'completed', updatedAt: new Date() }).where(eq(sales.id, saleId));
+    for (const line of receiptResult.lines) {
+      if (line.paymentStatus === 'completed' && line.financeAccountId) {
+        await postBuyerReceiptLineToTreasury({
+          receiptLineId: line.id,
+          financeAccountId: line.financeAccountId,
+          postedBy: req.user!.id,
+        });
+      }
     }
 
     createAuditLog({
       userId: req.user!.id,
-      action: 'payment_recorded',
-      entityType: 'payment',
-      entityId: newPayment.id,
-      changes: { saleId, paymentAmount: req.body.paymentAmount, paymentMethod: req.body.paymentMethod, paymentStatus },
+      action: 'buyer_receipt_recorded',
+      entityType: 'buyer_receipt',
+      entityId: receiptResult.receipt.id,
+      changes: {
+        saleId,
+        buyerId: sale.buyerId,
+        receiptCode: receiptResult.receipt.receiptCode,
+        lineCount: receiptResult.lines.length,
+      },
     });
 
-    res.status(201).json({ success: true, data: newPayment, timestamp: new Date().toISOString() });
+    res.status(201).json({
+      success: true,
+      data: {
+        receipt: receiptResult.receipt,
+        lines: receiptResult.lines,
+      },
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
-    logger.error('Failed to create payment', { error });
-    res.status(500).json({ success: false, error: 'Failed to create payment', code: 'CREATE_PAYMENT_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+    if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
+      sendTreasurySchemaNotReady(res);
+      return;
+    }
+    logger.error('Failed to create buyer receipt', { error });
+    res.status(500).json({ success: false, error: 'Failed to create payment receipt', code: 'CREATE_PAYMENT_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 

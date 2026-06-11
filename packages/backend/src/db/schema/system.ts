@@ -40,3 +40,26 @@ export const notifications = pgTable(
     index('idx_notifications_is_read').on(table.isRead),
   ],
 );
+
+export const periodLocks = pgTable(
+  'period_locks',
+  {
+    id: serial('id').primaryKey(),
+    lockCode: varchar('lock_code', { length: 50 }).unique().notNull(),
+    periodStart: varchar('period_start', { length: 10 }).notNull(),
+    periodEnd: varchar('period_end', { length: 10 }).notNull(),
+    scope: varchar('scope', { length: 50 }).default('all').notNull(),
+    status: varchar('status', { length: 50 }).default('active').notNull(),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id).notNull(),
+    releasedBy: integer('released_by').references(() => users.id),
+    releasedAt: timestamp('released_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_period_locks_period').on(table.periodStart, table.periodEnd),
+    index('idx_period_locks_scope').on(table.scope),
+    index('idx_period_locks_status').on(table.status),
+  ],
+);

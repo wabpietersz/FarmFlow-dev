@@ -102,22 +102,150 @@ export interface FeedConsumptionData {
 }
 
 export interface FinancialOverviewData {
-  totalRevenue: number;
-  totalPaid: number;
-  totalOutstanding: number;
-  paymentsByMethod: {
-    method: string;
-    total: number;
-    count: number;
-  }[];
+  salesRevenue: number;
+  treasuryInflows: number;
+  treasuryOutflows: number;
+  netCashMovement: number;
+  customerReceiptInflows: number;
+  payrollOutflows: number;
+  supplierPaymentOutflows: number;
+  pettyCashNet: number;
   recentTransactions: {
-    paymentId: number;
-    saleCode: string;
-    amount: string;
-    method: string;
-    date: string;
+    transactionId: number;
+    transactionCode: string;
+    transactionType: string;
+    transactionDate: string;
     status: string;
+    counterpartyName?: string | null;
+    netAmount: number;
+    accountNames?: string | null;
+    sourceModule?: string | null;
+    sourceEntityType?: string | null;
+    sourceEntityId?: number | null;
+    sourceCodeSnapshot?: string | null;
   }[];
+  dateRange: { start: string; end: string };
+}
+
+export interface BuyerOutstandingAdvanceSummaryData {
+  totals: {
+    totalSales: number;
+    totalReceiptsCompleted: number;
+    totalAppliedToSales: number;
+    outstandingBalance: number;
+    advanceCredit: number;
+    netBalance: number;
+  };
+  rows: Array<{
+    buyerId: number;
+    buyerName: string;
+    totalSales: number;
+    totalReceiptsCompleted: number;
+    totalAppliedToSales: number;
+    outstandingBalance: number;
+    advanceCredit: number;
+    netBalance: number;
+  }>;
+}
+
+export interface PayrollDisbursementSummaryData {
+  totals: {
+    totalDisbursed: number;
+    cashDisbursed: number;
+    bankTransferDisbursed: number;
+    chequeDisbursed: number;
+    count: number;
+  };
+  rows: Array<{
+    payrollId: number;
+    employeeId: number;
+    employeeName: string;
+    payPeriod: string;
+    paidDate?: string | null;
+    amount: number;
+    financeAccountId?: number | null;
+    financeAccountName?: string | null;
+    paymentMethod?: string | null;
+    chequeLeafId?: number | null;
+    chequeNumber?: string | null;
+    treasuryTransactionId?: number | null;
+    treasuryTransactionCode?: string | null;
+    treasuryStatus?: string | null;
+    transactionDate?: string | null;
+    sourceModule: string;
+    sourceEntityType: string;
+    sourceEntityId: number;
+    sourceCodeSnapshot: string;
+  }>;
+  dateRange: { start: string; end: string };
+}
+
+export interface PettyCashOutstandingSummaryData {
+  totals: {
+    totalAllocated: number;
+    totalApprovedExpenses: number;
+    totalSubmittedExpenses: number;
+    totalOutstanding: number;
+    count: number;
+  };
+  rows: Array<{
+    allocationId: number;
+    allocationCode: string;
+    allocationDate: string;
+    allocatedToUserId: number;
+    allocatedToName?: string | null;
+    siteId?: number | null;
+    siteName?: string | null;
+    sourceFinanceAccountId: number;
+    sourceFinanceAccountName?: string | null;
+    pettyCashAccountId: number;
+    pettyCashAccountName?: string | null;
+    allocatedAmount: number;
+    approvedExpenseAmount: number;
+    submittedExpenseAmount: number;
+    outstandingAmount: number;
+    status: string;
+    treasuryTransactionId: number;
+    sourceModule: string;
+    sourceEntityType: string;
+    sourceEntityId: number;
+    sourceCodeSnapshot: string;
+  }>;
+}
+
+export interface SupplierPaymentSummaryData {
+  totals: {
+    totalDisbursed: number;
+    cashDisbursed: number;
+    bankTransferDisbursed: number;
+    chequeDisbursed: number;
+    count: number;
+  };
+  rows: Array<{
+    supplierPaymentId: number;
+    paymentCode: string;
+    paymentDate: string;
+    supplierId: number;
+    supplierName?: string | null;
+    purchaseOrderId?: number | null;
+    purchaseOrderCode?: string | null;
+    amount: number;
+    paymentMethod: string;
+    paymentStatus: string;
+    financeAccountId: number;
+    financeAccountName?: string | null;
+    referenceNumber?: string | null;
+    chequeNumber?: string | null;
+    treasuryTransactionId?: number | null;
+    treasuryReversalTransactionId?: number | null;
+    treasuryTransactionCode?: string | null;
+    treasuryStatus?: string | null;
+    transactionDate?: string | null;
+    sourceModule: string;
+    sourceEntityType: string;
+    sourceEntityId: number;
+    sourceCodeSnapshot: string;
+  }>;
   dateRange: { start: string; end: string };
 }
 
@@ -175,6 +303,36 @@ export function useFinancialOverview(params: FinancialOverviewParams = {}) {
   return useQuery({
     queryKey: ['reports', 'financial-overview', params],
     queryFn: () => apiGet<FinancialOverviewData>(`/reports/financial-overview?${queryString}`),
+  });
+}
+
+export function useBuyerOutstandingAdvanceSummary() {
+  return useQuery({
+    queryKey: ['reports', 'buyer-outstanding-advance-summary'],
+    queryFn: () => apiGet<BuyerOutstandingAdvanceSummaryData>('/reports/buyer-outstanding-advance-summary'),
+  });
+}
+
+export function usePayrollDisbursementSummary(params: FinancialOverviewParams = {}) {
+  const queryString = buildQueryString(params);
+  return useQuery({
+    queryKey: ['reports', 'payroll-disbursement-summary', params],
+    queryFn: () => apiGet<PayrollDisbursementSummaryData>(`/reports/payroll-disbursement-summary?${queryString}`),
+  });
+}
+
+export function usePettyCashOutstandingSummary() {
+  return useQuery({
+    queryKey: ['reports', 'petty-cash-outstanding-summary'],
+    queryFn: () => apiGet<PettyCashOutstandingSummaryData>('/reports/petty-cash-outstanding-summary'),
+  });
+}
+
+export function useSupplierPaymentSummary(params: FinancialOverviewParams = {}) {
+  const queryString = buildQueryString(params);
+  return useQuery({
+    queryKey: ['reports', 'supplier-payment-summary', params],
+    queryFn: () => apiGet<SupplierPaymentSummaryData>(`/reports/supplier-payment-summary?${queryString}`),
   });
 }
 
@@ -237,7 +395,9 @@ export interface BatchProfitabilityEntry {
   birdsSold: number;
   revenue: number;
   feedCost: number;
+  inventoryCost: number;
   laborCost: number;
+  operationalExpenseCost: number;
   totalCost: number;
   grossMargin: number;
   profitMargin: number;
@@ -249,9 +409,40 @@ export interface BatchProfitabilityData {
   totals: {
     totalRevenue: number;
     totalFeedCost: number;
+    totalInventoryCost: number;
     totalLaborCost: number;
+    totalOperationalExpenseCost: number;
+    totalCost: number;
     totalGrossMargin: number;
     averageProfitMargin: number;
+  };
+}
+
+export interface BatchInventoryConsumptionRow {
+  id: number;
+  batchId: number;
+  batchCode: string;
+  siteName: string | null;
+  inventoryItemId: number;
+  ingredientName: string;
+  itemCode?: string | null;
+  typeName: string;
+  typeCode: string;
+  quantity: string;
+  unit: string;
+  unitCost: string;
+  lineCost: string;
+  consumptionDate: string;
+  referenceType?: string | null;
+  referenceId?: number | null;
+  notes?: string | null;
+}
+
+export interface BatchInventoryConsumptionData {
+  rows: BatchInventoryConsumptionRow[];
+  totals: {
+    totalQuantity: number;
+    totalCost: number;
   };
 }
 
@@ -288,6 +479,15 @@ export function useBatchProfitability(params: BatchProfitabilityParams = {}) {
   return useQuery({
     queryKey: ['reports', 'batch-profitability', params],
     queryFn: () => apiGet<BatchProfitabilityData>(`/reports/batch-profitability?${queryString}`),
+  });
+}
+
+export function useBatchInventoryConsumption(params: { startDate?: string; endDate?: string; siteId?: number; batchId?: number } = {}) {
+  const queryString = buildQueryString(params);
+
+  return useQuery({
+    queryKey: ['reports', 'batch-inventory-consumption', params],
+    queryFn: () => apiGet<BatchInventoryConsumptionData>(`/reports/batch-inventory-consumption?${queryString}`),
   });
 }
 

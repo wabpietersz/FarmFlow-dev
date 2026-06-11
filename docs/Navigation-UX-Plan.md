@@ -34,9 +34,10 @@ Current navigation is a flat list on desktop and a mixed bottom-nav + sheet mode
    - `Sites`
    - `Batches`
    - `Sales`
-4. `Feed` (standalone)
-5. `Reports` (standalone)
-6. `Admin` (group, low priority)
+4. `Inventory` (standalone)
+5. `Feed` (standalone)
+6. `Reports` (standalone)
+7. `Admin` (group, low priority)
    - `Users`
    - `Settings`
 
@@ -44,8 +45,14 @@ Current navigation is a flat list on desktop and a mixed bottom-nav + sheet mode
 
 1. Dashboard always first
 2. Operational groups in the middle
-3. Feed and Reports remain quickly reachable as standalone
+3. Inventory, Feed, and Reports remain quickly reachable as standalone
 4. Admin actions remain de-emphasized and placed last
+
+### March 16, 2026 Addendum
+
+- `Inventory` is introduced as a first-class module
+- `Feed` remains standalone but narrows to feed-only workflows
+- suppliers and purchase orders should no longer be treated as feed-owned navigation destinations
 
 ---
 

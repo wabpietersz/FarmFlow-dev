@@ -11,6 +11,8 @@ export enum PaymentStatus {
 }
 
 export enum SaleStatus {
+  Draft = 'draft',
+  Reviewed = 'reviewed',
   Pending = 'pending',
   Completed = 'completed',
   Cancelled = 'cancelled',
@@ -25,6 +27,12 @@ export interface Buyer {
   address?: string | null;
   creditTerms: number;
   status: string;
+  totalSales?: number;
+  totalReceiptsCompleted?: number;
+  totalAppliedToSales?: number;
+  outstandingBalance?: number;
+  advanceCredit?: number;
+  netBalance?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,17 +48,24 @@ export interface Sale {
   pricePerKg: number;
   totalAmount: number;
   status: SaleStatus;
+  totalPaid?: number;
+  outstandingBalance?: number;
+  settlementStatus?: string;
   notes?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface Payment {
-  id: number;
+  id: number | string;
   saleId: number;
   paymentAmount: number;
   paymentDate: Date;
   paymentMethod: PaymentMethod;
+  financeAccountId?: number | null;
+  financeAccountName?: string | null;
+  treasuryTransactionId?: number | null;
+  treasuryReversalTransactionId?: number | null;
   chequeNumber?: string | null;
   chequeDate?: Date | null;
   bankName?: string | null;
@@ -61,23 +76,54 @@ export interface Payment {
   updatedAt: Date;
 }
 
+export interface SaleLorry {
+  id?: number;
+  saleId?: number;
+  lineSequence?: number;
+  lorryNumber: string;
+  birdsCount: number;
+  previousWeight: number;
+  loadedWeight: number;
+  netWeight?: number;
+  notes?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export interface ReceiptPaymentLine {
+  paymentAmount: number;
+  paymentMethod: PaymentMethod;
+  financeAccountId?: number;
+  referenceNumber?: string;
+  chequeNumber?: string;
+  chequeDate?: string;
+  bankName?: string;
+  notes?: string;
+}
+
 export interface CreateSaleRequest {
   batchId: number;
   buyerId: number;
   saleDate: string;
-  totalBirds: number;
-  totalWeight: number;
   pricePerKg: number;
+  totalBirds?: number;
+  totalWeight?: number;
+  lorries?: SaleLorry[];
   notes?: string;
 }
 
 export interface CreatePaymentRequest {
   saleId: number;
-  paymentAmount: number;
-  paymentDate: string;
-  paymentMethod: PaymentMethod;
+  paymentAmount?: number;
+  paymentDate?: string;
+  paymentMethod?: PaymentMethod;
+  financeAccountId?: number;
+  referenceNumber?: string;
   chequeNumber?: string;
   chequeDate?: string;
   bankName?: string;
   notes?: string;
+  receiptDate?: string;
+  receiptNotes?: string;
+  lines?: ReceiptPaymentLine[];
 }

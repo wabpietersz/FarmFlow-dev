@@ -13,6 +13,10 @@ jest.mock('../lib/audit', () => ({
   createAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../lib/sales-ledger', () => ({
+  getBuyerBalanceSummary: jest.fn(),
+}));
+
 // Build a flexible chainable DB mock
 function createChainMock(resolvedValue: unknown = []) {
   const chain: Record<string, jest.Mock> = {};
@@ -55,8 +59,10 @@ jest.mock('../db', () => {
 });
 
 import { firebaseAuth } from '../lib/firebase';
+import { getBuyerBalanceSummary } from '../lib/sales-ledger';
 
 const mockVerifyIdToken = firebaseAuth.verifyIdToken as jest.Mock;
+const mockGetBuyerBalanceSummary = getBuyerBalanceSummary as jest.Mock;
 
 // Test users
 const systemAdmin = {
@@ -143,6 +149,7 @@ describe('Reports & Enhanced Dashboard', () => {
     jest.clearAllMocks();
     chainIndex = 0;
     dbChains = [];
+    mockGetBuyerBalanceSummary.mockReset();
   });
 
   // ==================== AUTHENTICATION ====================
@@ -277,6 +284,179 @@ describe('Reports & Enhanced Dashboard', () => {
       const res = await authedRequest('get', '/api/reports/batch-profitability?startDate=2026-01-01&endDate=2026-02-01');
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('GET /api/reports/financial-overview', () => {
+    it('should return treasury-first cash metrics for accountant', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{ salesRevenue: 150000 }],
+        [{
+          treasuryInflows: 90000,
+          treasuryOutflows: 35000,
+          customerReceiptInflows: 90000,
+          payrollOutflows: 20000,
+          supplierPaymentOutflows: 12000,
+          pettyCashNet: -3000,
+        }],
+        [{
+          transactionId: 11,
+          transactionCode: 'TRX-20260401-001',
+          transactionType: 'customer_receipt',
+          transactionDate: '2026-04-01',
+          status: 'posted',
+          counterpartyName: 'Fresh Mart',
+          netAmount: 90000,
+          accountNames: 'Main Bank',
+          sourceModule: 'sales',
+          sourceEntityType: 'buyer_receipt_line',
+          sourceEntityId: 44,
+          sourceCodeSnapshot: 'RCT-20260401-001',
+        }],
+      );
+
+      const res = await authedRequest('get', '/api/reports/financial-overview?startDate=2026-04-01&endDate=2026-04-30');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.salesRevenue).toBe(150000);
+      expect(res.body.data.treasuryInflows).toBe(90000);
+      expect(res.body.data.treasuryOutflows).toBe(35000);
+      expect(res.body.data.netCashMovement).toBe(55000);
+      expect(res.body.data.recentTransactions[0].sourceCodeSnapshot).toBe('RCT-20260401-001');
+    });
+  });
+
+  describe('New treasury-linked summary reports', () => {
+    it('GET /api/reports/buyer-outstanding-advance-summary should return buyer ledger summary rows', async () => {
+      setupAuth(accountant);
+      mockGetBuyerBalanceSummary
+        .mockResolvedValueOnce({
+          totalSales: 1000,
+          totalReceiptsCompleted: 700,
+          totalAppliedToSales: 650,
+          outstandingBalance: 350,
+          advanceCredit: 50,
+          netBalance: 300,
+        })
+        .mockResolvedValueOnce({
+          totalSales: 400,
+          totalReceiptsCompleted: 500,
+          totalAppliedToSales: 400,
+          outstandingBalance: 0,
+          advanceCredit: 100,
+          netBalance: -100,
+        });
+      setChains(
+        [accountant],
+        [
+          { buyerId: 1, buyerName: 'Fresh Mart' },
+          { buyerId: 2, buyerName: 'Agri Foods' },
+        ],
+      );
+
+      const res = await authedRequest('get', '/api/reports/buyer-outstanding-advance-summary');
+      expect(res.status).toBe(200);
+      expect(res.body.data.totals.outstandingBalance).toBe(350);
+      expect(res.body.data.totals.advanceCredit).toBe(150);
+      expect(res.body.data.rows).toHaveLength(2);
+    });
+
+    it('GET /api/reports/payroll-disbursement-summary should return treasury payroll rows', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{
+          payrollId: 4,
+          employeeId: 9,
+          employeeName: 'Jane Worker',
+          payPeriod: '2026-04-01',
+          paidDate: '2026-04-15',
+          amount: '25000.00',
+          financeAccountId: 3,
+          financeAccountName: 'Payroll Bank',
+          paymentMethod: 'cheque',
+          chequeLeafId: 22,
+          chequeNumber: '000122',
+          treasuryTransactionId: 99,
+          treasuryTransactionCode: 'TRX-20260415-001',
+          treasuryStatus: 'posted',
+          transactionDate: '2026-04-15',
+        }],
+      );
+
+      const res = await authedRequest('get', '/api/reports/payroll-disbursement-summary?startDate=2026-04-01&endDate=2026-04-30');
+      expect(res.status).toBe(200);
+      expect(res.body.data.totals.totalDisbursed).toBe(25000);
+      expect(res.body.data.rows[0].financeAccountName).toBe('Payroll Bank');
+      expect(res.body.data.rows[0].chequeNumber).toBe('000122');
+    });
+
+    it('GET /api/reports/petty-cash-outstanding-summary should return allocation outstanding rows', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{
+          allocationId: 7,
+          allocationCode: 'PCA-20260401-001',
+          allocationDate: '2026-04-01',
+          allocatedToUserId: 2,
+          allocatedToName: 'Farm Manager',
+          siteId: 1,
+          siteName: 'North Farm',
+          sourceFinanceAccountId: 3,
+          pettyCashAccountId: 8,
+          allocatedAmount: '10000.00',
+          status: 'allocated',
+          treasuryTransactionId: 51,
+          approvedExpenseAmount: 3500,
+          submittedExpenseAmount: 1500,
+        }],
+        [
+          { id: 3, accountName: 'Cash Office' },
+          { id: 8, accountName: 'Farm Manager Float' },
+        ],
+      );
+
+      const res = await authedRequest('get', '/api/reports/petty-cash-outstanding-summary');
+      expect(res.status).toBe(200);
+      expect(res.body.data.totals.totalOutstanding).toBe(6500);
+      expect(res.body.data.rows[0].pettyCashAccountName).toBe('Farm Manager Float');
+    });
+
+    it('GET /api/reports/supplier-payment-summary should return treasury supplier payment rows', async () => {
+      setupAuth(accountant);
+      setChains(
+        [accountant],
+        [{
+          supplierPaymentId: 12,
+          paymentCode: 'SPY-20260404-001',
+          paymentDate: '2026-04-04',
+          supplierId: 2,
+          supplierName: 'Feed Supplier',
+          purchaseOrderId: 5,
+          purchaseOrderCode: 'PO-20260401-001',
+          amount: '18000.00',
+          paymentMethod: 'bank_transfer',
+          paymentStatus: 'completed',
+          financeAccountId: 6,
+          financeAccountName: 'Operations Bank',
+          referenceNumber: 'REF-88',
+          chequeNumber: null,
+          treasuryTransactionId: 71,
+          treasuryReversalTransactionId: null,
+          treasuryTransactionCode: 'TRX-20260404-003',
+          treasuryStatus: 'posted',
+          transactionDate: '2026-04-04',
+        }],
+      );
+
+      const res = await authedRequest('get', '/api/reports/supplier-payment-summary?startDate=2026-04-01&endDate=2026-04-30');
+      expect(res.status).toBe(200);
+      expect(res.body.data.totals.totalDisbursed).toBe(18000);
+      expect(res.body.data.rows[0].purchaseOrderCode).toBe('PO-20260401-001');
+      expect(res.body.data.rows[0].financeAccountName).toBe('Operations Bank');
     });
   });
 

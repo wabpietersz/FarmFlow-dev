@@ -18,11 +18,18 @@ export default function InstallPrompt() {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      setDismissed(true);
+      sessionStorage.removeItem('pwa-install-dismissed');
+    };
 
     window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', handleAppInstalled);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
 
@@ -31,9 +38,10 @@ export default function InstallPrompt() {
 
     await deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
 
     if (outcome === 'accepted') {
-      setDeferredPrompt(null);
+      setDismissed(true);
     }
   };
 
@@ -45,26 +53,35 @@ export default function InstallPrompt() {
   if (!deferredPrompt || dismissed) return null;
 
   return (
-    <div className="bg-green-600 text-white px-4 py-2 flex items-center justify-center gap-3">
-      <Download className="h-4 w-4 flex-shrink-0" />
-      <span className="text-sm font-medium">
-        Install FarmFlow for a better experience
-      </span>
-      <Button
-        size="sm"
-        variant="secondary"
-        onClick={handleInstall}
-        className="h-7 px-3 text-xs bg-white text-green-700 hover:bg-green-50"
-      >
-        Install
-      </Button>
-      <button
-        onClick={handleDismiss}
-        className="p-1 hover:bg-green-700 rounded transition-colors"
-        aria-label="Dismiss install prompt"
-      >
-        <X className="h-4 w-4" />
-      </button>
+    <div className="border-b border-border bg-background/95 backdrop-blur">
+      <div className="app-shell-padding flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex size-8 items-center justify-center rounded-full border border-border bg-muted text-foreground">
+            <Download className="h-4 w-4 flex-shrink-0" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">Install FarmFlow</p>
+            <p className="text-xs text-muted-foreground">
+              Add the app to the home screen for faster launch and better offline use in the field.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 sm:shrink-0">
+          <Button size="sm" onClick={handleInstall}>
+            Install app
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={handleDismiss}
+            aria-label="Dismiss install prompt"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

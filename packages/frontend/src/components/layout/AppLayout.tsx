@@ -74,12 +74,12 @@ export default function AppLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="min-h-screen bg-transparent">
       <InstallPrompt />
       <OfflineBanner />
-      <header className="bg-card border-b border-border sticky top-0 z-50 safe-area-top">
-        <div className="px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14">
+      <header className="sticky top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur safe-area-top">
+        <div className="app-shell-padding">
+          <div className="flex h-14 items-center justify-between">
             <Link to="/dashboard" className="text-lg font-bold text-foreground">
               FarmFlow
             </Link>
@@ -111,8 +111,8 @@ export default function AppLayout() {
       </header>
 
       <div className="flex min-w-0">
-        <aside className="hidden md:flex md:flex-col w-64 bg-card border-r border-border min-h-[calc(100vh-3.5rem)]">
-          <nav className="p-3 flex-1 space-y-1" aria-label="Main Navigator">
+        <aside className="hidden min-h-[calc(100vh-3.5rem)] w-64 border-r border-border/80 bg-card/80 md:flex md:flex-col">
+          <nav className="flex-1 space-y-1 p-4" aria-label="Main Navigator">
             {visibleMainItems.map((item) => (
               <MainNavItemView
                 key={item.key}
@@ -128,7 +128,7 @@ export default function AppLayout() {
               />
             ))}
           </nav>
-          <div className="px-4 pb-4 pt-2">
+          <div className="border-t border-border/80 px-4 pb-4 pt-3">
             <p className="text-xs text-muted-foreground truncate">{currentUser?.fullName}</p>
             <Badge variant="secondary" className="mt-1 text-xs capitalize">
               {roleName}
@@ -136,8 +136,10 @@ export default function AppLayout() {
           </div>
         </aside>
 
-        <main className="min-w-0 w-full flex-1 p-4 sm:p-6 lg:p-8 max-w-full lg:max-w-7xl pb-24 md:pb-8">
-          <Outlet />
+        <main className="min-w-0 w-full flex-1 px-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-4 sm:px-6 sm:pt-6 md:pb-10 lg:px-8 lg:pt-8">
+          <div className="app-content-width">
+            <Outlet />
+          </div>
         </main>
       </div>
 

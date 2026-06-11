@@ -12,16 +12,20 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
       manifest: {
+        id: '/',
         name: 'FarmFlow - Poultry Farm Management',
         short_name: 'FarmFlow',
         description: 'Comprehensive poultry farm management application for broiler operations',
-        theme_color: '#16a34a',
+        theme_color: '#0a0a0a',
         background_color: '#ffffff',
         display: 'standalone',
+        display_override: ['standalone', 'minimal-ui', 'browser'],
         orientation: 'portrait-primary',
         scope: '/',
         start_url: '/',
+        lang: 'en',
         categories: ['business', 'productivity'],
+        prefer_related_applications: false,
         icons: [
           {
             src: 'icons/icon-192x192.png',
@@ -38,6 +42,47 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable',
+          },
+        ],
+        shortcuts: [
+          {
+            name: 'Dashboard',
+            short_name: 'Dashboard',
+            description: 'Open the operations dashboard',
+            url: '/dashboard',
+            icons: [
+              {
+                src: 'icons/icon-192x192.png',
+                sizes: '192x192',
+                type: 'image/png',
+              },
+            ],
+          },
+          {
+            name: 'Feed',
+            short_name: 'Feed',
+            description: 'Open feed workflows',
+            url: '/feed',
+            icons: [
+              {
+                src: 'icons/icon-192x192.png',
+                sizes: '192x192',
+                type: 'image/png',
+              },
+            ],
+          },
+          {
+            name: 'Attendance',
+            short_name: 'Attendance',
+            description: 'Open attendance and leave',
+            url: '/attendance',
+            icons: [
+              {
+                src: 'icons/icon-192x192.png',
+                sizes: '192x192',
+                type: 'image/png',
+              },
+            ],
           },
         ],
       },

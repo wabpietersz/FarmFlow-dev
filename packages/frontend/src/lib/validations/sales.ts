@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+export const saleLorryFormSchema = z.object({
+  lorryNumber: z.string().min(1, 'Lorry is required').max(100),
+  birdsCount: z.coerce.number().int().positive('Bird count must be positive'),
+  previousWeight: z.coerce.number().min(0, 'Previous weight must be zero or positive'),
+  loadedWeight: z.coerce.number().positive('Loaded weight must be positive'),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
 export const buyerFormSchema = z.object({
   buyerName: z.string().min(1, 'Buyer name is required').max(100),
   contactPerson: z.string().max(100).optional().or(z.literal('')),
@@ -15,21 +23,29 @@ export const saleFormSchema = z.object({
   batchId: z.coerce.number({ required_error: 'Batch is required' }).int().positive('Batch is required'),
   buyerId: z.coerce.number({ required_error: 'Buyer is required' }).int().positive('Buyer is required'),
   saleDate: z.string().min(1, 'Sale date is required'),
-  totalBirds: z.coerce.number().int().positive('Number of birds must be positive'),
-  totalWeight: z.coerce.number().positive('Total weight is required'),
   pricePerKg: z.coerce.number().positive('Price per kg must be positive'),
+  lorries: z.array(saleLorryFormSchema).min(1, 'Add at least one lorry line'),
   notes: z.string().max(1000).optional().or(z.literal('')),
 });
 
 export type SaleFormValues = z.infer<typeof saleFormSchema>;
 
-export const paymentFormSchema = z
+export const draftSaleDetailSchema = z.object({
+  pricePerKg: z.coerce.number().positive('Price per kg must be positive'),
+  lorries: z.array(saleLorryFormSchema).min(1, 'Add at least one lorry line'),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export type DraftSaleDetailValues = z.infer<typeof draftSaleDetailSchema>;
+
+export const receiptPaymentLineFormSchema = z
   .object({
     paymentAmount: z.coerce.number().positive('Payment amount must be positive'),
-    paymentDate: z.string().min(1, 'Payment date is required'),
     paymentMethod: z.enum(['cash', 'cheque', 'bank_transfer'], {
       required_error: 'Payment method is required',
     }),
+    financeAccountId: z.coerce.number().int().positive('Treasury account is required'),
+    referenceNumber: z.string().max(100).optional().or(z.literal('')),
     chequeNumber: z.string().max(50).optional().or(z.literal('')),
     chequeDate: z.string().optional().or(z.literal('')),
     bankName: z.string().max(100).optional().or(z.literal('')),
@@ -45,4 +61,11 @@ export const paymentFormSchema = z
     { message: 'Cheque number and date are required for cheque payments', path: ['chequeNumber'] },
   );
 
-export type PaymentFormValues = z.infer<typeof paymentFormSchema>;
+export const receiptFormSchema = z.object({
+  receiptDate: z.string().min(1, 'Receipt date is required'),
+  receiptNotes: z.string().max(1000).optional().or(z.literal('')),
+  lines: z.array(receiptPaymentLineFormSchema).min(1, 'Add at least one payment line'),
+});
+
+export type ReceiptFormValues = z.infer<typeof receiptFormSchema>;
+export type ReceiptPaymentLineFormValues = z.infer<typeof receiptPaymentLineFormSchema>;

@@ -539,9 +539,29 @@ describe('Payroll Module Routes', () => {
 
     it('should transition approved → paid', async () => {
       setupAuth(accountant);
-      setChains([accountant], [{ ...mockPayroll, status: 'approved' }], [{ ...mockPayroll, status: 'paid' }]);
+      setChains(
+        [accountant],
+        [{ ...mockPayroll, status: 'approved' }],
+        [{
+          id: 1,
+          payPeriod: '2026-02-01',
+          netSalary: '14136.36',
+          status: 'approved',
+          treasuryTransactionId: null,
+          employeeId: 1,
+          employeeName: 'Test Employee',
+        }],
+        [],
+        [{ id: 1, accountType: 'bank', status: 'active' }],
+        [{ count: 0 }],
+        [{ id: 99 }],
+        [],
+        [],
+        [],
+        [{ ...mockPayroll, status: 'paid', financeAccountId: 1, treasuryTransactionId: 99 }],
+      );
 
-      const res = await authedRequest('put', '/api/payroll/1/status').send({ status: 'paid' });
+      const res = await authedRequest('put', '/api/payroll/1/status').send({ status: 'paid', financeAccountId: 1 });
       expect(res.status).toBe(200);
     });
 

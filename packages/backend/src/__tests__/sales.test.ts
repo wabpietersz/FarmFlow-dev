@@ -13,6 +13,20 @@ jest.mock('../lib/audit', () => ({
   createAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../lib/sales-ledger', () => {
+  const actual = jest.requireActual('../lib/sales-ledger');
+  return {
+    ...actual,
+    createBuyerReceiptForSale: jest.fn(),
+    syncSaleStatusFromPayments: jest.fn().mockResolvedValue(undefined),
+  };
+});
+
+jest.mock('../lib/treasury', () => ({
+  postBuyerReceiptLineToTreasury: jest.fn().mockResolvedValue({ treasuryTransactionId: 1, posted: true }),
+  reverseBuyerReceiptLineTreasuryPosting: jest.fn().mockResolvedValue({ treasuryTransactionId: 2, reversed: true }),
+}));
+
 // Build a flexible chainable DB mock
 function createChainMock(resolvedValue: unknown = []) {
   const chain: Record<string, jest.Mock> = {};
@@ -55,8 +69,14 @@ jest.mock('../db', () => {
 });
 
 import { firebaseAuth } from '../lib/firebase';
+import { createBuyerReceiptForSale, syncSaleStatusFromPayments } from '../lib/sales-ledger';
+import { postBuyerReceiptLineToTreasury, reverseBuyerReceiptLineTreasuryPosting } from '../lib/treasury';
 
 const mockVerifyIdToken = firebaseAuth.verifyIdToken as jest.Mock;
+const mockCreateBuyerReceiptForSale = createBuyerReceiptForSale as jest.Mock;
+const mockSyncSaleStatusFromPayments = syncSaleStatusFromPayments as jest.Mock;
+const mockPostBuyerReceiptLineToTreasury = postBuyerReceiptLineToTreasury as jest.Mock;
+const mockReverseBuyerReceiptLineTreasuryPosting = reverseBuyerReceiptLineTreasuryPosting as jest.Mock;
 
 // Test users
 const accountant = {
@@ -174,6 +194,10 @@ describe('Sales Module Routes', () => {
     jest.clearAllMocks();
     chainIndex = 0;
     dbChains = [];
+    mockCreateBuyerReceiptForSale.mockReset();
+    mockSyncSaleStatusFromPayments.mockResolvedValue(undefined);
+    mockPostBuyerReceiptLineToTreasury.mockResolvedValue({ treasuryTransactionId: 1, posted: true });
+    mockReverseBuyerReceiptLineTreasuryPosting.mockResolvedValue({ treasuryTransactionId: 2, reversed: true });
   });
 
   // ==================== AUTHENTICATION ====================
@@ -398,7 +422,13 @@ describe('Sales Module Routes', () => {
           [accountant],
           [saleDetail],      // sale lookup with joins
           [mockBuyer],       // buyer
-          [mockPayment],     // payments list
+          [],                // lorry lines
+          [],                // new allocation-backed payments
+          [mockPayment],     // legacy payments list
+          [{ total: 12500 }], // buyer total sales
+          [{ total: 5000 }],  // buyer legacy receipts
+          [{ total: 0 }],     // buyer new receipts
+          [{ total: 0 }],     // buyer applied allocations
         );
 
         const res = await authedRequest('get', '/api/sales/1');
@@ -510,11 +540,15 @@ describe('Sales Module Routes', () => {
     describe('PUT /api/sales/:id', () => {
       it('should update sale status', async () => {
         setupAuth(accountant);
+        const reviewedSale = { ...mockSale, status: 'reviewed' };
         const completed = { ...mockSale, status: 'completed' };
+        const settledPayment = { ...mockPayment, paymentAmount: mockSale.totalAmount, paymentStatus: 'completed' };
         setChains(
           [accountant],
-          [mockSale],    // existing lookup
-          [completed],   // update returning
+          [reviewedSale],   // existing lookup
+          [],               // no receipt-line allocations
+          [settledPayment], // legacy payment rows
+          [completed],      // update returning
         );
 
         const res = await authedRequest('put', '/api/sales/1').send({
@@ -557,7 +591,8 @@ describe('Sales Module Routes', () => {
         setChains(
           [accountant],
           [mockSale],     // existing
-          [],             // no payments
+          [],             // no legacy payments
+          [],             // no receipt allocations
           [cancelled],    // update returning
         );
 
@@ -596,6 +631,7 @@ describe('Sales Module Routes', () => {
         paymentAmount: 5000,
         paymentDate: '2026-02-01',
         paymentMethod: 'cash',
+        financeAccountId: 1,
       };
 
       it('should add payment to sale', async () => {
@@ -603,9 +639,11 @@ describe('Sales Module Routes', () => {
         setChains(
           [accountant],
           [mockSale],         // sale lookup
-          [{ total: 0 }],    // no previous payments
-          [mockPayment],     // insert returning
         );
+        mockCreateBuyerReceiptForSale.mockResolvedValue({
+          receipt: { id: 1, receiptCode: 'RCT-20260201-001' },
+          lines: [{ id: 1, financeAccountId: 1, paymentStatus: 'completed' }],
+        });
 
         const res = await authedRequest('post', '/api/sales/1/payments').send(validPayment);
         expect(res.status).toBe(201);
@@ -624,33 +662,49 @@ describe('Sales Module Routes', () => {
         expect(res.body.code).toBe('SALE_NOT_FOUND');
       });
 
-      it('should return 400 when payment exceeds outstanding balance', async () => {
+      it('should allow overpayment and store the excess as buyer credit', async () => {
         setupAuth(accountant);
         setChains(
           [accountant],
-          [mockSale],            // sale: totalAmount = 12500
-          [{ total: 12000 }],   // already paid 12000, outstanding = 500
+          [mockSale],
         );
+        mockCreateBuyerReceiptForSale.mockResolvedValue({
+          receipt: { id: 2, receiptCode: 'RCT-20260201-002' },
+          lines: [{ id: 2, financeAccountId: 1, paymentStatus: 'completed' }],
+        });
 
         const res = await authedRequest('post', '/api/sales/1/payments').send({
           ...validPayment,
-          paymentAmount: 1000,  // exceeds 500 outstanding
+          paymentAmount: 1000,
         });
-        expect(res.status).toBe(400);
-        expect(res.body.code).toBe('PAYMENT_EXCEEDS_BALANCE');
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
       });
 
-      it('should return 400 for non-pending sale', async () => {
+      it('should return 400 for cancelled sale', async () => {
         setupAuth(accountant);
-        const completedSale = { ...mockSale, status: 'completed' };
+        const cancelledSale = { ...mockSale, status: 'cancelled' };
         setChains(
           [accountant],
-          [completedSale],
+          [cancelledSale],
         );
 
         const res = await authedRequest('post', '/api/sales/1/payments').send(validPayment);
         expect(res.status).toBe(400);
-        expect(res.body.code).toBe('SALE_NOT_PENDING');
+        expect(res.body.code).toBe('SALE_CANCELLED');
+      });
+
+      it('should return 400 for draft sale until it is reviewed', async () => {
+        setupAuth(accountant);
+        const draftSale = { ...mockSale, status: 'draft' };
+        setChains(
+          [accountant],
+          [draftSale],
+        );
+
+        const res = await authedRequest('post', '/api/sales/1/payments').send(validPayment);
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('SALE_NOT_REVIEWED');
       });
 
       it('should return 400 for cheque payment without cheque number', async () => {
@@ -713,7 +767,7 @@ describe('Sales Module Routes', () => {
         setChains(
           [accountant],
           [paymentWithSale],
-          [{ total: 1 }],
+          [],
         );
 
         const res = await authedRequest('get', '/api/payments');

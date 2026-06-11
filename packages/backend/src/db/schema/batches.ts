@@ -88,9 +88,16 @@ export const vaccinations = pgTable(
       .notNull(),
     vaccineType: varchar('vaccine_type', { length: 100 }).notNull(),
     vaccinationDate: date('vaccination_date').notNull(),
+    inventoryItemId: integer('inventory_item_id'),
+    quantityUsed: decimal('quantity_used', { precision: 10, scale: 2 }),
+    unit: varchar('unit', { length: 20 }),
+    inventoryCost: decimal('inventory_cost', { precision: 12, scale: 2 }),
     notes: text('notes'),
     recordedBy: integer('recorded_by').references(() => users.id),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (table) => [index('idx_vaccinations_batch_id').on(table.batchId)],
+  (table) => [
+    index('idx_vaccinations_batch_id').on(table.batchId),
+    index('idx_vaccinations_inventory_item').on(table.inventoryItemId),
+  ],
 );

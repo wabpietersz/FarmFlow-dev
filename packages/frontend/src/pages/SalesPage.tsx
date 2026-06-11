@@ -1,5 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useFieldArray, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Plus, Eye, ShoppingCart, Trash2, Users2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
 import { useSales, useBuyers, useCreateSale, useCreateBuyer, useUpdateBuyer, useDeleteBuyer } from '@/hooks/useSales';
 import { useBatches } from '@/hooks/useBatches';
@@ -8,49 +12,26 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { saleFormSchema, buyerFormSchema, type SaleFormValues, type BuyerFormValues } from '@/lib/validations/sales';
-import { Plus, Eye, ShoppingCart, Users2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { buyerFormSchema, saleFormSchema, type BuyerFormValues, type SaleFormValues } from '@/lib/validations/sales';
 import { formatCurrency } from '@/lib/utils';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-slate-100 text-slate-800',
+  reviewed: 'bg-blue-100 text-blue-800',
   pending: 'bg-blue-100 text-blue-800',
   completed: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-800',
+};
+
+const SETTLEMENT_STATUS_COLORS: Record<string, string> = {
+  unpaid: 'bg-red-100 text-red-800',
+  partially_paid: 'bg-amber-100 text-amber-800',
+  paid: 'bg-green-100 text-green-800',
 };
 
 const BUYER_STATUS_COLORS: Record<string, string> = {
@@ -58,22 +39,29 @@ const BUYER_STATUS_COLORS: Record<string, string> = {
   inactive: 'bg-gray-100 text-gray-800',
 };
 
+function displaySaleStatus(status: string) {
+  return status === 'pending' ? 'reviewed' : status;
+}
+
+const defaultLorry = {
+  lorryNumber: '',
+  birdsCount: 0,
+  previousWeight: 0,
+  loadedWeight: 0,
+  notes: '',
+};
+
 export default function SalesPage() {
   const { hasPermission } = useAuthStore();
   const [activeTab, setActiveTab] = useState('sales');
-
-  // Sales state
   const [salesPage, setSalesPage] = useState(1);
   const [salesStatusFilter, setSalesStatusFilter] = useState('');
   const [showCreateSale, setShowCreateSale] = useState(false);
-
-  // Buyers state
   const [buyersPage, setBuyersPage] = useState(1);
   const [buyerSearch, setBuyerSearch] = useState('');
   const [showBuyerDialog, setShowBuyerDialog] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState<{ id: number; buyerName: string; contactPerson?: string | null; phoneNumber?: string | null; email?: string | null; address?: string | null; creditTerms: number } | null>(null);
 
-  // Data hooks
   const { data: salesData, isLoading: salesLoading } = useSales({
     page: salesPage,
     limit: 20,
@@ -101,25 +89,39 @@ export default function SalesPage() {
   const availableBatches = (batchesData?.data ?? []).filter((b) => b.status === 'growing' || b.status === 'ready_for_sale');
   const activeBuyers = activeBuyersData?.data ?? [];
 
-  // Sale form
   const saleForm = useForm<SaleFormValues>({
     resolver: zodResolver(saleFormSchema),
     defaultValues: {
       batchId: undefined,
       buyerId: undefined,
       saleDate: new Date().toISOString().split('T')[0],
-      totalBirds: 0,
-      totalWeight: 0,
       pricePerKg: 0,
+      lorries: [defaultLorry],
       notes: '',
     },
   });
 
-  const watchedWeight = saleForm.watch('totalWeight');
-  const watchedPriceKg = saleForm.watch('pricePerKg');
-  const calculatedTotal = (watchedWeight ?? 0) * (watchedPriceKg ?? 0);
+  const lorryFieldArray = useFieldArray({
+    control: saleForm.control,
+    name: 'lorries',
+  });
 
-  // Buyer form
+  const watchedLorries = saleForm.watch('lorries');
+  const watchedPriceKg = saleForm.watch('pricePerKg');
+
+  const lorryTotals = useMemo(() => {
+    const totalBirds = (watchedLorries ?? []).reduce((sum, lorry) => sum + (Number(lorry.birdsCount) || 0), 0);
+    const totalWeight = (watchedLorries ?? []).reduce((sum, lorry) => {
+      const netWeight = (Number(lorry.loadedWeight) || 0) - (Number(lorry.previousWeight) || 0);
+      return sum + (netWeight > 0 ? netWeight : 0);
+    }, 0);
+    return {
+      totalBirds,
+      totalWeight,
+      totalAmount: totalWeight * (watchedPriceKg ?? 0),
+    };
+  }, [watchedLorries, watchedPriceKg]);
+
   const buyerForm = useForm<BuyerFormValues>({
     resolver: zodResolver(buyerFormSchema),
     defaultValues: { buyerName: '', contactPerson: '', phoneNumber: '', email: '', address: '', creditTerms: 0 },
@@ -128,11 +130,28 @@ export default function SalesPage() {
   const handleCreateSale = async (values: SaleFormValues) => {
     try {
       await createSaleMutation.mutateAsync({
-        ...values,
+        batchId: values.batchId,
+        buyerId: values.buyerId,
+        saleDate: values.saleDate,
+        pricePerKg: values.pricePerKg,
+        lorries: values.lorries.map((lorry) => ({
+          lorryNumber: lorry.lorryNumber,
+          birdsCount: lorry.birdsCount,
+          previousWeight: lorry.previousWeight,
+          loadedWeight: lorry.loadedWeight,
+          notes: lorry.notes || undefined,
+        })),
         notes: values.notes || undefined,
       });
-      toast.success('Sale created successfully');
-      saleForm.reset();
+      toast.success('Sale created in draft');
+      saleForm.reset({
+        batchId: undefined,
+        buyerId: undefined,
+        saleDate: new Date().toISOString().split('T')[0],
+        pricePerKg: 0,
+        lorries: [defaultLorry],
+        notes: '',
+      });
       setShowCreateSale(false);
     } catch {
       toast.error('Failed to create sale');
@@ -197,14 +216,12 @@ export default function SalesPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-foreground">Sales & Buyers</h1>
-        <div className="flex w-full gap-2 sm:w-auto">
-          {hasPermission('sales:create') && (
-            <Button onClick={() => setShowCreateSale(true)} className="w-full sm:w-auto">
-              <Plus className="h-4 w-4 mr-2" />
-              New Sale
-            </Button>
-          )}
-        </div>
+        {hasPermission('sales:create') && (
+          <Button onClick={() => setShowCreateSale(true)} className="w-full sm:w-auto">
+            <Plus className="h-4 w-4 mr-2" />
+            New Sale
+          </Button>
+        )}
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -232,7 +249,6 @@ export default function SalesPage() {
           </TabsList>
         </div>
 
-        {/* SALES TAB */}
         <TabsContent value="sales">
           <Card>
             <CardContent className="pt-6">
@@ -243,7 +259,8 @@ export default function SalesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="reviewed">Reviewed</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
@@ -272,14 +289,16 @@ export default function SalesPage() {
                 </div>
               ) : (
                 <>
-                  <Table className="min-w-[760px]">
+                  <Table className="min-w-[980px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Sale Code</TableHead>
                         <TableHead>Batch</TableHead>
-                        <TableHead className="hidden sm:table-cell">Buyer</TableHead>
+                        <TableHead>Buyer</TableHead>
                         <TableHead>Birds</TableHead>
                         <TableHead>Total</TableHead>
+                        <TableHead>Outstanding</TableHead>
+                        <TableHead>Settlement</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="w-[50px]" />
@@ -294,15 +313,23 @@ export default function SalesPage() {
                             </Link>
                           </TableCell>
                           <TableCell className="text-muted-foreground">{sale.batchCode ?? '--'}</TableCell>
-                          <TableCell className="hidden sm:table-cell text-muted-foreground">{sale.buyerName ?? '--'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">
+                              {sale.buyerName ?? '--'}
+                            </Link>
+                          </TableCell>
                           <TableCell>{sale.totalBirds.toLocaleString()}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(Number(sale.totalAmount))}</TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {new Date(sale.saleDate).toLocaleDateString()}
-                          </TableCell>
+                          <TableCell className="font-medium">{formatCurrency(sale.outstandingBalance ?? 0)}</TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[sale.status] ?? ''}`}>
-                              {sale.status}
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SETTLEMENT_STATUS_COLORS[sale.settlementStatus ?? 'unpaid'] ?? 'bg-slate-100 text-slate-800'}`}>
+                              {(sale.settlementStatus ?? 'unpaid').replace('_', ' ')}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{new Date(sale.saleDate).toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[displaySaleStatus(sale.status)] ?? ''}`}>
+                              {displaySaleStatus(sale.status)}
                             </span>
                           </TableCell>
                           <TableCell>
@@ -330,7 +357,6 @@ export default function SalesPage() {
           </Card>
         </TabsContent>
 
-        {/* BUYERS TAB */}
         <TabsContent value="buyers">
           <Card>
             <CardContent className="pt-6">
@@ -365,13 +391,16 @@ export default function SalesPage() {
                 </div>
               ) : (
                 <>
-                  <Table className="min-w-[860px]">
+                  <Table className="min-w-[1120px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
                         <TableHead className="hidden sm:table-cell">Contact</TableHead>
                         <TableHead className="hidden sm:table-cell">Phone</TableHead>
                         <TableHead className="hidden md:table-cell">Email</TableHead>
+                        <TableHead>Outstanding</TableHead>
+                        <TableHead>Advance</TableHead>
+                        <TableHead>Net Balance</TableHead>
                         <TableHead>Credit (days)</TableHead>
                         <TableHead>Status</TableHead>
                         {hasPermission('sales:update') && <TableHead className="w-[100px]" />}
@@ -380,10 +409,19 @@ export default function SalesPage() {
                     <TableBody>
                       {buyersList.map((buyer) => (
                         <TableRow key={buyer.id}>
-                          <TableCell className="font-medium">{buyer.buyerName}</TableCell>
+                          <TableCell className="font-medium">
+                            <Link to={`/buyers/${buyer.id}`} className="hover:underline">
+                              {buyer.buyerName}
+                            </Link>
+                          </TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">{buyer.contactPerson ?? '--'}</TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">{buyer.phoneNumber ?? '--'}</TableCell>
                           <TableCell className="hidden md:table-cell text-muted-foreground">{buyer.email ?? '--'}</TableCell>
+                          <TableCell className="font-medium">{formatCurrency(buyer.outstandingBalance ?? 0)}</TableCell>
+                          <TableCell className="font-medium">{formatCurrency(buyer.advanceCredit ?? 0)}</TableCell>
+                          <TableCell className={`font-medium ${(buyer.netBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                            {formatCurrency(Math.abs(buyer.netBalance ?? 0))} {(buyer.netBalance ?? 0) > 0 ? 'due' : 'credit'}
+                          </TableCell>
                           <TableCell>{buyer.creditTerms}</TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${BUYER_STATUS_COLORS[buyer.status ?? 'active'] ?? ''}`}>
@@ -423,16 +461,15 @@ export default function SalesPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Create Sale Dialog */}
       <Dialog open={showCreateSale} onOpenChange={setShowCreateSale}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[1080px]">
           <DialogHeader>
             <DialogTitle>Create New Sale</DialogTitle>
-            <DialogDescription>Record a sale from a batch to a buyer.</DialogDescription>
+            <DialogDescription>Record a batch sale and the lorries dispatched to the buyer.</DialogDescription>
           </DialogHeader>
           <Form {...saleForm}>
-            <form onSubmit={saleForm.handleSubmit(handleCreateSale)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={saleForm.handleSubmit(handleCreateSale)} className="space-y-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <FormField
                   control={saleForm.control}
                   name="batchId"
@@ -485,59 +522,176 @@ export default function SalesPage() {
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={saleForm.control}
+                  name="saleDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sale Date</FormLabel>
+                      <FormControl><Input type="date" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
+
               <FormField
                 control={saleForm.control}
-                name="saleDate"
+                name="pricePerKg"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Sale Date</FormLabel>
-                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormLabel>Price per kg (Rs.)</FormLabel>
+                    <FormControl><Input type="number" step="0.01" placeholder="e.g. 35.00" {...field} /></FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Formatted: {formatCurrency(Number(watchedPriceKg) || 0)}
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <div className="grid grid-cols-3 gap-4">
-                <FormField
-                  control={saleForm.control}
-                  name="totalBirds"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Number of Birds</FormLabel>
-                      <FormControl><Input type="number" placeholder="e.g. 500" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={saleForm.control}
-                  name="totalWeight"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Total Weight (kg)</FormLabel>
-                      <FormControl><Input type="number" step="0.01" placeholder="e.g. 750.00" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={saleForm.control}
-                  name="pricePerKg"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Price per kg (Rs.)</FormLabel>
-                      <FormControl><Input type="number" step="0.01" placeholder="e.g. 35.00" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              {calculatedTotal > 0 && (
-                <div className="p-3 bg-muted rounded-lg text-sm">
-                  <span className="text-muted-foreground">Total Amount: </span>
-                  <span className="font-bold text-foreground">{formatCurrency(calculatedTotal)}</span>
+
+              <div className="space-y-3 rounded-lg border p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-foreground">Lorries</h3>
+                    <p className="text-sm text-muted-foreground">Each lorry compiles into the sale totals automatically.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => lorryFieldArray.append(defaultLorry)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Lorry
+                  </Button>
                 </div>
-              )}
+
+                <div className="overflow-x-auto">
+                  <Table className="min-w-[980px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[60px]">#</TableHead>
+                        <TableHead>Lorry</TableHead>
+                        <TableHead>Birds</TableHead>
+                        <TableHead>Previous Weight</TableHead>
+                        <TableHead>After Weight</TableHead>
+                        <TableHead>Net Weight</TableHead>
+                        <TableHead>Notes</TableHead>
+                        <TableHead className="w-[70px]" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {lorryFieldArray.fields.map((field, index) => {
+                        const row = watchedLorries?.[index];
+                        const netWeight = Math.max((Number(row?.loadedWeight) || 0) - (Number(row?.previousWeight) || 0), 0);
+                        return (
+                          <TableRow key={field.id} className="align-top">
+                            <TableCell className="font-medium text-muted-foreground">{index + 1}</TableCell>
+                            <TableCell className="min-w-[160px]">
+                              <FormField
+                                control={saleForm.control}
+                                name={`lorries.${index}.lorryNumber`}
+                                render={({ field }) => (
+                                  <FormItem className="space-y-1">
+                                    <FormLabel className="sr-only">Lorry</FormLabel>
+                                    <FormControl><Input placeholder="e.g. CAB-1023" {...field} /></FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="min-w-[120px]">
+                              <FormField
+                                control={saleForm.control}
+                                name={`lorries.${index}.birdsCount`}
+                                render={({ field }) => (
+                                  <FormItem className="space-y-1">
+                                    <FormLabel className="sr-only">Birds</FormLabel>
+                                    <FormControl><Input type="number" {...field} /></FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="min-w-[150px]">
+                              <FormField
+                                control={saleForm.control}
+                                name={`lorries.${index}.previousWeight`}
+                                render={({ field }) => (
+                                  <FormItem className="space-y-1">
+                                    <FormLabel className="sr-only">Previous Weight</FormLabel>
+                                    <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="min-w-[150px]">
+                              <FormField
+                                control={saleForm.control}
+                                name={`lorries.${index}.loadedWeight`}
+                                render={({ field }) => (
+                                  <FormItem className="space-y-1">
+                                    <FormLabel className="sr-only">After Weight</FormLabel>
+                                    <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell className="min-w-[130px]">
+                              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-medium text-foreground">
+                                {netWeight.toFixed(2)} kg
+                              </div>
+                            </TableCell>
+                            <TableCell className="min-w-[220px]">
+                              <FormField
+                                control={saleForm.control}
+                                name={`lorries.${index}.notes`}
+                                render={({ field }) => (
+                                  <FormItem className="space-y-1">
+                                    <FormLabel className="sr-only">Notes</FormLabel>
+                                    <FormControl><Input placeholder="Optional notes" {...field} /></FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                disabled={lorryFieldArray.fields.length === 1}
+                                onClick={() => lorryFieldArray.remove(index)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+
+              <div className="grid gap-3 rounded-lg border bg-muted/40 px-4 py-3 md:grid-cols-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Birds</p>
+                  <p className="text-lg font-semibold text-foreground">{lorryTotals.totalBirds.toLocaleString()}</p>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Weight</p>
+                  <p className="text-lg font-semibold text-foreground">{lorryTotals.totalWeight.toFixed(2)} kg</p>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Sale Amount</p>
+                  <p className="text-lg font-semibold text-foreground">{formatCurrency(lorryTotals.totalAmount)}</p>
+                </div>
+              </div>
+
               <FormField
                 control={saleForm.control}
                 name="notes"
@@ -549,6 +703,7 @@ export default function SalesPage() {
                   </FormItem>
                 )}
               />
+
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setShowCreateSale(false)}>Cancel</Button>
                 <Button type="submit" disabled={createSaleMutation.isPending}>
@@ -560,7 +715,6 @@ export default function SalesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Buyer Create/Edit Dialog */}
       <Dialog open={showBuyerDialog} onOpenChange={(open) => { setShowBuyerDialog(open); if (!open) setEditingBuyer(null); }}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
@@ -634,15 +788,15 @@ export default function SalesPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Address</FormLabel>
-                    <FormControl><Textarea placeholder="Full address..." {...field} /></FormControl>
+                    <FormControl><Textarea placeholder="Buyer address" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => { setShowBuyerDialog(false); setEditingBuyer(null); }}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => setShowBuyerDialog(false)}>Cancel</Button>
                 <Button type="submit" disabled={createBuyerMutation.isPending || updateBuyerMutation.isPending}>
-                  {(createBuyerMutation.isPending || updateBuyerMutation.isPending) ? 'Saving...' : editingBuyer ? 'Update' : 'Create'}
+                  {editingBuyer ? 'Save Changes' : 'Create Buyer'}
                 </Button>
               </DialogFooter>
             </form>

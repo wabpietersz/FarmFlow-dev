@@ -24,6 +24,18 @@ The current Feed Management module has **structural disconnects** in its data fl
 
 ## 2. Improvement Overview
 
+### March 16, 2026 Addendum: Inventory Management split
+
+The original feed improvements in this document have now been expanded into a broader inventory initiative. The new operating model is:
+
+- `Inventory Management` owns suppliers, purchase orders, all inventory, and inventory basic data
+- `Feed Management` remains focused on feed-only inventory, recipes, production, and distribution
+- feed inventory continues to exist in Feed, but as a filtered subset of the shared inventory domain
+
+The detailed requirements for that split are tracked in [docs/Inventory-Management-Module-Plan.md](/Users/warrenpietersz/Projects/Personal/FarmFlow2/docs/Inventory-Management-Module-Plan.md).
+
+This feed plan still applies to feed-specific integrity work, but any new supplier/PO/general-inventory changes should now be implemented through the inventory management plan.
+
 ### IMP-1: Recipe Ingredient → Inventory Item FK Link
 **Priority:** CRITICAL
 

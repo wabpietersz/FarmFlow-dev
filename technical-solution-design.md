@@ -27,6 +27,23 @@
 
 ---
 
+## March 16, 2026 Addendum
+
+The baseline sales section in this document reflects the original single-header sale and direct-payment model.
+
+Sales requirements have now expanded to cover:
+
+- multi-lorry batch sale capture
+- buyer-level multi-line receipts
+- overpayment carry-forward credit
+- buyer running ledgers and outstanding balances
+
+The authoritative implementation plan for that redesign is [docs/Sales-Module-Improvement-Plan.md](/Users/warrenpietersz/Projects/Personal/FarmFlow2/docs/Sales-Module-Improvement-Plan.md).
+
+Any new work on sales, buyer settlements, or payment allocation should follow that plan instead of extending the older direct `sale -> payment` model described later in this document.
+
+---
+
 ## 1. SYSTEM OVERVIEW
 
 ### 1.1 Purpose
@@ -70,9 +87,11 @@ A Progressive Web Application (PWA) for managing poultry farm operations includi
   "componentLibrary": "Shadcn UI (Radix primitives)",
   "styling": "TailwindCSS 3.4+",
   "icons": "Lucide React",
-  "fonts": "Inter (Google Fonts)"
+  "fonts": "System sans-serif stack"
 }
 ```
+
+UI implementation guidance and page composition rules are maintained in `docs/UI-Handbook.md`. That document is the source of truth for operational page styling and layout consistency across modules.
 
 #### State Management
 ```json
@@ -3510,3 +3529,65 @@ VITE_FIREBASE_PROJECT_ID - Firebase project ID
 **END OF TECHNICAL SOLUTION DESIGN DOCUMENT**
 
 This document provides complete technical specifications for implementing the Poultry Farm Management System. All code examples are production-ready and follow industry best practices.
+
+---
+
+## Addendum: Inventory Management Module Expansion
+
+**Date:** March 16, 2026
+
+The current implementation stores feed inventory, suppliers, purchase orders, lots, and inventory audit data inside the feed domain. For the next implementation phase, this domain is widened into a shared inventory management capability while keeping feed production intact.
+
+### Design direction
+
+- keep the existing `feed_inventory` physical table as the shared inventory stock table for now
+- add `inventory_item_types` to classify stock and determine behavior
+- add `batch_inventory_consumptions` to capture non-feed inventory consumed by farm batches
+- expose a dedicated `/api/inventory` route surface for generalized inventory workflows
+- keep `/api/feed/inventory` as a feed-only filtered view over shared inventory
+
+### Required schema additions
+
+1. `inventory_item_types`
+   - `id`
+   - `typeCode`
+   - `typeName`
+   - `category`
+   - `defaultUnit`
+   - `allowsBatchAllocation`
+   - `isFeed`
+   - `status`
+   - `description`
+   - timestamps
+2. `feed_inventory`
+   - add `itemTypeId`
+   - optional master-data fields such as `sku`, `itemCode`, `description`
+3. `batch_inventory_consumptions`
+   - `id`
+   - `batchId`
+   - `inventoryItemId`
+   - `inventoryLotId`
+   - `purchaseOrderItemId`
+   - `quantity`
+   - `unit`
+   - `unitCost`
+   - `lineCost`
+   - `consumptionDate`
+   - `referenceType`
+   - `referenceId`
+   - `notes`
+   - `createdBy`
+   - timestamps
+
+### Workflow assumptions
+
+1. Feed recipes and feed production can only use inventory items where the item type is marked `isFeed = true`.
+2. For non-feed stock, allocation into a farm batch is treated as immediate consumption in this phase.
+3. Purchase order receiving for non-feed items must optionally capture batch consumption quantities as part of the receive transaction.
+4. Remaining stock from a received lot stays available for later batch consumption through inventory item detail.
+
+### Reporting impact
+
+- `GET /api/batches/:id` must return batch inventory consumption detail and totals
+- `GET /api/reports/batch-profitability` must include non-feed inventory cost in addition to feed and labor cost
+- a new inventory consumption report should provide per-batch and per-item cost visibility

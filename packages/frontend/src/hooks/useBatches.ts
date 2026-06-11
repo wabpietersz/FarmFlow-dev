@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
-import type { Batch, DailyRecord, Vaccination, CreateBatchRequest, CreateDailyRecordRequest, RecordMortalityRequest } from '@farmflow/shared';
+import type { Batch, ChickPlacement, DailyRecord, Vaccination, CreateBatchRequest, CreateDailyRecordRequest, RecordMortalityRequest } from '@farmflow/shared';
 
 interface BatchListItem extends Batch {
   siteName: string | null;
@@ -24,8 +24,28 @@ interface BatchListParams {
 
 interface BatchDetail {
   batch: BatchListItem;
+  chickPlacement?: ChickPlacement | null;
   dailyRecords: DailyRecord[];
   vaccinations: Vaccination[];
+  costSummary?: BatchCostSummary | null;
+  inventoryConsumptions: Array<{
+    id: number;
+    inventoryItemId: number;
+    inventoryLotId?: number | null;
+    purchaseOrderItemId?: number | null;
+    ingredientName: string;
+    itemCode?: string | null;
+    typeName: string;
+    typeCode: string;
+    quantity: string;
+    unit: string;
+    unitCost: string;
+    lineCost: string;
+    consumptionDate: string;
+    referenceType?: string | null;
+    referenceId?: number | null;
+    notes?: string | null;
+  }>;
   stats: {
     fcr: number | null;
     totalMortality: number;
@@ -33,7 +53,42 @@ interface BatchDetail {
     currentBirdCount: number;
     currentAge: number;
     latestWeight: number | null;
+    totalInventoryCost: number;
+    totalInventoryQuantity: number;
   };
+}
+
+interface BatchCostSummary {
+  batchId: number;
+  batchCode: string;
+  feedCost: number;
+  inventoryCost: number;
+  laborCost: number;
+  operationalExpenseCost: number;
+  totalCost: number;
+  costPerBird: number;
+}
+
+interface BatchCostLedgerEntry {
+  componentType: 'feed' | 'inventory' | 'labor' | 'operational_expense';
+  allocationType: 'direct' | 'site' | 'shared_overhead';
+  eventDate: string;
+  sourceType: string;
+  sourceId: number;
+  sourceCode?: string | null;
+  description: string;
+  quantity?: number | null;
+  unit?: string | null;
+  unitCost?: number | null;
+  amount: number;
+  notes?: string | null;
+}
+
+interface BatchCostLedgerResponse {
+  batchId: number;
+  batchCode: string;
+  totals: BatchCostSummary;
+  ledger: BatchCostLedgerEntry[];
 }
 
 export function useBatches(params: BatchListParams) {
@@ -53,6 +108,22 @@ export function useBatch(id: string | undefined) {
   return useQuery({
     queryKey: ['batches', id],
     queryFn: () => apiGet<BatchDetail>(`/batches/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useBatchCosts(id: string | undefined) {
+  return useQuery({
+    queryKey: ['batches', id, 'costs'],
+    queryFn: () => apiGet<BatchCostSummary>(`/batches/${id}/costs`),
+    enabled: !!id,
+  });
+}
+
+export function useBatchCostLedger(id: string | undefined) {
+  return useQuery({
+    queryKey: ['batches', id, 'cost-ledger'],
+    queryFn: () => apiGet<BatchCostLedgerResponse>(`/batches/${id}/cost-ledger`),
     enabled: !!id,
   });
 }
@@ -118,10 +189,31 @@ export function useRecordMortality(batchId: string) {
 export function useCreateVaccination(batchId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { batchId: number; vaccineType: string; vaccinationDate: string; notes?: string }) =>
+    mutationFn: (data: { batchId: number; vaccineType: string; vaccinationDate: string; inventoryItemId?: number; quantityUsed?: number; notes?: string }) =>
       apiPost<Vaccination>(`/batches/${batchId}/vaccinations`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['batches', batchId] });
+    },
+  });
+}
+
+export function useCreateChickPlacement(batchId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      supplierId?: number;
+      contractId?: number;
+      placementDate: string;
+      invoiceReference?: string;
+      deliveredQuantity: number;
+      mortalityOnArrival?: number;
+      unitCost: number;
+      notes?: string;
+    }) => apiPost<ChickPlacement>(`/batches/${batchId}/chick-placement`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['batches', batchId] });
+      queryClient.invalidateQueries({ queryKey: ['batches', batchId, 'costs'] });
+      queryClient.invalidateQueries({ queryKey: ['batches', batchId, 'cost-ledger'] });
     },
   });
 }

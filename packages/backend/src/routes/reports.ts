@@ -4,10 +4,15 @@ import { db } from '../db';
 import {
   batches, dailyRecords, sales, payments, buyers, sites, feedInventory,
   feedProductionBatches, feedRecipes, feedDistributions,
-  attendance, leaveBalances, payroll, employees,
+  batchInventoryConsumptions, inventoryItemTypes,
+  buyerReceiptLines, buyerReceipts, treasuryTransactionEntries, treasuryTransactionLinks, treasuryTransactions,
+  attendance, leaveBalances, payroll, employees, financeAccounts, supplierPayments, suppliers,
+  purchaseOrders, pettyCashAllocations, pettyCashExpenses, chequeLeaves, users,
 } from '../db/schema';
 import { eq, sql, and, gte, lte, desc, inArray, type SQL } from 'drizzle-orm';
 import logger from '../lib/logger';
+import { getBuyerBalanceSummary } from '../lib/sales-ledger';
+import { buildBatchCostSummaries } from '../lib/batch-costs';
 
 const router = Router();
 
@@ -31,6 +36,499 @@ function arrayToCsv(data: Record<string, unknown>[]): string {
       .join(','),
   );
   return [headers.join(','), ...rows].join('\n');
+}
+
+function resolveDateRange(query: Request['query']) {
+  const end = query.endDate ? String(query.endDate) : new Date().toISOString().split('T')[0];
+  const start = query.startDate
+    ? String(query.startDate)
+    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  return { start, end };
+}
+
+function roundCurrency(value: number) {
+  return Number(value.toFixed(2));
+}
+
+async function buildFinancialOverviewData(start: string, end: string) {
+  const [salesRevenueResult, treasuryTotalsResult, recentTransactions] = await Promise.all([
+    db
+      .select({
+        salesRevenue: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float`,
+      })
+      .from(sales)
+      .where(and(gte(sales.saleDate, start), lte(sales.saleDate, end))),
+    db
+      .select({
+        treasuryInflows: sql<number>`
+          COALESCE(SUM(
+            CASE WHEN ${treasuryTransactionEntries.entryDirection} = 'inflow'
+            THEN ${treasuryTransactionEntries.amount}::numeric ELSE 0 END
+          ), 0)::float
+        `,
+        treasuryOutflows: sql<number>`
+          COALESCE(SUM(
+            CASE WHEN ${treasuryTransactionEntries.entryDirection} = 'outflow'
+            THEN ${treasuryTransactionEntries.amount}::numeric ELSE 0 END
+          ), 0)::float
+        `,
+        customerReceiptInflows: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactions.transactionType} = 'customer_receipt'
+               AND ${treasuryTransactionEntries.entryDirection} = 'inflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+        payrollOutflows: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactions.transactionType} = 'payroll_disbursement'
+               AND ${treasuryTransactionEntries.entryDirection} = 'outflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+        supplierPaymentOutflows: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactions.transactionType} = 'supplier_payment'
+               AND ${treasuryTransactionEntries.entryDirection} = 'outflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+        operationalExpenseOutflows: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactions.transactionType} = 'operational_expense'
+               AND ${treasuryTransactionEntries.entryDirection} = 'outflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+        pettyCashNet: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactions.transactionType} IN ('petty_cash_allocation', 'petty_cash_expense')
+               AND ${treasuryTransactionEntries.entryDirection} = 'inflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              WHEN ${treasuryTransactions.transactionType} IN ('petty_cash_allocation', 'petty_cash_expense')
+               AND ${treasuryTransactionEntries.entryDirection} = 'outflow'
+              THEN -${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+      })
+      .from(treasuryTransactions)
+      .innerJoin(treasuryTransactionEntries, eq(treasuryTransactions.id, treasuryTransactionEntries.treasuryTransactionId))
+      .where(
+        and(
+          gte(treasuryTransactions.transactionDate, start),
+          lte(treasuryTransactions.transactionDate, end),
+          sql`${treasuryTransactions.status} IN ('posted', 'cleared')`,
+        ),
+      ),
+    db
+      .select({
+        transactionId: treasuryTransactions.id,
+        transactionCode: treasuryTransactions.transactionCode,
+        transactionType: treasuryTransactions.transactionType,
+        transactionDate: treasuryTransactions.transactionDate,
+        status: treasuryTransactions.status,
+        counterpartyName: treasuryTransactions.counterpartyNameSnapshot,
+        netAmount: sql<number>`
+          COALESCE(SUM(
+            CASE
+              WHEN ${treasuryTransactionEntries.entryDirection} = 'inflow'
+              THEN ${treasuryTransactionEntries.amount}::numeric
+              WHEN ${treasuryTransactionEntries.entryDirection} = 'outflow'
+              THEN -${treasuryTransactionEntries.amount}::numeric
+              ELSE 0
+            END
+          ), 0)::float
+        `,
+        accountNames: sql<string>`
+          COALESCE((
+            SELECT string_agg(DISTINCT ${financeAccounts.accountName}, ', ')
+            FROM ${treasuryTransactionEntries}
+            INNER JOIN ${financeAccounts}
+              ON ${financeAccounts.id} = ${treasuryTransactionEntries.financeAccountId}
+            WHERE ${treasuryTransactionEntries.treasuryTransactionId} = ${treasuryTransactions.id}
+          ), '')
+        `,
+        sourceModule: sql<string | null>`
+          (
+            SELECT ${treasuryTransactionLinks.sourceModule}
+            FROM ${treasuryTransactionLinks}
+            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
+            ORDER BY ${treasuryTransactionLinks.id}
+            LIMIT 1
+          )
+        `,
+        sourceEntityType: sql<string | null>`
+          (
+            SELECT ${treasuryTransactionLinks.sourceEntityType}
+            FROM ${treasuryTransactionLinks}
+            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
+            ORDER BY ${treasuryTransactionLinks.id}
+            LIMIT 1
+          )
+        `,
+        sourceEntityId: sql<number | null>`
+          (
+            SELECT ${treasuryTransactionLinks.sourceEntityId}
+            FROM ${treasuryTransactionLinks}
+            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
+            ORDER BY ${treasuryTransactionLinks.id}
+            LIMIT 1
+          )
+        `,
+        sourceCodeSnapshot: sql<string | null>`
+          (
+            SELECT ${treasuryTransactionLinks.sourceCodeSnapshot}
+            FROM ${treasuryTransactionLinks}
+            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
+            ORDER BY ${treasuryTransactionLinks.id}
+            LIMIT 1
+          )
+        `,
+      })
+      .from(treasuryTransactions)
+      .innerJoin(treasuryTransactionEntries, eq(treasuryTransactions.id, treasuryTransactionEntries.treasuryTransactionId))
+      .where(
+        and(
+          gte(treasuryTransactions.transactionDate, start),
+          lte(treasuryTransactions.transactionDate, end),
+          sql`${treasuryTransactions.status} IN ('posted', 'cleared')`,
+        ),
+      )
+      .groupBy(
+        treasuryTransactions.id,
+        treasuryTransactions.transactionCode,
+        treasuryTransactions.transactionType,
+        treasuryTransactions.transactionDate,
+        treasuryTransactions.status,
+        treasuryTransactions.counterpartyNameSnapshot,
+      )
+      .orderBy(desc(treasuryTransactions.transactionDate), desc(treasuryTransactions.id))
+      .limit(10),
+  ]);
+
+  const salesRevenue = salesRevenueResult?.[0]?.salesRevenue ?? 0;
+  const treasuryInflows = treasuryTotalsResult?.[0]?.treasuryInflows ?? 0;
+  const treasuryOutflows = treasuryTotalsResult?.[0]?.treasuryOutflows ?? 0;
+
+  return {
+    salesRevenue,
+    treasuryInflows,
+    treasuryOutflows,
+    netCashMovement: roundCurrency(treasuryInflows - treasuryOutflows),
+    customerReceiptInflows: treasuryTotalsResult?.[0]?.customerReceiptInflows ?? 0,
+    payrollOutflows: treasuryTotalsResult?.[0]?.payrollOutflows ?? 0,
+    supplierPaymentOutflows: treasuryTotalsResult?.[0]?.supplierPaymentOutflows ?? 0,
+    operationalExpenseOutflows: treasuryTotalsResult?.[0]?.operationalExpenseOutflows ?? 0,
+    pettyCashNet: treasuryTotalsResult?.[0]?.pettyCashNet ?? 0,
+    recentTransactions: recentTransactions.map((transaction) => ({
+      ...transaction,
+      netAmount: roundCurrency(transaction.netAmount ?? 0),
+      accountNames: transaction.accountNames || null,
+    })),
+    dateRange: { start, end },
+  };
+}
+
+async function buildBuyerOutstandingAdvanceSummary() {
+  const buyerRows = await db
+    .select({
+      buyerId: buyers.id,
+      buyerName: buyers.buyerName,
+    })
+    .from(buyers)
+    .orderBy(buyers.buyerName);
+
+  const rows = await Promise.all(
+    buyerRows.map(async (buyer) => ({
+      buyerId: buyer.buyerId,
+      buyerName: buyer.buyerName,
+      ...(await getBuyerBalanceSummary(buyer.buyerId)),
+    })),
+  );
+
+  const totals = rows.reduce(
+    (summary, row) => ({
+      totalSales: summary.totalSales + row.totalSales,
+      totalReceiptsCompleted: summary.totalReceiptsCompleted + row.totalReceiptsCompleted,
+      totalAppliedToSales: summary.totalAppliedToSales + row.totalAppliedToSales,
+      outstandingBalance: summary.outstandingBalance + row.outstandingBalance,
+      advanceCredit: summary.advanceCredit + row.advanceCredit,
+      netBalance: summary.netBalance + row.netBalance,
+    }),
+    {
+      totalSales: 0,
+      totalReceiptsCompleted: 0,
+      totalAppliedToSales: 0,
+      outstandingBalance: 0,
+      advanceCredit: 0,
+      netBalance: 0,
+    },
+  );
+
+  return {
+    totals: {
+      totalSales: roundCurrency(totals.totalSales),
+      totalReceiptsCompleted: roundCurrency(totals.totalReceiptsCompleted),
+      totalAppliedToSales: roundCurrency(totals.totalAppliedToSales),
+      outstandingBalance: roundCurrency(totals.outstandingBalance),
+      advanceCredit: roundCurrency(totals.advanceCredit),
+      netBalance: roundCurrency(totals.netBalance),
+    },
+    rows: rows.sort((a, b) => {
+      const balanceDiff = b.outstandingBalance - a.outstandingBalance;
+      if (balanceDiff !== 0) return balanceDiff;
+      return a.buyerName.localeCompare(b.buyerName);
+    }),
+  };
+}
+
+async function buildPayrollDisbursementSummary(start: string, end: string) {
+  const rows = await db
+    .select({
+      payrollId: payroll.id,
+      employeeId: payroll.employeeId,
+      employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
+      payPeriod: payroll.payPeriod,
+      paidDate: payroll.paidDate,
+      amount: payroll.netSalary,
+      financeAccountId: payroll.financeAccountId,
+      financeAccountName: financeAccounts.accountName,
+      paymentMethod: payroll.paymentMethod,
+      chequeLeafId: payroll.chequeLeafId,
+      chequeNumber: chequeLeaves.chequeNumber,
+      treasuryTransactionId: payroll.treasuryTransactionId,
+      treasuryTransactionCode: treasuryTransactions.transactionCode,
+      treasuryStatus: treasuryTransactions.status,
+      transactionDate: treasuryTransactions.transactionDate,
+    })
+    .from(payroll)
+    .leftJoin(employees, eq(payroll.employeeId, employees.id))
+    .leftJoin(financeAccounts, eq(payroll.financeAccountId, financeAccounts.id))
+    .leftJoin(chequeLeaves, eq(payroll.chequeLeafId, chequeLeaves.id))
+    .leftJoin(treasuryTransactions, eq(payroll.treasuryTransactionId, treasuryTransactions.id))
+    .where(
+      and(
+        sql`${payroll.treasuryTransactionId} IS NOT NULL`,
+        eq(treasuryTransactions.transactionType, 'payroll_disbursement'),
+        sql`${treasuryTransactions.status} IN ('posted', 'cleared')`,
+        gte(treasuryTransactions.transactionDate, start),
+        lte(treasuryTransactions.transactionDate, end),
+      ),
+    )
+    .orderBy(desc(treasuryTransactions.transactionDate), desc(payroll.id));
+
+  const totals = rows.reduce(
+    (summary, row) => {
+      const amount = Number(row.amount ?? 0);
+      summary.totalDisbursed += amount;
+      if (row.paymentMethod === 'cash') summary.cashDisbursed += amount;
+      if (row.paymentMethod === 'bank_transfer') summary.bankTransferDisbursed += amount;
+      if (row.paymentMethod === 'cheque') summary.chequeDisbursed += amount;
+      return summary;
+    },
+    { totalDisbursed: 0, cashDisbursed: 0, bankTransferDisbursed: 0, chequeDisbursed: 0 },
+  );
+
+  return {
+    totals: {
+      totalDisbursed: roundCurrency(totals.totalDisbursed),
+      cashDisbursed: roundCurrency(totals.cashDisbursed),
+      bankTransferDisbursed: roundCurrency(totals.bankTransferDisbursed),
+      chequeDisbursed: roundCurrency(totals.chequeDisbursed),
+      count: rows.length,
+    },
+    rows: rows.map((row) => ({
+      ...row,
+      amount: roundCurrency(Number(row.amount ?? 0)),
+      sourceModule: 'payroll',
+      sourceEntityType: 'payroll',
+      sourceEntityId: row.payrollId,
+      sourceCodeSnapshot: `PAYROLL-${row.payrollId}`,
+    })),
+    dateRange: { start, end },
+  };
+}
+
+async function buildPettyCashOutstandingSummary() {
+  const rows = await db
+    .select({
+      allocationId: pettyCashAllocations.id,
+      allocationCode: pettyCashAllocations.allocationCode,
+      allocationDate: pettyCashAllocations.allocationDate,
+      allocatedToUserId: pettyCashAllocations.allocatedToUserId,
+      allocatedToName: users.fullName,
+      siteId: pettyCashAllocations.siteId,
+      siteName: sites.siteName,
+      sourceFinanceAccountId: pettyCashAllocations.sourceFinanceAccountId,
+      pettyCashAccountId: pettyCashAllocations.pettyCashAccountId,
+      allocatedAmount: pettyCashAllocations.amount,
+      status: pettyCashAllocations.status,
+      treasuryTransactionId: pettyCashAllocations.treasuryTransactionId,
+      approvedExpenseAmount: sql<number>`
+        COALESCE((
+          SELECT SUM(${pettyCashExpenses.amount}::numeric)
+          FROM ${pettyCashExpenses}
+          WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
+            AND ${pettyCashExpenses.status} = 'approved'
+        ), 0)::float
+      `,
+      submittedExpenseAmount: sql<number>`
+        COALESCE((
+          SELECT SUM(${pettyCashExpenses.amount}::numeric)
+          FROM ${pettyCashExpenses}
+          WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
+            AND ${pettyCashExpenses.status} = 'submitted'
+        ), 0)::float
+      `,
+    })
+    .from(pettyCashAllocations)
+    .leftJoin(users, eq(pettyCashAllocations.allocatedToUserId, users.id))
+    .leftJoin(sites, eq(pettyCashAllocations.siteId, sites.id))
+    .orderBy(desc(pettyCashAllocations.allocationDate), desc(pettyCashAllocations.id));
+
+  const accountIds = Array.from(
+    new Set(
+      rows.flatMap((row) => [row.sourceFinanceAccountId, row.pettyCashAccountId].filter((value): value is number => Boolean(value))),
+    ),
+  );
+  const accountRows = accountIds.length
+    ? await db
+        .select({
+          id: financeAccounts.id,
+          accountName: financeAccounts.accountName,
+        })
+        .from(financeAccounts)
+        .where(inArray(financeAccounts.id, accountIds))
+    : [];
+  const accountLookup = new Map(accountRows.map((account) => [account.id, account.accountName]));
+
+  const normalizedRows = rows.map((row) => {
+    const allocatedAmount = Number(row.allocatedAmount ?? 0);
+    const approvedExpenseAmount = row.approvedExpenseAmount ?? 0;
+    const submittedExpenseAmount = row.submittedExpenseAmount ?? 0;
+
+    return {
+      ...row,
+      sourceFinanceAccountName: row.sourceFinanceAccountId ? accountLookup.get(row.sourceFinanceAccountId) ?? null : null,
+      pettyCashAccountName: row.pettyCashAccountId ? accountLookup.get(row.pettyCashAccountId) ?? null : null,
+      allocatedAmount: roundCurrency(allocatedAmount),
+      approvedExpenseAmount: roundCurrency(approvedExpenseAmount),
+      submittedExpenseAmount: roundCurrency(submittedExpenseAmount),
+      outstandingAmount: roundCurrency(Math.max(allocatedAmount - approvedExpenseAmount, 0)),
+      sourceModule: 'treasury',
+      sourceEntityType: 'petty_cash_allocation',
+      sourceEntityId: row.allocationId,
+      sourceCodeSnapshot: row.allocationCode,
+    };
+  });
+
+  const totals = normalizedRows.reduce(
+    (summary, row) => ({
+      totalAllocated: summary.totalAllocated + row.allocatedAmount,
+      totalApprovedExpenses: summary.totalApprovedExpenses + row.approvedExpenseAmount,
+      totalSubmittedExpenses: summary.totalSubmittedExpenses + row.submittedExpenseAmount,
+      totalOutstanding: summary.totalOutstanding + row.outstandingAmount,
+    }),
+    { totalAllocated: 0, totalApprovedExpenses: 0, totalSubmittedExpenses: 0, totalOutstanding: 0 },
+  );
+
+  return {
+    totals: {
+      totalAllocated: roundCurrency(totals.totalAllocated),
+      totalApprovedExpenses: roundCurrency(totals.totalApprovedExpenses),
+      totalSubmittedExpenses: roundCurrency(totals.totalSubmittedExpenses),
+      totalOutstanding: roundCurrency(totals.totalOutstanding),
+      count: normalizedRows.length,
+    },
+    rows: normalizedRows,
+  };
+}
+
+async function buildSupplierPaymentSummary(start: string, end: string) {
+  const rows = await db
+    .select({
+      supplierPaymentId: supplierPayments.id,
+      paymentCode: supplierPayments.paymentCode,
+      paymentDate: supplierPayments.paymentDate,
+      supplierId: supplierPayments.supplierId,
+      supplierName: suppliers.supplierName,
+      purchaseOrderId: supplierPayments.purchaseOrderId,
+      purchaseOrderCode: purchaseOrders.orderCode,
+      amount: supplierPayments.amount,
+      paymentMethod: supplierPayments.paymentMethod,
+      paymentStatus: supplierPayments.paymentStatus,
+      financeAccountId: supplierPayments.financeAccountId,
+      financeAccountName: financeAccounts.accountName,
+      referenceNumber: supplierPayments.referenceNumber,
+      chequeNumber: supplierPayments.chequeNumber,
+      treasuryTransactionId: supplierPayments.treasuryTransactionId,
+      treasuryReversalTransactionId: supplierPayments.treasuryReversalTransactionId,
+      treasuryTransactionCode: treasuryTransactions.transactionCode,
+      treasuryStatus: treasuryTransactions.status,
+      transactionDate: treasuryTransactions.transactionDate,
+    })
+    .from(supplierPayments)
+    .leftJoin(suppliers, eq(supplierPayments.supplierId, suppliers.id))
+    .leftJoin(purchaseOrders, eq(supplierPayments.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(financeAccounts, eq(supplierPayments.financeAccountId, financeAccounts.id))
+    .leftJoin(treasuryTransactions, eq(supplierPayments.treasuryTransactionId, treasuryTransactions.id))
+    .where(
+      and(
+        sql`${supplierPayments.treasuryTransactionId} IS NOT NULL`,
+        eq(treasuryTransactions.transactionType, 'supplier_payment'),
+        sql`${treasuryTransactions.status} IN ('posted', 'cleared')`,
+        gte(treasuryTransactions.transactionDate, start),
+        lte(treasuryTransactions.transactionDate, end),
+      ),
+    )
+    .orderBy(desc(treasuryTransactions.transactionDate), desc(supplierPayments.id));
+
+  const totals = rows.reduce(
+    (summary, row) => {
+      const amount = Number(row.amount ?? 0);
+      summary.totalDisbursed += amount;
+      if (row.paymentMethod === 'cash') summary.cashDisbursed += amount;
+      if (row.paymentMethod === 'bank_transfer') summary.bankTransferDisbursed += amount;
+      if (row.paymentMethod === 'cheque') summary.chequeDisbursed += amount;
+      return summary;
+    },
+    { totalDisbursed: 0, cashDisbursed: 0, bankTransferDisbursed: 0, chequeDisbursed: 0 },
+  );
+
+  return {
+    totals: {
+      totalDisbursed: roundCurrency(totals.totalDisbursed),
+      cashDisbursed: roundCurrency(totals.cashDisbursed),
+      bankTransferDisbursed: roundCurrency(totals.bankTransferDisbursed),
+      chequeDisbursed: roundCurrency(totals.chequeDisbursed),
+      count: rows.length,
+    },
+    rows: rows.map((row) => ({
+      ...row,
+      amount: roundCurrency(Number(row.amount ?? 0)),
+      sourceModule: 'inventory',
+      sourceEntityType: 'supplier_payment',
+      sourceEntityId: row.supplierPaymentId,
+      sourceCodeSnapshot: row.paymentCode,
+    })),
+    dateRange: { start, end },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -435,91 +933,54 @@ router.get('/feed-consumption', authenticate, requirePermission('reports:read'),
 // ---------------------------------------------------------------------------
 router.get('/financial-overview', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate } = req.query;
-
-    // Default to last 30 days
-    const end = endDate ? (endDate as string) : new Date().toISOString().split('T')[0];
-    const start = startDate
-      ? (startDate as string)
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-    // Total revenue from sales in range
-    const [revResult] = await db
-      .select({
-        totalRevenue: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float`,
-      })
-      .from(sales)
-      .where(and(gte(sales.saleDate, start), lte(sales.saleDate, end)));
-
-    const totalRevenue = revResult?.totalRevenue ?? 0;
-
-    // Total paid from completed payments on sales in range
-    const [paidResult] = await db
-      .select({
-        totalPaid: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float`,
-      })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(
-        and(
-          gte(sales.saleDate, start),
-          lte(sales.saleDate, end),
-          eq(payments.paymentStatus, 'completed'),
-        ),
-      );
-
-    const totalPaid = paidResult?.totalPaid ?? 0;
-    const totalOutstanding = totalRevenue - totalPaid;
-
-    // Payments by method
-    const paymentsByMethod = await db
-      .select({
-        method: payments.paymentMethod,
-        total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float`,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(
-        and(
-          gte(sales.saleDate, start),
-          lte(sales.saleDate, end),
-          eq(payments.paymentStatus, 'completed'),
-        ),
-      )
-      .groupBy(payments.paymentMethod);
-
-    // Recent transactions (last 10 payments within range)
-    const recentTransactions = await db
-      .select({
-        paymentId: payments.id,
-        saleCode: sales.saleCode,
-        amount: payments.paymentAmount,
-        method: payments.paymentMethod,
-        date: payments.paymentDate,
-        status: payments.paymentStatus,
-      })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(and(gte(sales.saleDate, start), lte(sales.saleDate, end)))
-      .orderBy(desc(payments.paymentDate))
-      .limit(10);
-
-    res.json({
-      success: true,
-      data: {
-        totalRevenue,
-        totalPaid,
-        totalOutstanding,
-        paymentsByMethod,
-        recentTransactions,
-        dateRange: { start, end },
-      },
-      timestamp: new Date().toISOString(),
-    });
+    const { start, end } = resolveDateRange(req.query);
+    const data = await buildFinancialOverviewData(start, end);
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
   } catch (error) {
     logger.error('Failed to fetch financial overview report', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch financial overview report', code: 'FINANCIAL_OVERVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/buyer-outstanding-advance-summary', authenticate, requirePermission('reports:financial:read'), async (_req: Request, res: Response) => {
+  try {
+    const data = await buildBuyerOutstandingAdvanceSummary();
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch buyer outstanding and advance summary', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch buyer outstanding and advance summary', code: 'BUYER_OUTSTANDING_ADVANCE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/payroll-disbursement-summary', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
+  try {
+    const { start, end } = resolveDateRange(req.query);
+    const data = await buildPayrollDisbursementSummary(start, end);
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch payroll disbursement summary', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch payroll disbursement summary', code: 'PAYROLL_DISBURSEMENT_SUMMARY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/petty-cash-outstanding-summary', authenticate, requirePermission('reports:financial:read'), async (_req: Request, res: Response) => {
+  try {
+    const data = await buildPettyCashOutstandingSummary();
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch petty cash outstanding summary', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch petty cash outstanding summary', code: 'PETTY_CASH_OUTSTANDING_SUMMARY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/supplier-payment-summary', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
+  try {
+    const { start, end } = resolveDateRange(req.query);
+    const data = await buildSupplierPaymentSummary(start, end);
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch supplier payment summary', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch supplier payment summary', code: 'SUPPLIER_PAYMENT_SUMMARY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 
@@ -647,8 +1108,11 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
       .select({
         id: batches.id,
         batchCode: batches.batchCode,
+        siteId: batches.siteId,
         siteName: sites.siteName,
         chicksPlaced: batches.chicksPlaced,
+        placementDate: batches.placementDate,
+        actualDeliveryDate: batches.actualDeliveryDate,
       })
       .from(batches)
       .leftJoin(sites, eq(batches.siteId, sites.id))
@@ -659,35 +1123,16 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
     }
 
     const batchRows = await batchQuery.orderBy(desc(batches.placementDate));
-
-    // Get average feed cost per kg from inventory
-    const [avgFeedCost] = await db
-      .select({
-        avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float`,
-      })
-      .from(feedInventory);
-    const feedCostPerKg = avgFeedCost?.avgCost ?? 0;
-
-    // Get total payroll cost for period and active batch count for pro-rating
-    const payrollConditions: SQL[] = [];
-    if (startDate) payrollConditions.push(gte(payroll.payPeriod, startDate as string));
-    if (endDate) payrollConditions.push(lte(payroll.payPeriod, endDate as string));
-
-    let payrollQuery = db
-      .select({
-        totalPayroll: sql<number>`COALESCE(sum(${payroll.grossSalary}::numeric), 0)::float`,
-      })
-      .from(payroll)
-      .$dynamic();
-
-    if (payrollConditions.length > 0) {
-      payrollQuery = payrollQuery.where(and(...payrollConditions));
-    }
-
-    const [payrollResult] = await payrollQuery;
-    const totalPayrollCost = payrollResult?.totalPayroll ?? 0;
-    const activeBatchCount = batchRows.length || 1;
-    const laborCostPerBatch = Number((totalPayrollCost / activeBatchCount).toFixed(2));
+    const costSummaries = await buildBatchCostSummaries(
+      batchRows.map((batch) => ({
+        id: batch.id,
+        batchCode: batch.batchCode,
+        siteId: batch.siteId,
+        chicksPlaced: batch.chicksPlaced,
+        placementDate: String(batch.placementDate),
+        actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate) : null,
+      })),
+    );
 
     const batchResults = await Promise.all(
       batchRows.map(async (batch) => {
@@ -700,19 +1145,15 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
           .from(sales)
           .where(eq(sales.batchId, batch.id));
 
-        // Feed cost from daily records
-        const [feedAgg] = await db
-          .select({
-            totalFeed: sql<number>`COALESCE(sum(${dailyRecords.feedConsumption}::numeric), 0)::float`,
-          })
-          .from(dailyRecords)
-          .where(eq(dailyRecords.batchId, batch.id));
+        const costSummary = costSummaries.get(batch.id);
 
         const revenue = saleAgg?.revenue ?? 0;
         const birdsSold = saleAgg?.birdsSold ?? 0;
-        const feedCost = Number(((feedAgg?.totalFeed ?? 0) * feedCostPerKg).toFixed(2));
-        const laborCost = laborCostPerBatch;
-        const totalCost = feedCost + laborCost;
+        const feedCost = costSummary?.feedCost ?? 0;
+        const inventoryCost = costSummary?.inventoryCost ?? 0;
+        const laborCost = costSummary?.laborCost ?? 0;
+        const operationalExpenseCost = costSummary?.operationalExpenseCost ?? 0;
+        const totalCost = costSummary?.totalCost ?? 0;
         const grossMargin = revenue - totalCost;
         const profitMargin = revenue > 0 ? Number(((grossMargin / revenue) * 100).toFixed(2)) : 0;
         const costPerBird = batch.chicksPlaced > 0 ? Number((totalCost / batch.chicksPlaced).toFixed(2)) : 0;
@@ -725,7 +1166,9 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
           birdsSold,
           revenue,
           feedCost,
+          inventoryCost,
           laborCost,
+          operationalExpenseCost,
           totalCost,
           grossMargin,
           profitMargin,
@@ -737,7 +1180,10 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
     const totals = {
       totalRevenue: Number(batchResults.reduce((s, b) => s + b.revenue, 0).toFixed(2)),
       totalFeedCost: Number(batchResults.reduce((s, b) => s + b.feedCost, 0).toFixed(2)),
+      totalInventoryCost: Number(batchResults.reduce((s, b) => s + b.inventoryCost, 0).toFixed(2)),
       totalLaborCost: Number(batchResults.reduce((s, b) => s + b.laborCost, 0).toFixed(2)),
+      totalOperationalExpenseCost: Number(batchResults.reduce((s, b) => s + b.operationalExpenseCost, 0).toFixed(2)),
+      totalCost: Number(batchResults.reduce((s, b) => s + b.totalCost, 0).toFixed(2)),
       totalGrossMargin: Number(batchResults.reduce((s, b) => s + b.grossMargin, 0).toFixed(2)),
       averageProfitMargin: batchResults.length > 0
         ? Number((batchResults.reduce((s, b) => s + b.profitMargin, 0) / batchResults.length).toFixed(2))
@@ -752,6 +1198,70 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
   } catch (error) {
     logger.error('Failed to fetch batch profitability report', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch batch profitability report', code: 'BATCH_PROFITABILITY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/reports/batch-inventory-consumption
+// ---------------------------------------------------------------------------
+router.get('/batch-inventory-consumption', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
+  try {
+    const { startDate, endDate, siteId, batchId } = req.query;
+    const conditions: SQL[] = [];
+
+    if (startDate) conditions.push(gte(batchInventoryConsumptions.consumptionDate, startDate as string));
+    if (endDate) conditions.push(lte(batchInventoryConsumptions.consumptionDate, endDate as string));
+    if (siteId) conditions.push(eq(batches.siteId, Number(siteId)));
+    if (batchId) conditions.push(eq(batchInventoryConsumptions.batchId, Number(batchId)));
+
+    let query = db
+      .select({
+        id: batchInventoryConsumptions.id,
+        batchId: batchInventoryConsumptions.batchId,
+        batchCode: batches.batchCode,
+        siteName: sites.siteName,
+        inventoryItemId: batchInventoryConsumptions.inventoryItemId,
+        ingredientName: feedInventory.ingredientName,
+        itemCode: feedInventory.itemCode,
+        typeName: inventoryItemTypes.typeName,
+        typeCode: inventoryItemTypes.typeCode,
+        quantity: batchInventoryConsumptions.quantity,
+        unit: batchInventoryConsumptions.unit,
+        unitCost: batchInventoryConsumptions.unitCost,
+        lineCost: batchInventoryConsumptions.lineCost,
+        consumptionDate: batchInventoryConsumptions.consumptionDate,
+        referenceType: batchInventoryConsumptions.referenceType,
+        referenceId: batchInventoryConsumptions.referenceId,
+        notes: batchInventoryConsumptions.notes,
+      })
+      .from(batchInventoryConsumptions)
+      .innerJoin(batches, eq(batchInventoryConsumptions.batchId, batches.id))
+      .leftJoin(sites, eq(batches.siteId, sites.id))
+      .innerJoin(feedInventory, eq(batchInventoryConsumptions.inventoryItemId, feedInventory.id))
+      .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+      .$dynamic();
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+
+    const rows = await query.orderBy(desc(batchInventoryConsumptions.consumptionDate), desc(batchInventoryConsumptions.id));
+    const totals = {
+      totalQuantity: Number(rows.reduce((sum, row) => sum + Number(row.quantity), 0).toFixed(2)),
+      totalCost: Number(rows.reduce((sum, row) => sum + Number(row.lineCost), 0).toFixed(2)),
+    };
+
+    res.json({
+      success: true,
+      data: {
+        rows,
+        totals,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch batch inventory consumption report', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch batch inventory consumption report', code: 'BATCH_INVENTORY_CONSUMPTION_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 
@@ -968,7 +1478,9 @@ router.get('/feed-analytics', authenticate, requirePermission('reports:read'), a
       .select({
         avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float`,
       })
-      .from(feedInventory);
+      .from(feedInventory)
+      .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+      .where(eq(inventoryItemTypes.isFeed, true));
     const feedCostPerKg = avgFeedCost?.avgCost ?? 0;
 
     const feedCostPerBird = await Promise.all(
@@ -1282,6 +1794,49 @@ router.get('/export/csv', authenticate, requirePermission('reports:read'), async
         break;
       }
 
+      case 'financial-overview': {
+        const { start, end } = resolveDateRange(req.query);
+        const overview = await buildFinancialOverviewData(start, end);
+        csvData = [
+          {
+            startDate: overview.dateRange.start,
+            endDate: overview.dateRange.end,
+            salesRevenue: overview.salesRevenue,
+            treasuryInflows: overview.treasuryInflows,
+            treasuryOutflows: overview.treasuryOutflows,
+            netCashMovement: overview.netCashMovement,
+            customerReceiptInflows: overview.customerReceiptInflows,
+            payrollOutflows: overview.payrollOutflows,
+            supplierPaymentOutflows: overview.supplierPaymentOutflows,
+            pettyCashNet: overview.pettyCashNet,
+          },
+          ...overview.recentTransactions.map((transaction) => ({
+            startDate: overview.dateRange.start,
+            endDate: overview.dateRange.end,
+            salesRevenue: '',
+            treasuryInflows: '',
+            treasuryOutflows: '',
+            netCashMovement: '',
+            customerReceiptInflows: '',
+            payrollOutflows: '',
+            supplierPaymentOutflows: '',
+            pettyCashNet: '',
+            recentTransactionCode: transaction.transactionCode,
+            recentTransactionType: transaction.transactionType,
+            recentTransactionDate: transaction.transactionDate,
+            recentTransactionStatus: transaction.status,
+            recentTransactionNetAmount: transaction.netAmount,
+            recentTransactionAccounts: transaction.accountNames,
+            recentTransactionSourceModule: transaction.sourceModule,
+            recentTransactionSourceEntityType: transaction.sourceEntityType,
+            recentTransactionSourceEntityId: transaction.sourceEntityId,
+            recentTransactionSourceCode: transaction.sourceCodeSnapshot,
+          })),
+        ];
+        filename = `financial-overview-${new Date().toISOString().split('T')[0]}.csv`;
+        break;
+      }
+
       case 'batch-comparison': {
         const batchIdsStr = req.query.batchIds as string;
         if (!batchIdsStr) {
@@ -1343,25 +1898,68 @@ router.get('/export/csv', authenticate, requirePermission('reports:read'), async
         if (profConditions.length > 0) profBatchQuery = profBatchQuery.where(and(...profConditions));
         const profBatches = await profBatchQuery;
 
-        const [avgCost] = await db.select({ avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float` }).from(feedInventory);
+        const [avgCost] = await db
+          .select({ avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float` })
+          .from(feedInventory)
+          .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+          .where(eq(inventoryItemTypes.isFeed, true));
         const costPerKg = avgCost?.avgCost ?? 0;
 
         csvData = await Promise.all(
           profBatches.map(async (batch) => {
             const [saleAgg] = await db.select({ revenue: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float`, birdsSold: sql<number>`COALESCE(sum(${sales.totalBirds}), 0)::int` }).from(sales).where(eq(sales.batchId, batch.id));
             const [feedAgg] = await db.select({ totalFeed: sql<number>`COALESCE(sum(${dailyRecords.feedConsumption}::numeric), 0)::float` }).from(dailyRecords).where(eq(dailyRecords.batchId, batch.id));
+            const [inventoryAgg] = await db.select({ totalInventoryCost: sql<number>`COALESCE(sum(${batchInventoryConsumptions.lineCost}::numeric), 0)::float` }).from(batchInventoryConsumptions).where(eq(batchInventoryConsumptions.batchId, batch.id));
             const revenue = saleAgg?.revenue ?? 0;
             const feedCostVal = (feedAgg?.totalFeed ?? 0) * costPerKg;
-            const grossMargin = revenue - feedCostVal;
+            const inventoryCostVal = inventoryAgg?.totalInventoryCost ?? 0;
+            const grossMargin = revenue - feedCostVal - inventoryCostVal;
             return {
               batchCode: batch.batchCode, siteName: batch.siteName, chicksPlaced: batch.chicksPlaced,
               birdsSold: saleAgg?.birdsSold ?? 0, revenue: revenue.toFixed(2),
-              feedCost: feedCostVal.toFixed(2), grossMargin: grossMargin.toFixed(2),
+              feedCost: feedCostVal.toFixed(2), inventoryCost: inventoryCostVal.toFixed(2), grossMargin: grossMargin.toFixed(2),
               profitMargin: revenue > 0 ? ((grossMargin / revenue) * 100).toFixed(2) : '0',
             };
           }),
         );
         filename = `batch-profitability-${new Date().toISOString().split('T')[0]}.csv`;
+        break;
+      }
+
+      case 'batch-inventory-consumption': {
+        const inventoryConditions: SQL[] = [];
+        if (startDate) inventoryConditions.push(gte(batchInventoryConsumptions.consumptionDate, startDate as string));
+        if (endDate) inventoryConditions.push(lte(batchInventoryConsumptions.consumptionDate, endDate as string));
+        if (siteId) inventoryConditions.push(eq(batches.siteId, Number(siteId)));
+        if (batchId) inventoryConditions.push(eq(batchInventoryConsumptions.batchId, Number(batchId)));
+
+        let inventoryQuery = db
+          .select({
+            batchCode: batches.batchCode,
+            siteName: sites.siteName,
+            ingredientName: feedInventory.ingredientName,
+            itemCode: feedInventory.itemCode,
+            typeName: inventoryItemTypes.typeName,
+            quantity: batchInventoryConsumptions.quantity,
+            unit: batchInventoryConsumptions.unit,
+            unitCost: batchInventoryConsumptions.unitCost,
+            lineCost: batchInventoryConsumptions.lineCost,
+            consumptionDate: batchInventoryConsumptions.consumptionDate,
+            notes: batchInventoryConsumptions.notes,
+          })
+          .from(batchInventoryConsumptions)
+          .innerJoin(batches, eq(batchInventoryConsumptions.batchId, batches.id))
+          .leftJoin(sites, eq(batches.siteId, sites.id))
+          .innerJoin(feedInventory, eq(batchInventoryConsumptions.inventoryItemId, feedInventory.id))
+          .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+          .$dynamic();
+
+        if (inventoryConditions.length > 0) {
+          inventoryQuery = inventoryQuery.where(and(...inventoryConditions));
+        }
+
+        csvData = await inventoryQuery.orderBy(desc(batchInventoryConsumptions.consumptionDate), desc(batchInventoryConsumptions.id));
+        filename = `batch-inventory-consumption-${new Date().toISOString().split('T')[0]}.csv`;
         break;
       }
 
@@ -1406,7 +2004,11 @@ router.get('/export/csv', authenticate, requirePermission('reports:read'), async
         if (faConditions.length > 0) faBatchQuery = faBatchQuery.where(and(...faConditions));
         const faBatches = await faBatchQuery.orderBy(batches.placementDate);
 
-        const [faAvgCost] = await db.select({ avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float` }).from(feedInventory);
+        const [faAvgCost] = await db
+          .select({ avgCost: sql<number>`COALESCE(avg(${feedInventory.costPerUnit}::numeric), 0)::float` })
+          .from(feedInventory)
+          .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+          .where(eq(inventoryItemTypes.isFeed, true));
         const faCostPerKg = faAvgCost?.avgCost ?? 0;
 
         csvData = await Promise.all(
@@ -1430,7 +2032,7 @@ router.get('/export/csv', authenticate, requirePermission('reports:read'), async
       }
 
       default:
-        res.status(400).json({ success: false, error: `Invalid reportType: ${reportType}. Must be one of: batch-performance, sales-summary, mortality-trends, feed-consumption, batch-comparison, batch-profitability, hr-analytics, feed-analytics`, code: 'INVALID_REPORT_TYPE', statusCode: 400, timestamp: new Date().toISOString() });
+        res.status(400).json({ success: false, error: `Invalid reportType: ${reportType}. Must be one of: batch-performance, sales-summary, mortality-trends, feed-consumption, financial-overview, batch-comparison, batch-profitability, batch-inventory-consumption, hr-analytics, feed-analytics`, code: 'INVALID_REPORT_TYPE', statusCode: 400, timestamp: new Date().toISOString() });
         return;
     }
 

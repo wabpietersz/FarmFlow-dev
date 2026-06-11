@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
-import { useEnhancedDashboard, useRecentActivity } from '@/hooks/useDashboard';
+import { useDashboardExceptions, useEnhancedDashboard, useExecutiveDashboard, useRecentActivity } from '@/hooks/useDashboard';
 import EnhancedMetricCard from '@/components/dashboard/EnhancedMetricCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import type { DashboardPeriod } from '@farmflow/shared';
 import {
   Egg,
@@ -18,6 +19,7 @@ import {
   Wheat,
   Clock,
   CalendarCheck,
+  Landmark,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
@@ -46,6 +48,10 @@ export default function DashboardPage() {
 
   const { data, isLoading } = useEnhancedDashboard(period);
   const summary = data?.data;
+  const executiveQuery = useExecutiveDashboard();
+  const exceptionsQuery = useDashboardExceptions();
+  const executive = executiveQuery.data?.data;
+  const exceptions = exceptionsQuery.data?.data;
   const { data: activityData } = useRecentActivity(10);
   const activities = (activityData as unknown as { data?: { id: number; type: string; action: string; description: string; timestamp: string }[] })?.data ?? [];
 
@@ -85,7 +91,7 @@ export default function DashboardPage() {
           icon={Activity}
           loading={isLoading}
           trend={summary?.averageFcrTrend}
-          sparklineColor="#16a34a"
+          sparklineColor="#404040"
           invertTrend // lower FCR is better
         />
         <EnhancedMetricCard
@@ -123,7 +129,7 @@ export default function DashboardPage() {
           icon={ShoppingCart}
           loading={isLoading}
           trend={summary?.salesTrend}
-          sparklineColor="#2563eb"
+          sparklineColor="#525252"
         />
         <EnhancedMetricCard
           title="Feed Inventory"
@@ -154,6 +160,83 @@ export default function DashboardPage() {
           icon={CalendarCheck}
           loading={isLoading}
         />
+        <EnhancedMetricCard
+          title="Cash Position"
+          value={formatCurrency(executive?.cash.totalBookBalance ?? 0)}
+          description={`Bank ${formatCurrency(executive?.cash.bankBalance ?? 0)}`}
+          icon={Landmark}
+          loading={executiveQuery.isLoading}
+        />
+        <EnhancedMetricCard
+          title="Exception Load"
+          value={String(
+            (exceptions?.summary.negativeStockRisk ?? 0)
+            + (exceptions?.summary.paymentWithoutTreasuryLink ?? 0)
+            + (exceptions?.summary.chequeAgeing ?? 0)
+            + (exceptions?.summary.overduePayables ?? 0),
+          )}
+          description="tracked control exceptions"
+          icon={Clock}
+          loading={exceptionsQuery.isLoading}
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Executive Snapshot</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Overdue payables</span>
+              <span className="font-medium">{formatCurrency(executive?.payables.overdueAmount ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Outstanding receivables</span>
+              <span className="font-medium">{formatCurrency(executive?.receivables.outstandingAmount ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Active batch revenue</span>
+              <span className="font-medium">{formatCurrency(executive?.profitability.totalRevenue ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Gross margin</span>
+              <span className="font-medium">{formatCurrency(executive?.profitability.grossMargin ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Pending approvals</span>
+              <span className="font-medium">{executive?.payables.pendingApprovalCount ?? 0}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Control Exceptions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Negative stock risk</span>
+              <span className="font-medium">{exceptions?.summary.negativeStockRisk ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Missing treasury link</span>
+              <span className="font-medium">{exceptions?.summary.paymentWithoutTreasuryLink ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Cheque ageing</span>
+              <span className="font-medium">{exceptions?.summary.chequeAgeing ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Overdue receivables</span>
+              <span className="font-medium">{exceptions?.summary.overdueReceivables ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Missing cost components</span>
+              <span className="font-medium">{exceptions?.summary.missingCostComponents ?? 0}</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Quick Actions */}
@@ -214,21 +297,20 @@ export default function DashboardPage() {
           {activities.length > 0 ? (
             <div className="space-y-3">
               {activities.map((activity) => {
-                const typeColors: Record<string, string> = {
-                  batch: 'bg-blue-100 text-blue-700',
-                  sale: 'bg-green-100 text-green-700',
-                  employee: 'bg-purple-100 text-purple-700',
-                  feed: 'bg-amber-100 text-amber-700',
-                  payroll: 'bg-rose-100 text-rose-700',
-                  attendance: 'bg-cyan-100 text-cyan-700',
+                const typeVariant: Record<string, 'secondary' | 'outline' | 'destructive'> = {
+                  batch: 'secondary',
+                  sale: 'secondary',
+                  employee: 'outline',
+                  feed: 'outline',
+                  payroll: 'destructive',
+                  attendance: 'outline',
                 };
-                const colorClass = typeColors[activity.type] || 'bg-gray-100 text-gray-700';
                 const timeAgo = getTimeAgo(activity.timestamp);
                 return (
                   <div key={activity.id} className="flex items-center gap-3 text-sm">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${colorClass}`}>
+                    <Badge variant={typeVariant[activity.type] || 'outline'} className="capitalize">
                       {activity.type}
-                    </span>
+                    </Badge>
                     <span className="text-foreground flex-1">{activity.description}</span>
                     <span className="text-muted-foreground text-xs whitespace-nowrap">{timeAgo}</span>
                   </div>

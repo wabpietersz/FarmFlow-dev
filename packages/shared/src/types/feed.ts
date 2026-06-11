@@ -243,10 +243,18 @@ export enum PurchaseOrderStatus {
   Cancelled = 'cancelled',
 }
 
+export enum SupplierPaymentStatus {
+  Pending = 'pending',
+  Completed = 'completed',
+  Bounced = 'bounced',
+  Voided = 'voided',
+}
+
 export interface PurchaseOrder {
   id: number;
   orderCode: string;
   supplierId: number;
+  contractId?: number | null;
   supplierName?: string;
   orderDate: string;
   expectedDeliveryDate?: string | null;
@@ -269,6 +277,134 @@ export interface PurchaseOrderItem {
   receivedQuantity: number;
   unit: string;
   notes?: string | null;
+}
+
+export interface SupplierPayment {
+  id: number;
+  paymentCode: string;
+  supplierId: number;
+  supplierName?: string | null;
+  purchaseOrderId?: number | null;
+  purchaseOrderCode?: string | null;
+  paymentDate: string;
+  financeAccountId: number;
+  financeAccountName?: string | null;
+  paymentMethod: 'cash' | 'cheque' | 'bank_transfer';
+  amount: number;
+  paymentStatus: SupplierPaymentStatus | string;
+  referenceNumber?: string | null;
+  chequeLeafId?: number | null;
+  chequeNumber?: string | null;
+  chequeDate?: string | null;
+  bankName?: string | null;
+  treasuryTransactionId?: number | null;
+  treasuryReversalTransactionId?: number | null;
+  notes?: string | null;
+  recordedBy?: number | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface SupplierContract {
+  id: number;
+  contractCode: string;
+  supplierId: number;
+  supplierName?: string | null;
+  contractType: 'supplier' | 'service' | 'customer' | string;
+  contractTitle: string;
+  description?: string | null;
+  status: 'draft' | 'active' | 'expired' | 'suspended' | string;
+  validFrom: string;
+  validTo?: string | null;
+  currencyCode: string;
+  paymentTermsDays: number;
+  commercialTerms?: string | null;
+  rateTable?: Record<string, unknown>;
+  attachmentUrls?: string[];
+  alertDaysBeforeExpiry: number;
+  createdBy: number;
+  approvedBy?: number | null;
+  approvedAt?: string | Date | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  terms?: SupplierContractTerm[];
+}
+
+export interface SupplierContractTerm {
+  id: number;
+  contractId: number;
+  termType: string;
+  termKey: string;
+  termValue: string;
+  sortOrder: number;
+  createdAt: Date | string;
+}
+
+export interface SupplierInvoice {
+  id: number;
+  invoiceCode: string;
+  supplierId: number;
+  supplierName?: string | null;
+  purchaseOrderId?: number | null;
+  purchaseOrderCode?: string | null;
+  contractId?: number | null;
+  contractCode?: string | null;
+  invoiceReference: string;
+  invoiceDate: string;
+  dueDate: string;
+  invoiceAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
+  currencyCode: string;
+  status: 'recorded' | 'cancelled' | string;
+  notes?: string | null;
+  createdBy: number;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface SupplierPayableSummary {
+  supplierId: number;
+  supplierName: string;
+  purchaseOrderId?: number | null;
+  purchaseOrderCode?: string | null;
+  invoiceId?: number | null;
+  invoiceCode?: string | null;
+  invoiceReference?: string | null;
+  orderedAmount: number;
+  receivedAmount: number;
+  invoicedAmount: number;
+  paidAmount: number;
+  balanceDue: number;
+  dueDate?: string | null;
+  paymentStatus: 'unpaid' | 'partially_paid' | 'paid';
+}
+
+export interface InventoryMovement {
+  id: number;
+  movementType: string;
+  movementDate: string;
+  sourceModule: string;
+  sourceEntityType: string;
+  sourceEntityId: number;
+  sourceCodeSnapshot?: string | null;
+  inventoryItemId?: number | null;
+  inventoryLotId?: number | null;
+  purchaseOrderId?: number | null;
+  purchaseOrderItemId?: number | null;
+  productionBatchId?: number | null;
+  productionMaterialId?: number | null;
+  feedDistributionId?: number | null;
+  batchId?: number | null;
+  quantity: number;
+  unit: string;
+  unitCost?: number | null;
+  lineCost?: number | null;
+  balanceAfterQuantity?: number | null;
+  balanceScope: string;
+  notes?: string | null;
+  createdBy?: number | null;
+  createdAt: Date | string;
 }
 
 // --- Report scheduling interfaces ---

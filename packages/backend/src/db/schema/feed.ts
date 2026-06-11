@@ -13,6 +13,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import { batches } from './batches';
 import { users } from './users';
+import { sites } from './sites';
+import { chequeLeaves, financeAccounts, treasuryTransactions } from './treasury';
 
 export const suppliers = pgTable('suppliers', {
   id: serial('id').primaryKey(),
@@ -25,6 +27,28 @@ export const suppliers = pgTable('suppliers', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const inventoryItemTypes = pgTable(
+  'inventory_item_types',
+  {
+    id: serial('id').primaryKey(),
+    typeCode: varchar('type_code', { length: 50 }).unique().notNull(),
+    typeName: varchar('type_name', { length: 100 }).unique().notNull(),
+    category: varchar('category', { length: 50 }).notNull(),
+    defaultUnit: varchar('default_unit', { length: 20 }).notNull(),
+    allowsBatchAllocation: boolean('allows_batch_allocation').default(false).notNull(),
+    isFeed: boolean('is_feed').default(false).notNull(),
+    status: varchar('status', { length: 50 }).default('active').notNull(),
+    description: text('description'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_inventory_item_types_code').on(table.typeCode),
+    index('idx_inventory_item_types_category').on(table.category),
+    index('idx_inventory_item_types_feed').on(table.isFeed),
+  ],
+);
 
 export const feedRecipes = pgTable('feed_recipes', {
   id: serial('id').primaryKey(),
@@ -58,7 +82,12 @@ export const feedInventory = pgTable(
   'feed_inventory',
   {
     id: serial('id').primaryKey(),
+    itemTypeId: integer('item_type_id')
+      .references(() => inventoryItemTypes.id)
+      .notNull(),
+    itemCode: varchar('item_code', { length: 50 }),
     ingredientName: varchar('ingredient_name', { length: 100 }).notNull(),
+    description: text('description'),
     supplierId: integer('supplier_id').references(() => suppliers.id),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
     unit: varchar('unit', { length: 20 }).notNull(),
@@ -68,7 +97,11 @@ export const feedInventory = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
-  (table) => [index('idx_feed_inventory_ingredient').on(table.ingredientName)],
+  (table) => [
+    index('idx_feed_inventory_ingredient').on(table.ingredientName),
+    index('idx_feed_inventory_item_type').on(table.itemTypeId),
+    index('idx_feed_inventory_item_code').on(table.itemCode),
+  ],
 );
 
 // --- Feed Production ---
@@ -206,6 +239,7 @@ export const purchaseOrders = pgTable(
     supplierId: integer('supplier_id')
       .references(() => suppliers.id)
       .notNull(),
+    contractId: integer('contract_id').references(() => supplierContracts.id),
     orderDate: date('order_date').notNull(),
     expectedDeliveryDate: date('expected_delivery_date'),
     actualDeliveryDate: date('actual_delivery_date'),
@@ -222,6 +256,57 @@ export const purchaseOrders = pgTable(
     index('idx_po_status').on(table.status),
     index('idx_po_supplier').on(table.supplierId),
     index('idx_po_order_date').on(table.orderDate),
+  ],
+);
+
+export const supplierContracts = pgTable(
+  'supplier_contracts',
+  {
+    id: serial('id').primaryKey(),
+    contractCode: varchar('contract_code', { length: 50 }).unique().notNull(),
+    supplierId: integer('supplier_id').references(() => suppliers.id).notNull(),
+    contractType: varchar('contract_type', { length: 50 }).default('supplier').notNull(),
+    contractTitle: varchar('contract_title', { length: 200 }).notNull(),
+    description: text('description'),
+    status: varchar('status', { length: 50 }).default('draft').notNull(),
+    validFrom: date('valid_from').notNull(),
+    validTo: date('valid_to'),
+    currencyCode: varchar('currency_code', { length: 10 }).default('LKR').notNull(),
+    paymentTermsDays: integer('payment_terms_days').default(0).notNull(),
+    commercialTerms: text('commercial_terms'),
+    rateTable: jsonb('rate_table').default({}).notNull(),
+    attachmentUrls: jsonb('attachment_urls').default([]).notNull(),
+    alertDaysBeforeExpiry: integer('alert_days_before_expiry').default(30).notNull(),
+    createdBy: integer('created_by').references(() => users.id).notNull(),
+    approvedBy: integer('approved_by').references(() => users.id),
+    approvedAt: timestamp('approved_at'),
+    approvalNotes: text('approval_notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_supplier_contracts_supplier').on(table.supplierId),
+    index('idx_supplier_contracts_status').on(table.status),
+    index('idx_supplier_contracts_validity').on(table.validFrom, table.validTo),
+  ],
+);
+
+export const supplierContractTerms = pgTable(
+  'supplier_contract_terms',
+  {
+    id: serial('id').primaryKey(),
+    contractId: integer('contract_id')
+      .references(() => supplierContracts.id, { onDelete: 'cascade' })
+      .notNull(),
+    termType: varchar('term_type', { length: 50 }).notNull(),
+    termKey: varchar('term_key', { length: 100 }).notNull(),
+    termValue: text('term_value').notNull(),
+    sortOrder: integer('sort_order').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_supplier_contract_terms_contract').on(table.contractId),
+    index('idx_supplier_contract_terms_type').on(table.termType),
   ],
 );
 
@@ -244,6 +329,201 @@ export const purchaseOrderItems = pgTable(
   (table) => [
     index('idx_poi_order').on(table.purchaseOrderId),
     index('idx_poi_inventory').on(table.inventoryItemId),
+  ],
+);
+
+export const supplierInvoices = pgTable(
+  'supplier_invoices',
+  {
+    id: serial('id').primaryKey(),
+    invoiceCode: varchar('invoice_code', { length: 50 }).unique().notNull(),
+    supplierId: integer('supplier_id')
+      .references(() => suppliers.id)
+      .notNull(),
+    purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id),
+    contractId: integer('contract_id').references(() => supplierContracts.id),
+    invoiceReference: varchar('invoice_reference', { length: 100 }).notNull(),
+    invoiceDate: date('invoice_date').notNull(),
+    dueDate: date('due_date').notNull(),
+    invoiceAmount: decimal('invoice_amount', { precision: 12, scale: 2 }).notNull(),
+    currencyCode: varchar('currency_code', { length: 10 }).default('LKR').notNull(),
+    status: varchar('status', { length: 50 }).default('recorded').notNull(),
+    approvedBy: integer('approved_by').references(() => users.id),
+    approvedAt: timestamp('approved_at'),
+    approvalNotes: text('approval_notes'),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_supplier_invoices_supplier').on(table.supplierId),
+    index('idx_supplier_invoices_po').on(table.purchaseOrderId),
+    index('idx_supplier_invoices_contract').on(table.contractId),
+    index('idx_supplier_invoices_due_date').on(table.dueDate),
+    index('idx_supplier_invoices_status').on(table.status),
+  ],
+);
+
+export const supplierPayments = pgTable(
+  'supplier_payments',
+  {
+    id: serial('id').primaryKey(),
+    paymentCode: varchar('payment_code', { length: 50 }).unique().notNull(),
+    supplierId: integer('supplier_id')
+      .references(() => suppliers.id)
+      .notNull(),
+    purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id),
+    paymentDate: date('payment_date').notNull(),
+    financeAccountId: integer('finance_account_id')
+      .references(() => financeAccounts.id)
+      .notNull(),
+    paymentMethod: varchar('payment_method', { length: 50 }).notNull(),
+    amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+    paymentStatus: varchar('payment_status', { length: 50 }).default('completed').notNull(),
+    referenceNumber: varchar('reference_number', { length: 100 }),
+    chequeLeafId: integer('cheque_leaf_id').references(() => chequeLeaves.id),
+    chequeNumber: varchar('cheque_number', { length: 50 }),
+    chequeDate: date('cheque_date'),
+    bankName: varchar('bank_name', { length: 100 }),
+    treasuryTransactionId: integer('treasury_transaction_id').references(() => treasuryTransactions.id),
+    treasuryReversalTransactionId: integer('treasury_reversal_transaction_id').references(() => treasuryTransactions.id),
+    notes: text('notes'),
+    recordedBy: integer('recorded_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_supplier_payments_supplier').on(table.supplierId),
+    index('idx_supplier_payments_po').on(table.purchaseOrderId),
+    index('idx_supplier_payments_status').on(table.paymentStatus),
+    index('idx_supplier_payments_date').on(table.paymentDate),
+  ],
+);
+
+export const supplierPaymentAllocations = pgTable(
+  'supplier_payment_allocations',
+  {
+    id: serial('id').primaryKey(),
+    supplierPaymentId: integer('supplier_payment_id')
+      .references(() => supplierPayments.id, { onDelete: 'cascade' })
+      .notNull(),
+    supplierInvoiceId: integer('supplier_invoice_id')
+      .references(() => supplierInvoices.id, { onDelete: 'cascade' })
+      .notNull(),
+    allocatedAmount: decimal('allocated_amount', { precision: 12, scale: 2 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_supplier_payment_allocations_payment').on(table.supplierPaymentId),
+    index('idx_supplier_payment_allocations_invoice').on(table.supplierInvoiceId),
+  ],
+);
+
+export const chickPlacements = pgTable(
+  'chick_placements',
+  {
+    id: serial('id').primaryKey(),
+    batchId: integer('batch_id')
+      .references(() => batches.id, { onDelete: 'cascade' })
+      .notNull(),
+    supplierId: integer('supplier_id').references(() => suppliers.id),
+    contractId: integer('contract_id').references(() => supplierContracts.id),
+    placementDate: date('placement_date').notNull(),
+    invoiceReference: varchar('invoice_reference', { length: 100 }),
+    deliveredQuantity: integer('delivered_quantity').notNull(),
+    mortalityOnArrival: integer('mortality_on_arrival').default(0).notNull(),
+    acceptedQuantity: integer('accepted_quantity').notNull(),
+    unitCost: decimal('unit_cost', { precision: 12, scale: 2 }).notNull(),
+    batchOpeningCost: decimal('batch_opening_cost', { precision: 14, scale: 2 }).notNull(),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_chick_placements_batch').on(table.batchId),
+    index('idx_chick_placements_supplier').on(table.supplierId),
+    index('idx_chick_placements_contract').on(table.contractId),
+    index('idx_chick_placements_date').on(table.placementDate),
+  ],
+);
+
+export const siteInventoryConsumptions = pgTable(
+  'site_inventory_consumptions',
+  {
+    id: serial('id').primaryKey(),
+    siteId: integer('site_id')
+      .references(() => sites.id, { onDelete: 'cascade' })
+      .notNull(),
+    inventoryItemId: integer('inventory_item_id')
+      .references(() => feedInventory.id)
+      .notNull(),
+    inventoryLotId: integer('inventory_lot_id').references(() => inventoryLots.id),
+    purchaseOrderItemId: integer('purchase_order_item_id').references(() => purchaseOrderItems.id),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    unit: varchar('unit', { length: 20 }).notNull(),
+    unitCost: decimal('unit_cost', { precision: 10, scale: 2 }).notNull(),
+    lineCost: decimal('line_cost', { precision: 12, scale: 2 }).notNull(),
+    consumptionDate: date('consumption_date').notNull(),
+    referenceType: varchar('reference_type', { length: 50 }),
+    referenceId: integer('reference_id'),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_site_inventory_consumptions_site').on(table.siteId),
+    index('idx_site_inventory_consumptions_item').on(table.inventoryItemId),
+    index('idx_site_inventory_consumptions_lot').on(table.inventoryLotId),
+    index('idx_site_inventory_consumptions_date').on(table.consumptionDate),
+  ],
+);
+
+export const serviceWorkOrders = pgTable(
+  'service_work_orders',
+  {
+    id: serial('id').primaryKey(),
+    workOrderCode: varchar('work_order_code', { length: 50 }).unique().notNull(),
+    serviceType: varchar('service_type', { length: 50 }).notNull(),
+    title: varchar('title', { length: 200 }).notNull(),
+    supplierId: integer('supplier_id').references(() => suppliers.id),
+    contractId: integer('contract_id').references(() => supplierContracts.id),
+    allocationType: varchar('allocation_type', { length: 50 }).default('shared_overhead').notNull(),
+    siteId: integer('site_id').references(() => sites.id),
+    batchId: integer('batch_id').references(() => batches.id),
+    serviceDate: date('service_date').notNull(),
+    invoiceReference: varchar('invoice_reference', { length: 100 }),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }),
+    unit: varchar('unit', { length: 20 }),
+    unitRate: decimal('unit_rate', { precision: 12, scale: 2 }),
+    totalAmount: decimal('total_amount', { precision: 14, scale: 2 }).notNull(),
+    status: varchar('status', { length: 50 }).default('pending_approval').notNull(),
+    approvalNotes: text('approval_notes'),
+    approvedBy: integer('approved_by').references(() => users.id),
+    approvedAt: timestamp('approved_at'),
+    financeAccountId: integer('finance_account_id').references(() => financeAccounts.id),
+    paymentMethod: varchar('payment_method', { length: 50 }),
+    referenceNumber: varchar('reference_number', { length: 100 }),
+    chequeLeafId: integer('cheque_leaf_id').references(() => chequeLeaves.id),
+    chequeNumber: varchar('cheque_number', { length: 50 }),
+    supplierPaymentId: integer('supplier_payment_id').references(() => supplierPayments.id),
+    treasuryTransactionId: integer('treasury_transaction_id').references(() => treasuryTransactions.id),
+    treasuryReversalTransactionId: integer('treasury_reversal_transaction_id').references(() => treasuryTransactions.id),
+    requestedBy: integer('requested_by').references(() => users.id).notNull(),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_service_work_orders_type').on(table.serviceType),
+    index('idx_service_work_orders_status').on(table.status),
+    index('idx_service_work_orders_supplier').on(table.supplierId),
+    index('idx_service_work_orders_contract').on(table.contractId),
+    index('idx_service_work_orders_site').on(table.siteId),
+    index('idx_service_work_orders_batch').on(table.batchId),
+    index('idx_service_work_orders_date').on(table.serviceDate),
   ],
 );
 
@@ -292,6 +572,75 @@ export const productionMaterialLots = pgTable(
   (table) => [
     index('idx_pml_material').on(table.productionMaterialId),
     index('idx_pml_lot').on(table.inventoryLotId),
+  ],
+);
+
+export const batchInventoryConsumptions = pgTable(
+  'batch_inventory_consumptions',
+  {
+    id: serial('id').primaryKey(),
+    batchId: integer('batch_id')
+      .references(() => batches.id, { onDelete: 'cascade' })
+      .notNull(),
+    inventoryItemId: integer('inventory_item_id')
+      .references(() => feedInventory.id)
+      .notNull(),
+    inventoryLotId: integer('inventory_lot_id').references(() => inventoryLots.id),
+    purchaseOrderItemId: integer('purchase_order_item_id').references(() => purchaseOrderItems.id),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    unit: varchar('unit', { length: 20 }).notNull(),
+    unitCost: decimal('unit_cost', { precision: 10, scale: 2 }).notNull(),
+    lineCost: decimal('line_cost', { precision: 12, scale: 2 }).notNull(),
+    consumptionDate: date('consumption_date').notNull(),
+    referenceType: varchar('reference_type', { length: 50 }),
+    referenceId: integer('reference_id'),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_batch_inventory_consumptions_batch').on(table.batchId),
+    index('idx_batch_inventory_consumptions_item').on(table.inventoryItemId),
+    index('idx_batch_inventory_consumptions_lot').on(table.inventoryLotId),
+  ],
+);
+
+export const inventoryMovements = pgTable(
+  'inventory_movements',
+  {
+    id: serial('id').primaryKey(),
+    movementType: varchar('movement_type', { length: 50 }).notNull(),
+    movementDate: date('movement_date').notNull(),
+    sourceModule: varchar('source_module', { length: 50 }).notNull(),
+    sourceEntityType: varchar('source_entity_type', { length: 50 }).notNull(),
+    sourceEntityId: integer('source_entity_id').notNull(),
+    sourceCodeSnapshot: varchar('source_code_snapshot', { length: 100 }),
+    inventoryItemId: integer('inventory_item_id').references(() => feedInventory.id),
+    inventoryLotId: integer('inventory_lot_id').references(() => inventoryLots.id),
+    purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id),
+    purchaseOrderItemId: integer('purchase_order_item_id').references(() => purchaseOrderItems.id),
+    productionBatchId: integer('production_batch_id').references(() => feedProductionBatches.id),
+    productionMaterialId: integer('production_material_id').references(() => feedProductionMaterials.id),
+    feedDistributionId: integer('feed_distribution_id').references(() => feedDistributions.id),
+    batchId: integer('batch_id').references(() => batches.id),
+    quantity: decimal('quantity', { precision: 12, scale: 2 }).notNull(),
+    unit: varchar('unit', { length: 20 }).notNull(),
+    unitCost: decimal('unit_cost', { precision: 12, scale: 2 }),
+    lineCost: decimal('line_cost', { precision: 14, scale: 2 }),
+    balanceAfterQuantity: decimal('balance_after_quantity', { precision: 12, scale: 2 }),
+    balanceScope: varchar('balance_scope', { length: 50 }).notNull(),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_inventory_movements_date').on(table.movementDate),
+    index('idx_inventory_movements_type').on(table.movementType),
+    index('idx_inventory_movements_item').on(table.inventoryItemId),
+    index('idx_inventory_movements_lot').on(table.inventoryLotId),
+    index('idx_inventory_movements_batch').on(table.batchId),
+    index('idx_inventory_movements_source').on(table.sourceModule, table.sourceEntityType, table.sourceEntityId),
   ],
 );
 

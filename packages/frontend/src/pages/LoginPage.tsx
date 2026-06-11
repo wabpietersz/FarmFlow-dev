@@ -2,6 +2,10 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
   const { login, isAuthenticated, isLoading, error, clearError } = useAuthStore();
@@ -29,7 +33,7 @@ export default function LoginPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted">
+      <div className="flex min-h-screen items-center justify-center bg-muted/60">
         <div className="text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary border-r-transparent" />
           <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
@@ -39,58 +43,59 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted px-4">
-      <div className="w-full max-w-md bg-card rounded-xl shadow-lg p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-foreground">FarmFlow</h1>
-          <p className="text-muted-foreground mt-1">Poultry Farm Management System</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="bg-destructive/10 text-destructive text-sm rounded-md p-3">
-              {error}
+    <div className="min-h-screen bg-muted/50 px-4 py-10">
+      <div className="mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-md items-center justify-center">
+        <Card className="w-full border-border/80 bg-background/95 shadow-sm backdrop-blur">
+          <CardHeader className="space-y-2 text-center">
+            <div className="mx-auto flex size-12 items-center justify-center rounded-full border border-border bg-muted text-sm font-semibold text-foreground">
+              FF
             </div>
-          )}
+            <CardTitle className="text-2xl font-bold text-foreground">FarmFlow</CardTitle>
+            <CardDescription>
+              Poultry farm operations portal for daily management, reporting, and offline-first work.
+            </CardDescription>
+          </CardHeader>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-foreground mb-1">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="you@example.com"
-            />
-          </div>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="Enter your password"
-            />
-          </div>
+              <div className="grid gap-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+              </div>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-primary text-primary-foreground rounded-md py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-          >
-            {submitting ? 'Signing in...' : 'Sign in'}
-          </button>
-        </form>
+              <div className="grid gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <Button type="submit" disabled={submitting} className="w-full">
+                {submitting ? 'Signing in...' : 'Sign in'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

@@ -61,6 +61,95 @@ export interface EnhancedDashboardSummary extends DashboardSummary {
   };
 }
 
+export interface ExecutiveDashboardSummary {
+  cash: {
+    totalBookBalance: number;
+    bankBalance: number;
+    onHandBalance: number;
+    pendingCheques: number;
+    lastReconciliationAt?: string | null;
+  };
+  payables: {
+    overdueAmount: number;
+    pendingApprovalCount: number;
+  };
+  receivables: {
+    outstandingAmount: number;
+  };
+  profitability: {
+    activeBatchCount: number;
+    totalRevenue: number;
+    totalCost: number;
+    grossMargin: number;
+  };
+}
+
+export interface DashboardExceptionsData {
+  summary: {
+    negativeStockRisk: number;
+    paymentWithoutTreasuryLink: number;
+    chequeAgeing: number;
+    unreconciledBalances: number;
+    overduePayables: number;
+    overdueReceivables: number;
+    expiredContracts: number;
+    missingCostComponents: number;
+  };
+  negativeStockRisk: Array<{
+    id: number;
+    itemName: string;
+    quantity: number;
+    reorderLevel?: number | null;
+  }>;
+  paymentWithoutTreasuryLink: Array<{
+    id: number;
+    code?: string | null;
+    date?: string | null;
+    source: string;
+    amount: number | string;
+  }>;
+  chequeAgeing: Array<{
+    id: number;
+    referenceNumber?: string | null;
+    transactionDate: string;
+    status: string;
+    ageDays: number;
+  }>;
+  unreconciledBalances: Array<{
+    financeAccountId: number;
+    accountName: string;
+    unclearedCount: number;
+  }>;
+  overduePayables: Array<{
+    id: number;
+    invoiceCode: string;
+    dueDate: string;
+    balanceDue: number;
+  }>;
+  overdueReceivables: Array<{
+    id: number;
+    saleCode: string;
+    buyerName?: string | null;
+    dueDate: string;
+    balanceDue: number;
+  }>;
+  expiredContracts: Array<{
+    id: number;
+    contractCode: string;
+    contractTitle: string;
+    validTo?: string | null;
+    status: string;
+  }>;
+  missingCostComponents: Array<{
+    batchId: number;
+    batchCode: string;
+    missingPlacement: boolean;
+    missingFeed: boolean;
+    missingLabor: boolean;
+    hasRevenue: boolean;
+  }>;
+}
+
 export type DashboardPeriod = '7d' | '30d' | '90d' | 'ytd';
 
 export interface BatchComparisonCurvePoint {

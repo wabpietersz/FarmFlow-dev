@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
-import { useBatch, useUpdateBatch, useCreateDailyRecord, useUpdateDailyRecord, useRecordMortality, useCreateVaccination } from '@/hooks/useBatches';
+import { useBatch, useBatchCostLedger, useCreateChickPlacement, useUpdateBatch, useCreateDailyRecord, useUpdateDailyRecord, useRecordMortality, useCreateVaccination } from '@/hooks/useBatches';
+import { useInventoryItems, useInventorySuppliers, useSupplierContracts } from '@/hooks/useInventoryManagement';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -31,6 +32,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -72,6 +74,27 @@ const mortalitySchema = z.object({
 const vaccinationSchema = z.object({
   vaccineType: z.string().min(1, 'Vaccine type is required').max(100),
   vaccinationDate: z.string().min(1, 'Date is required'),
+  inventoryItemId: z.string().optional(),
+  quantityUsed: z.coerce.number().positive().optional(),
+  notes: z.string().max(1000).optional(),
+}).superRefine((data, ctx) => {
+  if ((data.inventoryItemId && !data.quantityUsed) || (!data.inventoryItemId && data.quantityUsed)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Inventory item and quantity must be entered together',
+      path: ['quantityUsed'],
+    });
+  }
+});
+
+const chickPlacementSchema = z.object({
+  supplierId: z.string().optional(),
+  contractId: z.string().optional(),
+  placementDate: z.string().min(1, 'Date is required'),
+  invoiceReference: z.string().optional(),
+  deliveredQuantity: z.coerce.number().int().positive(),
+  mortalityOnArrival: z.coerce.number().int().min(0).default(0),
+  unitCost: z.coerce.number().min(0),
   notes: z.string().max(1000).optional(),
 });
 
@@ -85,6 +108,7 @@ type DailyRecordFormValues = z.infer<typeof dailyRecordSchema>;
 type EditRecordFormValues = z.infer<typeof editRecordSchema>;
 type MortalityFormValues = z.infer<typeof mortalitySchema>;
 type VaccinationFormValues = z.infer<typeof vaccinationSchema>;
+type ChickPlacementFormValues = z.infer<typeof chickPlacementSchema>;
 type EditBatchFormValues = z.infer<typeof editBatchSchema>;
 
 const BATCH_STATUS_COLORS: Record<string, string> = {
@@ -99,25 +123,34 @@ export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { hasPermission } = useAuthStore();
   const { data, isLoading } = useBatch(id);
+  const { data: costLedgerData } = useBatchCostLedger(id);
   const updateMutation = useUpdateBatch(id!);
   const createRecordMutation = useCreateDailyRecord(id!);
   const updateRecordMutation = useUpdateDailyRecord(id!);
   const mortalityMutation = useRecordMortality(id!);
   const createVaxMutation = useCreateVaccination(id!);
+  const createChickPlacementMutation = useCreateChickPlacement(id!);
+  const vaccineInventoryQuery = useInventoryItems({ category: 'health', page: 1, limit: 200 });
+  const suppliersQuery = useInventorySuppliers();
+  const contractsQuery = useSupplierContracts({});
 
   const [showAddRecord, setShowAddRecord] = useState(false);
   const [showEditRecord, setShowEditRecord] = useState(false);
   const [editingRecordId, setEditingRecordId] = useState<number | null>(null);
   const [showMortality, setShowMortality] = useState(false);
   const [showAddVax, setShowAddVax] = useState(false);
+  const [showChickPlacement, setShowChickPlacement] = useState(false);
   const [showStatusChange, setShowStatusChange] = useState(false);
   const [showEditBatch, setShowEditBatch] = useState(false);
 
   const batchData = data?.data;
   const batch = batchData?.batch;
+  const chickPlacement = batchData?.chickPlacement;
   const records = batchData?.dailyRecords ?? [];
   const vaxRecords = batchData?.vaccinations ?? [];
   const stats = batchData?.stats;
+  const costSummary = batchData?.costSummary ?? costLedgerData?.data?.totals;
+  const costLedger = costLedgerData?.data?.ledger ?? [];
 
   const mortalityForm = useForm<MortalityFormValues>({
     resolver: zodResolver(mortalitySchema),
@@ -159,6 +192,20 @@ export default function BatchDetailPage() {
       expectedDeliveryDate: '',
       actualDeliveryDate: '',
       notes: '',
+    },
+  });
+
+  const chickPlacementForm = useForm<ChickPlacementFormValues>({
+    resolver: zodResolver(chickPlacementSchema),
+    defaultValues: {
+      supplierId: chickPlacement?.supplierId ? String(chickPlacement.supplierId) : '',
+      contractId: chickPlacement?.contractId ? String(chickPlacement.contractId) : '',
+      placementDate: chickPlacement?.placementDate ? String(chickPlacement.placementDate).split('T')[0] : new Date().toISOString().split('T')[0],
+      invoiceReference: chickPlacement?.invoiceReference ?? '',
+      deliveredQuantity: chickPlacement?.deliveredQuantity ?? batch?.chicksPlaced ?? 0,
+      mortalityOnArrival: chickPlacement?.mortalityOnArrival ?? 0,
+      unitCost: chickPlacement?.unitCost ?? 0,
+      notes: chickPlacement?.notes ?? '',
     },
   });
 
@@ -265,6 +312,8 @@ export default function BatchDetailPage() {
         batchId: Number(id),
         vaccineType: values.vaccineType,
         vaccinationDate: values.vaccinationDate,
+        inventoryItemId: values.inventoryItemId ? Number(values.inventoryItemId) : undefined,
+        quantityUsed: values.quantityUsed || undefined,
         notes: values.notes || undefined,
       });
       toast.success('Vaccination recorded');
@@ -272,6 +321,43 @@ export default function BatchDetailPage() {
       setShowAddVax(false);
     } catch {
       toast.error('Failed to record vaccination');
+    }
+  };
+
+  const handleOpenChickPlacement = () => {
+    if (!batch) {
+      return;
+    }
+
+    chickPlacementForm.reset({
+      supplierId: chickPlacement?.supplierId ? String(chickPlacement.supplierId) : '',
+      contractId: chickPlacement?.contractId ? String(chickPlacement.contractId) : '',
+      placementDate: chickPlacement?.placementDate ? String(chickPlacement.placementDate).split('T')[0] : String(batch.placementDate).split('T')[0],
+      invoiceReference: chickPlacement?.invoiceReference ?? '',
+      deliveredQuantity: chickPlacement?.deliveredQuantity ?? batch.chicksPlaced,
+      mortalityOnArrival: chickPlacement?.mortalityOnArrival ?? 0,
+      unitCost: chickPlacement?.unitCost ?? 0,
+      notes: chickPlacement?.notes ?? '',
+    });
+    setShowChickPlacement(true);
+  };
+
+  const handleSaveChickPlacement = async (values: ChickPlacementFormValues) => {
+    try {
+      await createChickPlacementMutation.mutateAsync({
+        supplierId: values.supplierId ? Number(values.supplierId) : undefined,
+        contractId: values.contractId ? Number(values.contractId) : undefined,
+        placementDate: values.placementDate,
+        invoiceReference: values.invoiceReference || undefined,
+        deliveredQuantity: values.deliveredQuantity,
+        mortalityOnArrival: values.mortalityOnArrival || 0,
+        unitCost: values.unitCost,
+        notes: values.notes || undefined,
+      });
+      toast.success('Chick placement saved');
+      setShowChickPlacement(false);
+    } catch {
+      toast.error('Failed to save chick placement');
     }
   };
 
@@ -371,6 +457,12 @@ export default function BatchDetailPage() {
               Vaccination
             </Button>
           )}
+          {hasPermission('batches:update') && (
+            <Button variant="outline" onClick={handleOpenChickPlacement}>
+              <Plus className="h-4 w-4 mr-2" />
+              Chick Placement
+            </Button>
+          )}
         </div>
       </div>
 
@@ -405,8 +497,54 @@ export default function BatchDetailPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Chick Placement</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {chickPlacement ? (
+            <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
+              <div>
+                <p className="text-muted-foreground">Supplier</p>
+                <p className="font-medium">{chickPlacement.supplierName || '--'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Invoice / Contract</p>
+                <p className="font-medium">{chickPlacement.invoiceReference || chickPlacement.contractCode || '--'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Accepted Birds</p>
+                <p className="font-medium">{Number(chickPlacement.acceptedQuantity).toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Opening Cost</p>
+                <p className="font-medium">Rs. {Number(chickPlacement.batchOpeningCost).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Mortality on Arrival</p>
+                <p className="font-medium">{Number(chickPlacement.mortalityOnArrival).toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Unit Cost</p>
+                <p className="font-medium">Rs. {Number(chickPlacement.unitCost).toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Placement Date</p>
+                <p className="font-medium">{new Date(chickPlacement.placementDate).toLocaleDateString()}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Delivered Quantity</p>
+                <p className="font-medium">{Number(chickPlacement.deliveredQuantity).toLocaleString()}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No chick placement sourcing or opening cost recorded yet.</p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
@@ -462,7 +600,124 @@ export default function BatchDetailPage() {
             </div>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-2">
+              <Scale className="h-5 w-5 text-slate-600" />
+              <div>
+                <p className="text-2xl font-bold">Rs. {(stats?.totalInventoryCost ?? 0).toFixed(2)}</p>
+                <p className="text-xs text-muted-foreground">Inventory Cost</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cost Summary</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Feed</p>
+              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.feedCost ?? 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Inventory</p>
+              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.inventoryCost ?? 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Labor</p>
+              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.laborCost ?? 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Operational</p>
+              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.operationalExpenseCost ?? 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Total</p>
+              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.totalCost ?? 0).toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground">Cost per bird: Rs. {(costSummary?.costPerBird ?? 0).toFixed(2)}</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Component</TableHead>
+                  <TableHead>Allocation</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {costLedger.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-20 text-center text-sm text-muted-foreground">
+                      No traced batch cost entries yet.
+                    </TableCell>
+                  </TableRow>
+                ) : costLedger.slice(0, 12).map((entry) => (
+                  <TableRow key={`${entry.sourceType}-${entry.sourceId}-${entry.componentType}-${entry.eventDate}`}>
+                    <TableCell>{new Date(entry.eventDate).toLocaleDateString()}</TableCell>
+                    <TableCell className="capitalize">{entry.componentType.replace('_', ' ')}</TableCell>
+                    <TableCell className="capitalize">{entry.allocationType.replace('_', ' ')}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{entry.description}</p>
+                        <p className="text-xs text-muted-foreground">{entry.sourceCode || `${entry.sourceType} #${entry.sourceId}`}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">Rs. {entry.amount.toFixed(2)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Inventory Consumption ({batchData?.inventoryConsumptions?.length ?? 0})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {batchData?.inventoryConsumptions?.length ? (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Item</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead className="text-right">Unit Cost</TableHead>
+                    <TableHead className="text-right">Line Cost</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {batchData.inventoryConsumptions.map((consumption) => (
+                    <TableRow key={consumption.id}>
+                      <TableCell>{new Date(consumption.consumptionDate).toLocaleDateString()}</TableCell>
+                      <TableCell className="font-medium">{consumption.ingredientName}</TableCell>
+                      <TableCell>{consumption.typeName}</TableCell>
+                      <TableCell className="text-right">{Number(consumption.quantity).toLocaleString()} {consumption.unit}</TableCell>
+                      <TableCell className="text-right">Rs. {Number(consumption.unitCost).toFixed(2)}</TableCell>
+                      <TableCell className="text-right">Rs. {Number(consumption.lineCost).toFixed(2)}</TableCell>
+                      <TableCell className="text-muted-foreground">{consumption.notes ?? '--'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">No direct inventory consumption recorded for this batch yet.</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Daily Records */}
       <Card>
@@ -531,6 +786,7 @@ export default function BatchDetailPage() {
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Vaccine</TableHead>
+                  <TableHead>Stock Usage</TableHead>
                   <TableHead>Notes</TableHead>
                 </TableRow>
               </TableHeader>
@@ -539,6 +795,11 @@ export default function BatchDetailPage() {
                   <TableRow key={vax.id}>
                     <TableCell>{new Date(vax.vaccinationDate).toLocaleDateString()}</TableCell>
                     <TableCell className="font-medium">{vax.vaccineType}</TableCell>
+                    <TableCell>
+                      {vax.quantityUsed
+                        ? `${Number(vax.quantityUsed).toLocaleString()} ${vax.unit ?? ''} • Rs. ${Number(vax.inventoryCost ?? 0).toFixed(2)}`
+                        : '--'}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{vax.notes ?? '--'}</TableCell>
                   </TableRow>
                 ))}
@@ -760,6 +1021,30 @@ export default function BatchDetailPage() {
               <FormField control={vaxForm.control} name="vaccinationDate" render={({ field }) => (
                 <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>
               )} />
+              <FormField control={vaxForm.control} name="inventoryItemId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Inventory Stock (optional)</FormLabel>
+                  <Select value={field.value || 'none'} onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select vaccine stock" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="none">No stock consumption</SelectItem>
+                      {(vaccineInventoryQuery.data?.data ?? []).map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.ingredientName} ({Number(item.quantity).toLocaleString()} {item.unit})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={vaxForm.control} name="quantityUsed" render={({ field }) => (
+                <FormItem><FormLabel>Quantity Used</FormLabel><FormControl><Input type="number" step="0.01" placeholder="Optional" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+              )} />
               <FormField control={vaxForm.control} name="notes" render={({ field }) => (
                 <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea placeholder="Optional notes..." {...field} /></FormControl><FormMessage /></FormItem>
               )} />
@@ -767,6 +1052,87 @@ export default function BatchDetailPage() {
                 <Button type="button" variant="outline" onClick={() => setShowAddVax(false)}>Cancel</Button>
                 <Button type="submit" disabled={createVaxMutation.isPending}>
                   {createVaxMutation.isPending ? 'Saving...' : 'Save'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showChickPlacement} onOpenChange={setShowChickPlacement}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Chick Placement</DialogTitle>
+            <DialogDescription>Capture sourcing and opening cost for {batch.batchCode}.</DialogDescription>
+          </DialogHeader>
+          <Form {...chickPlacementForm}>
+            <form onSubmit={chickPlacementForm.handleSubmit(handleSaveChickPlacement)} className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField control={chickPlacementForm.control} name="supplierId" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Supplier</FormLabel>
+                    <Select value={field.value || 'none'} onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select supplier" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">No supplier</SelectItem>
+                        {(suppliersQuery.data?.data ?? []).map((supplier) => (
+                          <SelectItem key={supplier.id} value={String(supplier.id)}>
+                            {supplier.supplierName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="contractId" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contract</FormLabel>
+                    <Select value={field.value || 'none'} onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select contract" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">No contract</SelectItem>
+                        {(contractsQuery.data?.data ?? []).map((contract) => (
+                          <SelectItem key={contract.id} value={String(contract.id)}>
+                            {contract.contractCode} - {contract.contractTitle}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="placementDate" render={({ field }) => (
+                  <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="invoiceReference" render={({ field }) => (
+                  <FormItem><FormLabel>Invoice Reference</FormLabel><FormControl><Input placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="deliveredQuantity" render={({ field }) => (
+                  <FormItem><FormLabel>Delivered Quantity</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="mortalityOnArrival" render={({ field }) => (
+                  <FormItem><FormLabel>Mortality on Arrival</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                )} />
+                <FormField control={chickPlacementForm.control} name="unitCost" render={({ field }) => (
+                  <FormItem><FormLabel>Unit Cost</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                )} />
+              </div>
+              <FormField control={chickPlacementForm.control} name="notes" render={({ field }) => (
+                <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea placeholder="Optional notes..." {...field} /></FormControl><FormMessage /></FormItem>
+              )} />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setShowChickPlacement(false)}>Cancel</Button>
+                <Button type="submit" disabled={createChickPlacementMutation.isPending}>
+                  {createChickPlacementMutation.isPending ? 'Saving...' : 'Save'}
                 </Button>
               </DialogFooter>
             </form>

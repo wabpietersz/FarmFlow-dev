@@ -53,7 +53,7 @@ export default function MobileBottomNav() {
 
       <div
         className={cn(
-          'md:hidden fixed left-2 right-2 z-50 bottom-16 rounded-xl border border-border bg-card shadow-lg p-2 transition-all duration-200 ease-out',
+          'md:hidden fixed left-3 right-3 z-50 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] rounded-xl border border-border bg-background/95 p-2 shadow-sm backdrop-blur transition-all duration-200 ease-out',
           expandedGroup
             ? 'opacity-100 translate-y-0 scale-y-100 pointer-events-auto'
             : 'opacity-0 translate-y-2 scale-y-95 pointer-events-none',
@@ -89,7 +89,7 @@ export default function MobileBottomNav() {
       </div>
 
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border safe-area-bottom"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur safe-area-bottom"
         aria-label="Main Navigator"
       >
         <div className="flex items-center justify-around h-14">

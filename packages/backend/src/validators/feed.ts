@@ -149,6 +149,7 @@ export const inventoryAdjustmentSchema = z.object({
 
 export const createPurchaseOrderSchema = z.object({
   supplierId: z.number().int().positive('Supplier is required'),
+  contractId: z.number().int().positive().nullable().optional(),
   orderDate: z.string().min(1, 'Order date is required'),
   expectedDeliveryDate: z.string().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
@@ -166,6 +167,7 @@ export const createPurchaseOrderSchema = z.object({
 });
 
 export const updatePurchaseOrderSchema = z.object({
+  contractId: z.number().int().positive().nullable().optional(),
   expectedDeliveryDate: z.string().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
   items: z
@@ -204,7 +206,7 @@ export const createReportScheduleSchema = z.object({
   reportType: z.enum([
     'batch-performance', 'sales-summary', 'mortality-trends',
     'feed-consumption', 'financial-overview', 'batch-profitability',
-    'hr-analytics', 'feed-analytics',
+    'batch-inventory-consumption', 'hr-analytics', 'feed-analytics',
   ], { errorMap: () => ({ message: 'Invalid report type' }) }),
   scheduleName: z.string().min(1, 'Schedule name is required').max(100),
   cronExpression: z.string().min(1, 'Cron expression is required').max(50),

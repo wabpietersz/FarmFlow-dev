@@ -14,8 +14,10 @@ import type {
 
 interface PayrollListItem extends Payroll {
   employeeName?: string | null;
+  financeAccountName?: string | null;
   compensationRevisionId?: number | null;
   compensationSnapshot?: Payroll['compensationSnapshot'] | null;
+  chequeNumber?: string | null;
   totalAllowances?: number;
   totalDeductions?: number;
 }
@@ -209,11 +211,12 @@ export function useUpdatePayroll(id: string) {
 export function useUpdatePayrollStatus(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { status: string }) =>
+    mutationFn: (data: { status: string; financeAccountId?: number; paymentMethod?: 'cash' | 'cheque' | 'bank_transfer'; chequeLeafId?: number }) =>
       apiPut<Payroll>(`/payroll/${id}/status`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls', id] });
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['treasury'] });
     },
   });
 }

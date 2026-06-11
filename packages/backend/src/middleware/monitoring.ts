@@ -42,6 +42,14 @@ const REQUIRED_HR_PAYROLL_TABLES = [
   'payroll_deductions',
   'payroll_allowances',
 ] as const;
+const REQUIRED_TREASURY_TABLES = [
+  'finance_accounts',
+  'treasury_transactions',
+  'treasury_transaction_entries',
+  'treasury_transaction_links',
+  'petty_cash_allocations',
+  'petty_cash_expenses',
+] as const;
 
 /**
  * Middleware to collect request metrics.
@@ -139,6 +147,7 @@ export async function healthCheckHandler(_req: Request, res: Response) {
 
   let databaseConnected = false;
   let missingHrPayrollTables: string[] = [];
+  let missingTreasuryTables: string[] = [];
   let dbError: string | undefined;
 
   try {
@@ -156,13 +165,26 @@ export async function healthCheckHandler(_req: Request, res: Response) {
     );
 
     missingHrPayrollTables = checks.filter((item) => !item.exists).map((item) => item.tableName);
+
+    const treasuryChecks = await Promise.all(
+      REQUIRED_TREASURY_TABLES.map(async (tableName) => {
+        const result = await db.execute(sql`
+          select to_regclass(${`public.${tableName}`}) as table_name
+        `);
+        const row = Array.isArray(result) ? (result[0] as { table_name?: string | null } | undefined) : undefined;
+        return { tableName, exists: !!row?.table_name };
+      }),
+    );
+
+    missingTreasuryTables = treasuryChecks.filter((item) => !item.exists).map((item) => item.tableName);
   } catch (error) {
     dbError = error instanceof Error ? error.message : 'Unknown database error';
     logger.warn('Health check database probe failed', { error });
   }
 
   const hrPayrollSchemaReady = databaseConnected && missingHrPayrollTables.length === 0;
-  const ready = databaseConnected && hrPayrollSchemaReady;
+  const treasurySchemaReady = databaseConnected && missingTreasuryTables.length === 0;
+  const ready = databaseConnected && hrPayrollSchemaReady && treasurySchemaReady;
 
   const health: Record<string, unknown> = {
     status: 'ok',
@@ -182,6 +204,10 @@ export async function healthCheckHandler(_req: Request, res: Response) {
       hrPayrollSchema: {
         status: hrPayrollSchemaReady ? 'ok' : 'error',
         missingTables: missingHrPayrollTables,
+      },
+      treasurySchema: {
+        status: treasurySchemaReady ? 'ok' : 'error',
+        missingTables: missingTreasuryTables,
       },
     },
   };

@@ -23,11 +23,15 @@ const BatchesPage = lazy(() => import('@/pages/BatchesPage'));
 const BatchDetailPage = lazy(() => import('@/pages/BatchDetailPage'));
 const SalesPage = lazy(() => import('@/pages/SalesPage'));
 const SaleDetailPage = lazy(() => import('@/pages/SaleDetailPage'));
+const BuyerDetailPage = lazy(() => import('@/pages/BuyerDetailPage'));
 const AttendancePage = lazy(() => import('@/pages/AttendancePage'));
 const PayrollPage = lazy(() => import('@/pages/PayrollPage'));
 const PayrollDetailPage = lazy(() => import('@/pages/PayrollDetailPage'));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
 const FeedPage = lazy(() => import('@/pages/FeedPage'));
+const InventoryManagementPage = lazy(() => import('@/pages/InventoryManagementPage'));
+const FarmControlPage = lazy(() => import('@/pages/FarmControlPage'));
+const TreasuryPage = lazy(() => import('@/pages/TreasuryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
@@ -170,6 +174,14 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="/buyers/:id"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <BuyerDetailPage />
+                    </Suspense>
+                  }
+                />
+                <Route
                   path="/attendance"
                   element={
                     <Suspense fallback={<PageLoader />}>
@@ -202,10 +214,34 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="/inventory"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <InventoryManagementPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/farm-control"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <FarmControlPage />
+                    </Suspense>
+                  }
+                />
+                <Route
                   path="/feed"
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <FeedPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/treasury"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <TreasuryPage />
                     </Suspense>
                   }
                 />

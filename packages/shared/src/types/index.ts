@@ -2,6 +2,7 @@ export * from './auth';
 export * from './employee';
 export * from './production';
 export * from './sales';
+export * from './treasury';
 export * from './feed';
 export * from './hr';
 export * from './system';

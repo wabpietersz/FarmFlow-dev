@@ -33,18 +33,58 @@ import {
   feedDistributions,
   inventoryAuditTrail,
   inventoryAlerts,
+  inventoryItemTypes,
+  inventoryMovements,
   purchaseOrders,
   purchaseOrderItems,
   inventoryLots,
   productionMaterialLots,
   reportSchedules,
   batches,
+  supplierContracts,
 } from '../db/schema';
 import { eq, and, ilike, sql, desc, sum, gte, lte, asc } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
+import { getProductionBatchAvailableQuantity, postInventoryMovement } from '../lib/inventory-movements';
 
 const router = Router();
+
+async function getFeedInventoryType() {
+  const [feedType] = await db
+    .select()
+    .from(inventoryItemTypes)
+    .where(eq(inventoryItemTypes.isFeed, true))
+    .orderBy(asc(inventoryItemTypes.id))
+    .limit(1);
+
+  return feedType;
+}
+
+async function isFeedInventoryItem(inventoryItemId: number) {
+  const [baseItem] = await db
+    .select({ id: feedInventory.id, itemTypeId: feedInventory.itemTypeId })
+    .from(feedInventory)
+    .where(eq(feedInventory.id, inventoryItemId))
+    .limit(1);
+
+  if (!baseItem) {
+    return false;
+  }
+
+  if (baseItem.itemTypeId == null) {
+    return true;
+  }
+
+  const [item] = await db
+    .select({ id: feedInventory.id })
+    .from(feedInventory)
+    .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+    .where(and(eq(feedInventory.id, inventoryItemId), eq(inventoryItemTypes.isFeed, true)))
+    .limit(1);
+
+  return !!item;
+}
 
 // =============================================================================
 // SUPPLIERS CRUD
@@ -413,6 +453,10 @@ router.post('/recipes', authenticate, requirePermission('feed_production:create'
           res.status(400).json({ success: false, error: `Inventory item ${ing.inventoryItemId} not found`, code: 'INVALID_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
           return;
         }
+        if (invItem.itemTypeId != null && !(await isFeedInventoryItem(ing.inventoryItemId))) {
+          res.status(400).json({ success: false, error: `Inventory item ${ing.inventoryItemId} is not configured as a feed item`, code: 'INVALID_FEED_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
+          return;
+        }
         ingredientValues.push({
           recipeId: newRecipe.id,
           inventoryItemId: ing.inventoryItemId,
@@ -489,6 +533,10 @@ router.put('/recipes/:id', authenticate, requirePermission('feed_production:upda
           const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, ing.inventoryItemId)).limit(1);
           if (!invItem) {
             res.status(400).json({ success: false, error: `Inventory item ${ing.inventoryItemId} not found`, code: 'INVALID_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
+            return;
+          }
+          if (invItem.itemTypeId != null && !(await isFeedInventoryItem(ing.inventoryItemId))) {
+            res.status(400).json({ success: false, error: `Inventory item ${ing.inventoryItemId} is not configured as a feed item`, code: 'INVALID_FEED_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
             return;
           }
           ingredientValues.push({
@@ -635,10 +683,11 @@ router.get('/inventory', authenticate, requirePermission('feed_inventory:read'),
         updatedAt: feedInventory.updatedAt,
       })
       .from(feedInventory)
+      .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
       .leftJoin(suppliers, eq(feedInventory.supplierId, suppliers.id))
       .$dynamic();
 
-    const conditions = [];
+    const conditions = [eq(inventoryItemTypes.isFeed, true)];
     if (search) {
       conditions.push(ilike(feedInventory.ingredientName, `%${search as string}%`));
     }
@@ -652,7 +701,11 @@ router.get('/inventory', authenticate, requirePermission('feed_inventory:read'),
       .limit(limitNum)
       .offset(offset);
 
-    let countQuery = db.select({ total: sql<number>`count(*)::int` }).from(feedInventory).$dynamic();
+    let countQuery = db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(feedInventory)
+      .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+      .$dynamic();
     if (conditions.length > 0) {
       countQuery = countQuery.where(and(...conditions));
     }
@@ -710,9 +763,16 @@ router.post('/inventory', authenticate, requirePermission('feed_inventory:create
       return;
     }
 
+    const feedType = await getFeedInventoryType();
+    if (!feedType) {
+      res.status(500).json({ success: false, error: 'Feed inventory type is not configured', code: 'FEED_TYPE_NOT_CONFIGURED', statusCode: 500, timestamp: new Date().toISOString() });
+      return;
+    }
+
     const [newItem] = await db
       .insert(feedInventory)
       .values({
+        itemTypeId: feedType.id,
         ingredientName,
         supplierId,
         quantity: String(quantity),
@@ -1337,6 +1397,10 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
         res.status(404).json({ success: false, error: `Inventory item ${mat.inventoryItemId} not found`, code: 'INVENTORY_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
         return;
       }
+      if (invItem.itemTypeId != null && !(await isFeedInventoryItem(mat.inventoryItemId))) {
+        res.status(400).json({ success: false, error: `Inventory item ${mat.inventoryItemId} is not configured as a feed item`, code: 'INVALID_FEED_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
 
       if (Number(invItem.quantity) < mat.actualQuantity) {
         res.status(400).json({
@@ -1411,6 +1475,26 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
           notes: `Production ${existing.productionCode} — ${lc.lotCode}`,
           performedBy: req.user!.id,
         });
+
+        await postInventoryMovement({
+          movementType: 'production_consume',
+          movementDate: existing.productionDate,
+          sourceModule: 'feed',
+          sourceEntityType: 'feed_production_batch',
+          sourceEntityId: prodId,
+          sourceCodeSnapshot: existing.productionCode,
+          inventoryItemId: matResult.inventoryItemId,
+          inventoryLotId: lc.lotId,
+          productionBatchId: prodId,
+          quantity: -lc.quantityUsed,
+          unit: invItem!.unit,
+          unitCost: lc.costPerUnit,
+          lineCost: lc.lineCost,
+          balanceAfterQuantity: lc.newRemaining,
+          balanceScope: 'inventory_lot',
+          notes: `Production ${existing.productionCode}`,
+          createdBy: req.user!.id,
+        });
       }
 
       // If no lots (legacy fallback), create a simple audit trail entry
@@ -1425,6 +1509,25 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
           referenceType: 'production_batch',
           notes: `Production ${existing.productionCode}`,
           performedBy: req.user!.id,
+        });
+
+        await postInventoryMovement({
+          movementType: 'production_consume',
+          movementDate: existing.productionDate,
+          sourceModule: 'feed',
+          sourceEntityType: 'feed_production_batch',
+          sourceEntityId: prodId,
+          sourceCodeSnapshot: existing.productionCode,
+          inventoryItemId: matResult.inventoryItemId,
+          productionBatchId: prodId,
+          quantity: -matResult.actualQuantity,
+          unit: invItem!.unit,
+          unitCost: matResult.weightedCostPerUnit,
+          lineCost: matResult.actualCost,
+          balanceAfterQuantity: newQty,
+          balanceScope: 'inventory_item',
+          notes: `Production ${existing.productionCode}`,
+          createdBy: req.user!.id,
         });
       }
 
@@ -1469,6 +1572,24 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
       })
       .where(eq(feedProductionBatches.id, prodId))
       .returning();
+
+    await postInventoryMovement({
+      movementType: 'production_output',
+      movementDate: updated.productionDate,
+      sourceModule: 'feed',
+      sourceEntityType: 'feed_production_batch',
+      sourceEntityId: prodId,
+      sourceCodeSnapshot: updated.productionCode,
+      productionBatchId: prodId,
+      quantity: actualQuantity,
+      unit: updated.unit,
+      unitCost: actualQuantity > 0 ? Math.round((totalProductionCost / actualQuantity) * 100) / 100 : 0,
+      lineCost: Math.round(totalProductionCost * 100) / 100,
+      balanceAfterQuantity: actualQuantity,
+      balanceScope: 'production_batch',
+      notes: updated.notes || null,
+      createdBy: req.user!.id,
+    });
 
     createAuditLog({
       userId: req.user!.id,
@@ -1863,12 +1984,13 @@ router.post('/distribution', authenticate, requirePermission('feed_production:cr
       }
 
       // Check available quantity
+      const ledgerAvailable = await getProductionBatchAvailableQuantity(productionBatchId);
       const [distributed] = await db
         .select({ total: sql<number>`coalesce(sum(${feedDistributions.quantity}::numeric), 0)::numeric` })
         .from(feedDistributions)
         .where(eq(feedDistributions.productionBatchId, productionBatchId));
-
-      const available = Number(prodBatch.actualQuantity) - Number(distributed?.total ?? 0);
+      const legacyAvailable = Number(prodBatch.actualQuantity) - Number(distributed?.total ?? 0);
+      const available = ledgerAvailable > 0 ? ledgerAvailable : legacyAvailable;
       if (quantity > available) {
         res.status(400).json({
           success: false,
@@ -1893,6 +2015,24 @@ router.post('/distribution', authenticate, requirePermission('feed_production:cr
         notes: notes || null,
       })
       .returning();
+
+    await postInventoryMovement({
+      movementType: 'distribution_to_batch',
+      movementDate: distributionDate,
+      sourceModule: 'feed',
+      sourceEntityType: 'feed_distribution',
+      sourceEntityId: newDist.id,
+      sourceCodeSnapshot: productionBatchId ? `production:${productionBatchId}` : `distribution:${newDist.id}`,
+      productionBatchId: productionBatchId || null,
+      feedDistributionId: newDist.id,
+      batchId: farmBatchId,
+      quantity: -quantity,
+      unit: unit || 'kg',
+      balanceAfterQuantity: productionBatchId ? await getProductionBatchAvailableQuantity(productionBatchId) : null,
+      balanceScope: 'production_batch',
+      notes: notes || null,
+      createdBy: req.user!.id,
+    });
 
     createAuditLog({
       userId: req.user!.id,
@@ -1989,6 +2129,10 @@ router.post('/recipes/:id/version', authenticate, requirePermission('feed_invent
     }));
 
     for (const ing of newIngredients) {
+      if (ing.inventoryItemId && !(await isFeedInventoryItem(ing.inventoryItemId))) {
+        res.status(400).json({ success: false, error: `Inventory item ${ing.inventoryItemId} is not configured as a feed item`, code: 'INVALID_FEED_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
       await db.insert(feedRecipeIngredients).values({
         recipeId: newRecipe.id,
         inventoryItemId: ing.inventoryItemId || null,
@@ -2334,17 +2478,57 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
         notes: `Manual adjustment: ${reason}`,
       }).returning();
       lotInfo = { lotCode, lotId: newLot.id };
+
+      await postInventoryMovement({
+        movementType: 'adjustment',
+        movementDate: today,
+        sourceModule: 'feed',
+        sourceEntityType: 'inventory_adjustment',
+        sourceEntityId: itemId,
+        sourceCodeSnapshot: lotCode,
+        inventoryItemId: itemId,
+        inventoryLotId: newLot.id,
+        quantity,
+        unit: item.unit,
+        unitCost: costPerUnit,
+        lineCost: Math.round(quantity * costPerUnit * 100) / 100,
+        balanceAfterQuantity: quantity,
+        balanceScope: 'inventory_lot',
+        notes: reason,
+        createdBy: req.user!.id,
+      });
     }
 
     // For negative adjustments, deduct from oldest lots (FIFO)
+    let usedLotLevelAdjustment = false;
     if (quantity < 0) {
       try {
         const { lotConsumptions } = await consumeInventoryFIFO(itemId, Math.abs(quantity));
+        usedLotLevelAdjustment = lotConsumptions.length > 0;
         // Apply lot deductions
         for (const lc of lotConsumptions) {
           await db.update(inventoryLots).set({
             remainingQuantity: String(lc.newRemaining),
           }).where(eq(inventoryLots.id, lc.lotId));
+
+          await postInventoryMovement({
+            movementType: 'adjustment',
+            movementDate: new Date().toISOString().split('T')[0],
+            sourceModule: 'feed',
+            sourceEntityType: 'inventory_adjustment',
+            sourceEntityId: itemId,
+            sourceCodeSnapshot: lc.lotCode,
+            inventoryItemId: itemId,
+            inventoryLotId: lc.lotId,
+            quantity: -lc.quantityUsed,
+            unit: item.unit,
+            unitCost: lc.costPerUnit,
+            lineCost: lc.lineCost,
+            balanceAfterQuantity: lc.newRemaining,
+            balanceScope: 'inventory_lot',
+            notes: reason,
+            createdBy: req.user!.id,
+          });
         }
       } catch {
         // If FIFO consumption fails (e.g., no lots yet for legacy data), proceed with simple deduction
@@ -2372,6 +2556,25 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
       performedBy: req.user!.id,
       notes: reason,
     });
+
+    if (quantity < 0 && !usedLotLevelAdjustment) {
+      await postInventoryMovement({
+        movementType: 'adjustment',
+        movementDate: new Date().toISOString().split('T')[0],
+        sourceModule: 'feed',
+        sourceEntityType: 'inventory_adjustment',
+        sourceEntityId: itemId,
+        inventoryItemId: itemId,
+        quantity,
+        unit: item.unit,
+        unitCost: Number(item.costPerUnit),
+        lineCost: Math.round(Math.abs(quantity) * Number(item.costPerUnit) * 100) / 100,
+        balanceAfterQuantity: newQuantity,
+        balanceScope: 'inventory_item',
+        notes: reason,
+        createdBy: req.user!.id,
+      });
+    }
 
     createAuditLog({
       userId: req.user!.id,
@@ -2772,7 +2975,7 @@ router.get('/purchase-orders/:id', authenticate, requirePermission('feed_invento
 // POST /api/feed/purchase-orders — create purchase order
 router.post('/purchase-orders', authenticate, requirePermission('feed_inventory:create'), validate(createPurchaseOrderSchema), async (req: Request, res: Response) => {
   try {
-    const { supplierId, orderDate, expectedDeliveryDate, notes, items } = req.body;
+    const { supplierId, contractId, orderDate, expectedDeliveryDate, notes, items } = req.body;
 
     // Validate supplier exists and is active
     const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
@@ -2783,6 +2986,14 @@ router.post('/purchase-orders', authenticate, requirePermission('feed_inventory:
     if (supplier.status !== 'active') {
       res.status(400).json({ success: false, error: 'Supplier is not active', code: 'INACTIVE_SUPPLIER', statusCode: 400, timestamp: new Date().toISOString() });
       return;
+    }
+
+    if (contractId) {
+      const [contract] = await db.select().from(supplierContracts).where(eq(supplierContracts.id, contractId)).limit(1);
+      if (!contract || contract.supplierId !== supplierId) {
+        res.status(400).json({ success: false, error: 'Contract does not belong to the selected supplier', code: 'INVALID_CONTRACT', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
     }
 
     // Validate each item's inventoryItemId exists
@@ -2809,6 +3020,7 @@ router.post('/purchase-orders', authenticate, requirePermission('feed_inventory:
       .values({
         orderCode,
         supplierId,
+        contractId: contractId || null,
         orderDate,
         expectedDeliveryDate: expectedDeliveryDate || null,
         status: 'draft',
@@ -2864,10 +3076,20 @@ router.put('/purchase-orders/:id', authenticate, requirePermission('feed_invento
       return;
     }
 
-    const { items, ...headerFields } = req.body;
+    const { items, contractId, ...headerFields } = req.body;
 
     // Update header fields
+    if (contractId) {
+      const [contract] = await db.select().from(supplierContracts).where(eq(supplierContracts.id, contractId)).limit(1);
+      if (!contract || contract.supplierId !== existing.supplierId) {
+        res.status(400).json({ success: false, error: 'Contract does not belong to the purchase order supplier', code: 'INVALID_CONTRACT', statusCode: 400, timestamp: new Date().toISOString() });
+        return;
+      }
+    }
     const updateData: Record<string, unknown> = { ...headerFields, updatedAt: new Date() };
+    if (contractId !== undefined) {
+      updateData.contractId = contractId || null;
+    }
     const [updated] = await db
       .update(purchaseOrders)
       .set(updateData)
@@ -3118,6 +3340,27 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('fee
           costAtTime: poItem.unitPrice,
           notes: `PO ${existing.orderCode} — ${lotCode} received`,
           performedBy: req.user!.id,
+        });
+
+        await postInventoryMovement({
+          movementType: 'purchase_receive',
+          movementDate: today,
+          sourceModule: 'feed',
+          sourceEntityType: 'purchase_order',
+          sourceEntityId: poId,
+          sourceCodeSnapshot: existing.orderCode,
+          inventoryItemId: poItem.inventoryItemId,
+          inventoryLotId: newLot.id,
+          purchaseOrderId: poId,
+          purchaseOrderItemId: poItem.id,
+          quantity: receiveItem.receivedQuantity,
+          unit: poItem.unit,
+          unitCost: Number(poItem.unitPrice),
+          lineCost: Math.round(receiveItem.receivedQuantity * Number(poItem.unitPrice) * 100) / 100,
+          balanceAfterQuantity: receiveItem.receivedQuantity,
+          balanceScope: 'inventory_lot',
+          notes: `PO ${existing.orderCode} — ${lotCode} received`,
+          createdBy: req.user!.id,
         });
 
         createdLots.push({ lotCode, inventoryItemId: poItem.inventoryItemId, quantity: receiveItem.receivedQuantity, costPerUnit: Number(poItem.unitPrice) });

@@ -5,6 +5,10 @@ import {
   useSalesSummary,
   useMortalityTrends,
   useFinancialOverview,
+  useBuyerOutstandingAdvanceSummary,
+  usePayrollDisbursementSummary,
+  usePettyCashOutstandingSummary,
+  useSupplierPaymentSummary,
   exportReportCsv,
   type BatchPerformanceItem,
   type MortalityTrendPoint,
@@ -17,6 +21,7 @@ import BatchComparisonTab from '@/components/reports/BatchComparisonTab';
 import BatchProfitabilityTab from '@/components/reports/BatchProfitabilityTab';
 import HRAnalyticsTab from '@/components/reports/HRAnalyticsTab';
 import FeedAnalyticsTab from '@/components/reports/FeedAnalyticsTab';
+import InventoryConsumptionTab from '@/components/reports/InventoryConsumptionTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -63,6 +68,7 @@ import {
   CircleDollarSign,
   Users,
   Wheat,
+  Package2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency, formatCurrencyCompact } from '@/lib/utils';
@@ -541,30 +547,25 @@ function FinancialOverviewTab() {
   const [endDate, setEndDate] = useState(defaults.endDate);
 
   const { data: reportData, isLoading } = useFinancialOverview({ startDate, endDate });
+  const { data: buyerSummaryData, isLoading: buyerSummaryLoading } = useBuyerOutstandingAdvanceSummary();
+  const { data: payrollSummaryData, isLoading: payrollSummaryLoading } = usePayrollDisbursementSummary({ startDate, endDate });
+  const { data: pettyCashSummaryData, isLoading: pettyCashSummaryLoading } = usePettyCashOutstandingSummary();
+  const { data: supplierPaymentSummaryData, isLoading: supplierPaymentSummaryLoading } = useSupplierPaymentSummary({ startDate, endDate });
   const fin = reportData?.data as unknown as FinancialOverviewData | undefined;
 
-  const totalRevenue = fin?.totalRevenue ?? 0;
-  const totalPaid = fin?.totalPaid ?? 0;
-  const totalOutstanding = fin?.totalOutstanding ?? 0;
-  const paymentsByMethod = fin?.paymentsByMethod ?? [];
   const recentTransactions = fin?.recentTransactions ?? [];
-  const collectionRate = totalRevenue > 0 ? (totalPaid / totalRevenue) * 100 : 0;
-
-  const pieData = useMemo(() => {
-    if (paymentsByMethod.length === 0) {
-      if (totalPaid > 0 || totalOutstanding > 0) {
-        return [{ name: 'Paid', value: totalPaid }, { name: 'Outstanding', value: totalOutstanding }];
-      }
-      return [];
-    }
-    return paymentsByMethod.map((item) => ({ name: item.method.replace(/_/g, ' '), value: item.total }));
-  }, [paymentsByMethod, totalPaid, totalOutstanding]);
+  const buyerSummary = buyerSummaryData?.data;
+  const payrollSummary = payrollSummaryData?.data;
+  const pettyCashSummary = pettyCashSummaryData?.data;
+  const supplierPaymentSummary = supplierPaymentSummaryData?.data;
 
   const handleExport = async () => {
     try {
       await exportReportCsv('financial-overview', { startDate, endDate });
       toast.success('Report exported successfully');
-    } catch { toast.error('Failed to export report'); }
+    } catch {
+      toast.error('Failed to export report');
+    }
   };
 
   return (
@@ -574,29 +575,41 @@ function FinancialOverviewTab() {
       </FilterRow>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="Total Revenue" value={formatCurrency(totalRevenue)} icon={DollarSign} loading={isLoading} />
-        <MetricCard title="Total Paid" value={formatCurrency(totalPaid)} icon={TrendingUp} trend="up" loading={isLoading} />
-        <MetricCard title="Outstanding" value={formatCurrency(totalOutstanding)} icon={TrendingDown} trend={totalOutstanding > 0 ? 'down' : null} loading={isLoading} />
-        <MetricCard title="Collection Rate" value={formatPercent(collectionRate)} icon={Activity} loading={isLoading} />
+        <MetricCard title="Sales Revenue" value={formatCurrency(fin?.salesRevenue ?? 0)} icon={DollarSign} loading={isLoading} />
+        <MetricCard title="Treasury Inflows" value={formatCurrency(fin?.treasuryInflows ?? 0)} icon={TrendingUp} trend="up" loading={isLoading} />
+        <MetricCard title="Treasury Outflows" value={formatCurrency(fin?.treasuryOutflows ?? 0)} icon={TrendingDown} trend={(fin?.treasuryOutflows ?? 0) > 0 ? 'down' : null} loading={isLoading} />
+        <MetricCard title="Net Cash Movement" value={formatCurrency(fin?.netCashMovement ?? 0)} icon={Activity} trend={(fin?.netCashMovement ?? 0) >= 0 ? 'up' : 'down'} loading={isLoading} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title="Customer Receipts" value={formatCurrency(fin?.customerReceiptInflows ?? 0)} icon={CircleDollarSign} loading={isLoading} />
+        <MetricCard title="Payroll Outflows" value={formatCurrency(fin?.payrollOutflows ?? 0)} icon={Users} loading={isLoading} />
+        <MetricCard title="Supplier Payments" value={formatCurrency(fin?.supplierPaymentOutflows ?? 0)} icon={Package2} loading={isLoading} />
+        <MetricCard title="Petty Cash Net" value={formatCurrency(fin?.pettyCashNet ?? 0)} icon={TrendingDown} trend={(fin?.pettyCashNet ?? 0) >= 0 ? 'up' : 'down'} loading={isLoading} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle>Recent Transactions</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Recent Treasury Activity</CardTitle></CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-[300px] w-full" /> : recentTransactions.length === 0 ? (
               <div className="flex items-center justify-center h-[300px] text-muted-foreground">No transactions for this period</div>
             ) : (
               <div className="space-y-3">
                 {recentTransactions.map((tx) => (
-                  <div key={tx.paymentId} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <div key={tx.transactionId} className="flex items-center justify-between rounded-lg bg-muted p-3">
                     <div>
-                      <p className="font-medium text-sm">{tx.saleCode}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{tx.method.replace(/_/g, ' ')} &middot; {new Date(tx.date).toLocaleDateString()}</p>
+                      <p className="font-medium text-sm">{tx.transactionCode}</p>
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {tx.transactionType.replace(/_/g, ' ')} • {new Date(tx.transactionDate).toLocaleDateString()}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {[tx.counterpartyName, tx.accountNames, tx.sourceCodeSnapshot].filter(Boolean).join(' • ') || 'No reconciliation detail'}
+                      </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-medium text-sm">{formatCurrency(Number(tx.amount))}</p>
-                      <p className={`text-xs capitalize ${tx.status === 'completed' ? 'text-green-600' : tx.status === 'bounced' ? 'text-red-600' : 'text-blue-600'}`}>{tx.status}</p>
+                      <p className="font-medium text-sm">{formatCurrency(tx.netAmount)}</p>
+                      <p className={`text-xs capitalize ${tx.status === 'cleared' ? 'text-green-600' : tx.status === 'bounced' ? 'text-red-600' : 'text-blue-600'}`}>{tx.status}</p>
                     </div>
                   </div>
                 ))}
@@ -606,44 +619,225 @@ function FinancialOverviewTab() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>{paymentsByMethod.length > 0 ? 'Payments by Method' : 'Payment Status'}</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Cash Movement Summary</CardTitle></CardHeader>
           <CardContent>
-            {isLoading ? <Skeleton className="h-[300px] w-full" /> : pieData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">No data for this period</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value"
-                    label={({ name, percent }: { name?: string; percent?: number }) => `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)`} labelLine>
-                    {pieData.map((_, index) => <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(value: unknown) => [formatCurrency(Number(value))]} />
-                </PieChart>
-              </ResponsiveContainer>
+            {isLoading ? <Skeleton className="h-[300px] w-full" /> : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg border p-4">
+                    <p className="text-sm text-muted-foreground">Commercial Revenue</p>
+                    <p className="mt-2 text-xl font-bold">{formatCurrency(fin?.salesRevenue ?? 0)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Kept separate from treasury cash totals.</p>
+                  </div>
+                  <div className="rounded-lg border p-4">
+                    <p className="text-sm text-muted-foreground">Net Treasury Cash</p>
+                    <p className={`mt-2 text-xl font-bold ${(fin?.netCashMovement ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(fin?.netCashMovement ?? 0)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatCurrency(fin?.treasuryInflows ?? 0)} in minus {formatCurrency(fin?.treasuryOutflows ?? 0)} out
+                    </p>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart
+                    data={[
+                      { label: 'Receipts', value: fin?.customerReceiptInflows ?? 0 },
+                      { label: 'Payroll', value: fin?.payrollOutflows ?? 0 },
+                      { label: 'Suppliers', value: fin?.supplierPaymentOutflows ?? 0 },
+                      { label: 'Petty Cash', value: Math.abs(fin?.pettyCashNet ?? 0) },
+                    ]}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" fontSize={12} />
+                    <YAxis fontSize={12} />
+                    <Tooltip formatter={(value: unknown) => [formatCurrency(Number(value))]} />
+                    <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Revenue Summary</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Buyer Outstanding / Advance Summary</CardTitle></CardHeader>
         <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+          {buyerSummaryLoading ? <Skeleton className="h-[240px] w-full" /> : !buyerSummary ? (
+            <div className="flex items-center justify-center h-[160px] text-muted-foreground">No buyer ledger summary available.</div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              <div className="text-center p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground mb-1">Total Revenue</p>
-                <p className="text-xl font-bold text-foreground">{formatCurrency(totalRevenue)}</p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Outstanding</p>
+                  <p className="mt-2 text-xl font-bold text-red-600">{formatCurrency(buyerSummary.totals.outstandingBalance)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Advance Credit</p>
+                  <p className="mt-2 text-xl font-bold text-green-600">{formatCurrency(buyerSummary.totals.advanceCredit)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Applied Receipts</p>
+                  <p className="mt-2 text-xl font-bold">{formatCurrency(buyerSummary.totals.totalAppliedToSales)}</p>
+                </div>
               </div>
-              <div className="text-center p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground mb-1">Total Collected</p>
-                <p className="text-xl font-bold text-green-600">{formatCurrency(totalPaid)}</p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Buyer</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                    <TableHead className="text-right">Advance</TableHead>
+                    <TableHead className="text-right">Net</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {buyerSummary.rows.slice(0, 8).map((row) => (
+                    <TableRow key={row.buyerId}>
+                      <TableCell className="font-medium">{row.buyerName}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.outstandingBalance)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.advanceCredit)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.netBalance)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle>Payroll Disbursement Summary</CardTitle></CardHeader>
+          <CardContent>
+            {payrollSummaryLoading ? <Skeleton className="h-[240px] w-full" /> : !payrollSummary ? (
+              <div className="flex items-center justify-center h-[160px] text-muted-foreground">No payroll treasury disbursements for this period.</div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg bg-muted p-4">
+                    <p className="text-sm text-muted-foreground">Total Disbursed</p>
+                    <p className="mt-2 text-xl font-bold">{formatCurrency(payrollSummary.totals.totalDisbursed)}</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-4">
+                    <p className="text-sm text-muted-foreground">Cheque Disbursed</p>
+                    <p className="mt-2 text-xl font-bold">{formatCurrency(payrollSummary.totals.chequeDisbursed)}</p>
+                  </div>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payrollSummary.rows.slice(0, 6).map((row) => (
+                      <TableRow key={row.payrollId}>
+                        <TableCell className="font-medium">{row.employeeName}</TableCell>
+                        <TableCell>{row.financeAccountName || '--'}</TableCell>
+                        <TableCell>{row.paymentMethod?.replace(/_/g, ' ') || '--'}{row.chequeNumber ? ` • ${row.chequeNumber}` : ''}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-              <div className="text-center p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground mb-1">Outstanding ({formatPercent(100 - collectionRate)})</p>
-                <p className={`text-xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : 'text-foreground'}`}>{formatCurrency(totalOutstanding)}</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>Supplier Payment Summary</CardTitle></CardHeader>
+          <CardContent>
+            {supplierPaymentSummaryLoading ? <Skeleton className="h-[240px] w-full" /> : !supplierPaymentSummary ? (
+              <div className="flex items-center justify-center h-[160px] text-muted-foreground">No supplier treasury payments for this period.</div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg bg-muted p-4">
+                    <p className="text-sm text-muted-foreground">Total Disbursed</p>
+                    <p className="mt-2 text-xl font-bold">{formatCurrency(supplierPaymentSummary.totals.totalDisbursed)}</p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-4">
+                    <p className="text-sm text-muted-foreground">Bank Transfer Portion</p>
+                    <p className="mt-2 text-xl font-bold">{formatCurrency(supplierPaymentSummary.totals.bankTransferDisbursed)}</p>
+                  </div>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Payment</TableHead>
+                      <TableHead>Supplier</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {supplierPaymentSummary.rows.slice(0, 6).map((row) => (
+                      <TableRow key={row.supplierPaymentId}>
+                        <TableCell className="font-medium">{row.paymentCode}</TableCell>
+                        <TableCell>{row.supplierName || '--'}</TableCell>
+                        <TableCell>{row.financeAccountName || '--'}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle>Petty Cash Outstanding Summary</CardTitle></CardHeader>
+        <CardContent>
+          {pettyCashSummaryLoading ? <Skeleton className="h-[240px] w-full" /> : !pettyCashSummary ? (
+            <div className="flex items-center justify-center h-[160px] text-muted-foreground">No petty cash allocations recorded.</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Allocated</p>
+                  <p className="mt-2 text-xl font-bold">{formatCurrency(pettyCashSummary.totals.totalAllocated)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Approved</p>
+                  <p className="mt-2 text-xl font-bold">{formatCurrency(pettyCashSummary.totals.totalApprovedExpenses)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Submitted</p>
+                  <p className="mt-2 text-xl font-bold">{formatCurrency(pettyCashSummary.totals.totalSubmittedExpenses)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="text-sm text-muted-foreground">Outstanding</p>
+                  <p className="mt-2 text-xl font-bold">{formatCurrency(pettyCashSummary.totals.totalOutstanding)}</p>
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Allocation</TableHead>
+                    <TableHead>Holder</TableHead>
+                    <TableHead>Account</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pettyCashSummary.rows.slice(0, 8).map((row) => (
+                    <TableRow key={row.allocationId}>
+                      <TableCell className="font-medium">{row.allocationCode}</TableCell>
+                      <TableCell>{row.allocatedToName || '--'}</TableCell>
+                      <TableCell>{row.pettyCashAccountName || '--'}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.outstandingAmount)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
@@ -690,6 +884,9 @@ export default function ReportsPage() {
               {hasPermission('reports:financial:read') && (
                 <SelectItem value="profitability">Profitability</SelectItem>
               )}
+              {hasPermission('reports:financial:read') && (
+                <SelectItem value="inventory-consumption">Inventory Usage</SelectItem>
+              )}
               <SelectItem value="hr-analytics">HR & Attendance</SelectItem>
               <SelectItem value="feed-analytics">Feed Analytics</SelectItem>
             </SelectContent>
@@ -721,6 +918,12 @@ export default function ReportsPage() {
               <TabsTrigger value="profitability" className="gap-2">
                 <CircleDollarSign className="h-4 w-4" />
                 Profitability
+              </TabsTrigger>
+            )}
+            {hasPermission('reports:financial:read') && (
+              <TabsTrigger value="inventory-consumption" className="gap-2">
+                <Package2 className="h-4 w-4" />
+                Inventory Usage
               </TabsTrigger>
             )}
             <TabsTrigger value="hr-analytics" className="gap-2">
@@ -757,6 +960,12 @@ export default function ReportsPage() {
         {hasPermission('reports:financial:read') && (
           <TabsContent value="profitability">
             <BatchProfitabilityTab />
+          </TabsContent>
+        )}
+
+        {hasPermission('reports:financial:read') && (
+          <TabsContent value="inventory-consumption">
+            <InventoryConsumptionTab />
           </TabsContent>
         )}
 

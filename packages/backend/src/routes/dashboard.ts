@@ -1,10 +1,11 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticate } from '../middleware/auth';
 import { db } from '../db';
-import { batches, dailyRecords, sales, payments, employees, feedInventory, payroll, attendance, auditLogs } from '../db/schema';
-import { eq, sql, and, gte, lte, between, desc } from 'drizzle-orm';
+import { batches, buyerReceiptAllocations, buyerReceiptLines, buyerReceipts, buyers, chickPlacements, dailyRecords, employees, feedInventory, financeAccounts, financeReconciliations, inventoryLots, operationalExpenses, payments, payroll, sales, serviceWorkOrders, supplierContracts, supplierInvoices, supplierPaymentAllocations, supplierPayments, treasuryTransactionEntries, treasuryTransactions, attendance, auditLogs } from '../db/schema';
+import { eq, sql, and, gte, lte, desc, or } from 'drizzle-orm';
 import logger from '../lib/logger';
 import type { DashboardPeriod } from '@farmflow/shared';
+import { buildBatchCostSummaries } from '../lib/batch-costs';
 
 const router = Router();
 
@@ -46,13 +47,13 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
     const outstandingResult = await db
       .select({ total: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float` })
       .from(sales)
-      .where(eq(sales.status, 'pending'));
+      .where(sql`${sales.status} IN ('reviewed', 'pending')`);
 
     const paidResult = await db
       .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
       .from(payments)
       .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(and(eq(sales.status, 'pending'), eq(payments.paymentStatus, 'completed')));
+      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed')));
 
     // Total active employees
     const empConditions = [eq(employees.status, 'active')];
@@ -159,13 +160,13 @@ router.get('/enhanced', authenticate, async (req: Request, res: Response) => {
     const outstandingResult = await db
       .select({ total: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float` })
       .from(sales)
-      .where(eq(sales.status, 'pending'));
+      .where(sql`${sales.status} IN ('reviewed', 'pending')`);
 
     const paidResult = await db
       .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
       .from(payments)
       .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(and(eq(sales.status, 'pending'), eq(payments.paymentStatus, 'completed')));
+      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed')));
 
     // Total active employees
     const empConditions = [eq(employees.status, 'active')];
@@ -345,6 +346,367 @@ router.get('/enhanced', authenticate, async (req: Request, res: Response) => {
       success: false,
       error: 'Failed to fetch enhanced dashboard',
       code: 'ENHANCED_DASHBOARD_FAILED',
+      statusCode: 500,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+router.get('/executive', authenticate, async (_req: Request, res: Response) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const [accountRows, pendingApprovals, pendingCheques, recentReconciliations, activeBatchRows, revenueRows, overduePayablesRows, receivableTotals] = await Promise.all([
+      db
+        .select({
+          id: financeAccounts.id,
+          accountName: financeAccounts.accountName,
+          accountType: financeAccounts.accountType,
+          openingBalance: financeAccounts.openingBalance,
+          movement: sql<number>`
+            COALESCE(SUM(
+              CASE
+                WHEN ${treasuryTransactionEntries.entryDirection} = 'inflow' THEN ${treasuryTransactionEntries.amount}::numeric
+                WHEN ${treasuryTransactionEntries.entryDirection} = 'outflow' THEN -${treasuryTransactionEntries.amount}::numeric
+                ELSE 0
+              END
+            ), 0)::float
+          `,
+        })
+        .from(financeAccounts)
+        .leftJoin(treasuryTransactionEntries, eq(financeAccounts.id, treasuryTransactionEntries.financeAccountId))
+        .where(eq(financeAccounts.status, 'active'))
+        .groupBy(financeAccounts.id),
+      Promise.all([
+        db.select({ count: sql<number>`count(*)::int` }).from(operationalExpenses).where(eq(operationalExpenses.status, 'pending_approval')),
+        db.select({ count: sql<number>`count(*)::int` }).from(serviceWorkOrders).where(eq(serviceWorkOrders.status, 'pending_approval')),
+        db.select({ count: sql<number>`count(*)::int` }).from(supplierInvoices).where(eq(supplierInvoices.status, 'recorded')),
+        db.select({ count: sql<number>`count(*)::int` }).from(supplierContracts).where(eq(supplierContracts.status, 'draft')),
+      ]),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(treasuryTransactions)
+        .where(eq(treasuryTransactions.status, 'pending')),
+      db
+        .select({
+          financeAccountId: financeReconciliations.financeAccountId,
+          closedAt: financeReconciliations.closedAt,
+        })
+        .from(financeReconciliations)
+        .orderBy(desc(financeReconciliations.closedAt)),
+      db
+        .select({
+          id: batches.id,
+          batchCode: batches.batchCode,
+          siteId: batches.siteId,
+          chicksPlaced: batches.chicksPlaced,
+          placementDate: batches.placementDate,
+          actualDeliveryDate: batches.actualDeliveryDate,
+        })
+        .from(batches)
+        .where(sql`${batches.status} IN ('placement', 'growing', 'ready_for_sale')`),
+      db
+        .select({
+          batchId: sales.batchId,
+          revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}::numeric), 0)::float`,
+        })
+        .from(sales)
+        .where(sql`${sales.status} <> 'cancelled'`)
+        .groupBy(sales.batchId),
+      db
+        .select({
+          id: supplierInvoices.id,
+          dueDate: supplierInvoices.dueDate,
+          invoiceAmount: supplierInvoices.invoiceAmount,
+          paidAmount: sql<number>`COALESCE((
+            SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+            FROM ${supplierPaymentAllocations}
+            INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
+            WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
+              AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+          ), 0)::float`,
+        })
+        .from(supplierInvoices)
+        .where(sql`${supplierInvoices.status} IN ('approved', 'recorded') AND ${supplierInvoices.dueDate} < ${today}`),
+      Promise.all([
+        db.select({ total: sql<number>`COALESCE(SUM(${sales.totalAmount}::numeric), 0)::float` }).from(sales).where(sql`${sales.status} IN ('reviewed', 'pending')`),
+        db.select({ total: sql<number>`COALESCE(SUM(${payments.paymentAmount}::numeric), 0)::float` }).from(payments).innerJoin(sales, eq(payments.saleId, sales.id)).where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed'))),
+      ]),
+    ]);
+
+    const balances = accountRows.map((row) => ({
+      ...row,
+      balance: Number((Number(row.openingBalance) + (row.movement ?? 0)).toFixed(2)),
+    }));
+    const totalCash = balances.reduce((sum, row) => sum + row.balance, 0);
+    const bankCash = balances.filter((row) => ['bank', 'current'].includes(row.accountType)).reduce((sum, row) => sum + row.balance, 0);
+    const onHandCash = balances.filter((row) => ['cash', 'petty_cash'].includes(row.accountType)).reduce((sum, row) => sum + row.balance, 0);
+
+    const batchCostSummaries = await buildBatchCostSummaries(
+      activeBatchRows.map((batch) => ({
+        ...batch,
+        placementDate: String(batch.placementDate),
+        actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate) : null,
+      })),
+    );
+
+    const revenueByBatch = new Map(revenueRows.map((row) => [row.batchId, row.revenue ?? 0]));
+    let totalProfitabilityRevenue = 0;
+    let totalProfitabilityCost = 0;
+    for (const batch of activeBatchRows) {
+      const revenue = revenueByBatch.get(batch.id) ?? 0;
+      const cost = batchCostSummaries.get(batch.id)?.totalCost ?? 0;
+      totalProfitabilityRevenue += revenue;
+      totalProfitabilityCost += cost;
+    }
+
+    const overduePayables = overduePayablesRows.reduce((sum, row) => {
+      const balance = Number(row.invoiceAmount) - Number(row.paidAmount ?? 0);
+      return balance > 0 ? sum + balance : sum;
+    }, 0);
+
+    const pendingApprovalCount = pendingApprovals.reduce((sum, rows) => sum + (rows[0]?.count ?? 0), 0);
+    const lastReconciliationAt = recentReconciliations[0]?.closedAt
+      ? new Date(recentReconciliations[0].closedAt).toISOString()
+      : null;
+
+    res.json({
+      success: true,
+      data: {
+        cash: {
+          totalBookBalance: Number(totalCash.toFixed(2)),
+          bankBalance: Number(bankCash.toFixed(2)),
+          onHandBalance: Number(onHandCash.toFixed(2)),
+          pendingCheques: pendingCheques[0]?.count ?? 0,
+          lastReconciliationAt,
+        },
+        payables: {
+          overdueAmount: Number(overduePayables.toFixed(2)),
+          pendingApprovalCount,
+        },
+        receivables: {
+          outstandingAmount: Number((((receivableTotals[0]?.[0]?.total ?? 0) - (receivableTotals[1]?.[0]?.total ?? 0))).toFixed(2)),
+        },
+        profitability: {
+          activeBatchCount: activeBatchRows.length,
+          totalRevenue: Number(totalProfitabilityRevenue.toFixed(2)),
+          totalCost: Number(totalProfitabilityCost.toFixed(2)),
+          grossMargin: Number((totalProfitabilityRevenue - totalProfitabilityCost).toFixed(2)),
+        },
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch executive dashboard', { error });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch executive dashboard',
+      code: 'EXECUTIVE_DASHBOARD_FAILED',
+      statusCode: 500,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+router.get('/exceptions', authenticate, async (_req: Request, res: Response) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const todayMs = new Date(today).getTime();
+
+    const [stockRows, paymentGapRows, overduePayables, expiredContractsRows, activeBatchRows, revenueRows, overdueReceivablesRows] = await Promise.all([
+      db
+        .select({
+          id: feedInventory.id,
+          ingredientName: feedInventory.ingredientName,
+          quantity: feedInventory.quantity,
+          reorderLevel: feedInventory.reorderLevel,
+        })
+        .from(feedInventory),
+      Promise.all([
+        db.select({ id: supplierPayments.id, code: supplierPayments.paymentCode, date: supplierPayments.paymentDate, source: sql<string>`'supplier_payment'`, amount: supplierPayments.amount }).from(supplierPayments).where(and(sql`${supplierPayments.paymentStatus} IN ('pending', 'completed')`, sql`${supplierPayments.treasuryTransactionId} IS NULL`)),
+        db.select({ id: buyerReceiptLines.id, code: buyerReceiptLines.referenceNumber, date: buyerReceipts.receiptDate, source: sql<string>`'buyer_receipt'`, amount: buyerReceiptLines.paymentAmount }).from(buyerReceiptLines).innerJoin(buyerReceipts, eq(buyerReceiptLines.receiptId, buyerReceipts.id)).where(and(eq(buyerReceiptLines.paymentStatus, 'completed'), sql`${buyerReceiptLines.treasuryTransactionId} IS NULL`)),
+        db.select({ id: payroll.id, code: sql<string>`${payroll.id}::text`, date: payroll.paidDate, source: sql<string>`'payroll'`, amount: payroll.netSalary }).from(payroll).where(and(eq(payroll.status, 'paid'), sql`${payroll.treasuryTransactionId} IS NULL`)),
+        db.select({ id: operationalExpenses.id, code: operationalExpenses.expenseCode, date: operationalExpenses.expenseDate, source: sql<string>`'operational_expense'`, amount: operationalExpenses.amount }).from(operationalExpenses).where(and(eq(operationalExpenses.status, 'paid'), sql`${operationalExpenses.treasuryTransactionId} IS NULL`)),
+        db.select({ id: serviceWorkOrders.id, code: serviceWorkOrders.workOrderCode, date: serviceWorkOrders.serviceDate, source: sql<string>`'service_work_order'`, amount: serviceWorkOrders.totalAmount }).from(serviceWorkOrders).where(and(eq(serviceWorkOrders.status, 'paid'), sql`${serviceWorkOrders.treasuryTransactionId} IS NULL`)),
+      ]),
+      db
+        .select({
+          id: supplierInvoices.id,
+          invoiceCode: supplierInvoices.invoiceCode,
+          dueDate: supplierInvoices.dueDate,
+          amount: supplierInvoices.invoiceAmount,
+          paidAmount: sql<number>`COALESCE((
+            SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+            FROM ${supplierPaymentAllocations}
+            INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
+            WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
+              AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+          ), 0)::float`,
+        })
+        .from(supplierInvoices)
+        .where(sql`${supplierInvoices.status} IN ('approved', 'recorded') AND ${supplierInvoices.dueDate} < ${today}`),
+      db
+        .select({
+          id: supplierContracts.id,
+          contractCode: supplierContracts.contractCode,
+          contractTitle: supplierContracts.contractTitle,
+          validTo: supplierContracts.validTo,
+          status: supplierContracts.status,
+        })
+        .from(supplierContracts)
+        .where(and(eq(supplierContracts.status, 'active'), sql`${supplierContracts.validTo} IS NOT NULL AND ${supplierContracts.validTo} < ${today}`)),
+      db
+        .select({
+          id: batches.id,
+          batchCode: batches.batchCode,
+          siteId: batches.siteId,
+          chicksPlaced: batches.chicksPlaced,
+          placementDate: batches.placementDate,
+          actualDeliveryDate: batches.actualDeliveryDate,
+        })
+        .from(batches)
+        .where(sql`${batches.status} IN ('placement', 'growing', 'ready_for_sale')`),
+      db
+        .select({
+          batchId: sales.batchId,
+          revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}::numeric), 0)::float`,
+        })
+        .from(sales)
+        .where(sql`${sales.status} <> 'cancelled'`)
+        .groupBy(sales.batchId),
+      db
+        .select({
+          id: sales.id,
+          saleCode: sales.saleCode,
+          saleDate: sales.saleDate,
+          buyerName: buyers.buyerName,
+          totalAmount: sales.totalAmount,
+          creditTerms: buyers.creditTerms,
+          paidAmount: sql<number>`COALESCE((
+            SELECT SUM(${buyerReceiptAllocations.allocatedAmount}::numeric)
+            FROM ${buyerReceiptAllocations}
+            INNER JOIN ${buyerReceiptLines} ON ${buyerReceiptLines.id} = ${buyerReceiptAllocations.receiptLineId}
+            WHERE ${buyerReceiptAllocations.saleId} = ${sales.id}
+              AND ${buyerReceiptLines.paymentStatus} = 'completed'
+          ), 0)::float`,
+        })
+        .from(sales)
+        .leftJoin(buyers, eq(sales.buyerId, buyers.id))
+        .where(sql`${sales.status} IN ('reviewed', 'pending') AND ${sales.saleDate} < ${today}`),
+    ]);
+
+    const negativeStockRisk = stockRows
+      .filter((row) => Number(row.quantity) < 0 || (row.reorderLevel != null && Number(row.quantity) <= Number(row.reorderLevel)))
+      .map((row) => ({
+        id: row.id,
+        itemName: row.ingredientName,
+        quantity: Number(row.quantity),
+        reorderLevel: row.reorderLevel != null ? Number(row.reorderLevel) : null,
+      }));
+
+    const paymentWithoutTreasuryLink = paymentGapRows.flat();
+
+    const overduePayablesList = overduePayables
+      .map((row) => ({
+        id: row.id,
+        invoiceCode: row.invoiceCode,
+        dueDate: row.dueDate,
+        balanceDue: Number((Number(row.amount) - Number(row.paidAmount ?? 0)).toFixed(2)),
+      }))
+      .filter((row) => row.balanceDue > 0);
+
+    const overdueReceivables = overdueReceivablesRows
+      .map((row) => {
+        const dueDate = new Date(String(row.saleDate));
+        dueDate.setDate(dueDate.getDate() + Number(row.creditTerms ?? 0));
+        return {
+          id: row.id,
+          saleCode: row.saleCode,
+          buyerName: row.buyerName,
+          dueDate: dueDate.toISOString().split('T')[0],
+          balanceDue: Number((Number(row.totalAmount) - Number(row.paidAmount ?? 0)).toFixed(2)),
+        };
+      })
+      .filter((row) => row.balanceDue > 0 && row.dueDate < today);
+
+    const batchCostSummaries = await buildBatchCostSummaries(
+      activeBatchRows.map((batch) => ({
+        ...batch,
+        placementDate: String(batch.placementDate),
+        actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate) : null,
+      })),
+    );
+    const revenueByBatch = new Map(revenueRows.map((row) => [row.batchId, row.revenue ?? 0]));
+    const missingCostComponents = activeBatchRows.map((batch) => {
+      const summary = batchCostSummaries.get(batch.id);
+      return {
+        batchId: batch.id,
+        batchCode: batch.batchCode,
+        missingPlacement: !summary?.ledger.some((entry) => entry.sourceType === 'chick_placement'),
+        missingFeed: (summary?.feedCost ?? 0) <= 0,
+        missingLabor: (summary?.laborCost ?? 0) <= 0,
+        hasRevenue: (revenueByBatch.get(batch.id) ?? 0) > 0,
+      };
+    }).filter((row) => row.missingPlacement || row.missingFeed || row.missingLabor);
+
+    const chequeAgeing = await db
+      .select({
+        id: treasuryTransactions.id,
+        referenceNumber: treasuryTransactions.referenceNumber,
+        transactionDate: treasuryTransactions.transactionDate,
+        status: treasuryTransactions.status,
+      })
+      .from(treasuryTransactions)
+      .where(eq(treasuryTransactions.status, 'pending'));
+
+    const agedCheques = chequeAgeing
+      .map((row) => ({
+        ...row,
+        ageDays: Math.floor((todayMs - new Date(String(row.transactionDate)).getTime()) / (1000 * 60 * 60 * 24)),
+      }))
+      .filter((row) => row.ageDays >= 7);
+
+    const unreconciledBalances = await db
+      .select({
+        financeAccountId: financeAccounts.id,
+        accountName: financeAccounts.accountName,
+        unclearedCount: sql<number>`COALESCE(COUNT(${treasuryTransactionEntries.id}), 0)::int`,
+      })
+      .from(financeAccounts)
+      .leftJoin(treasuryTransactionEntries, and(eq(financeAccounts.id, treasuryTransactionEntries.financeAccountId), sql`${treasuryTransactionEntries.clearedAt} IS NULL`))
+      .where(eq(financeAccounts.status, 'active'))
+      .groupBy(financeAccounts.id);
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          negativeStockRisk: negativeStockRisk.length,
+          paymentWithoutTreasuryLink: paymentWithoutTreasuryLink.length,
+          chequeAgeing: agedCheques.length,
+          unreconciledBalances: unreconciledBalances.filter((row) => row.unclearedCount > 0).length,
+          overduePayables: overduePayablesList.length,
+          overdueReceivables: overdueReceivables.length,
+          expiredContracts: expiredContractsRows.length,
+          missingCostComponents: missingCostComponents.length,
+        },
+        negativeStockRisk,
+        paymentWithoutTreasuryLink,
+        chequeAgeing: agedCheques,
+        unreconciledBalances: unreconciledBalances.filter((row) => row.unclearedCount > 0),
+        overduePayables: overduePayablesList,
+        overdueReceivables,
+        expiredContracts: expiredContractsRows,
+        missingCostComponents,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch dashboard exceptions', { error });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch dashboard exceptions',
+      code: 'DASHBOARD_EXCEPTIONS_FAILED',
       statusCode: 500,
       timestamp: new Date().toISOString(),
     });

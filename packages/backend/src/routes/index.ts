@@ -10,12 +10,14 @@ import saleRoutes from './sales';
 import paymentRoutes from './payments';
 import reportRoutes from './reports';
 import feedRoutes from './feed';
+import inventoryRoutes from './inventory';
 import systemConfigRoutes from './systemConfig';
 import shiftRoutes from './shifts';
 import attendanceRoutes from './attendance';
 import leaveBalanceRoutes from './leave-balances';
 import payrollRoutes from './payroll';
 import compensationTemplateRoutes from './compensation-templates';
+import treasuryRoutes from './treasury';
 import { healthCheckHandler, metricsHandler } from '../middleware/monitoring';
 import { authenticate, requirePermission } from '../middleware/auth';
 
@@ -53,8 +55,14 @@ router.use('/payments', paymentRoutes);
 // Reports & Analytics
 router.use('/reports', reportRoutes);
 
+// Treasury
+router.use('/treasury', treasuryRoutes);
+
 // Feed Management
 router.use('/feed', feedRoutes);
+
+// Inventory Management
+router.use('/inventory', inventoryRoutes);
 
 // System Configuration
 router.use('/system-config', systemConfigRoutes);

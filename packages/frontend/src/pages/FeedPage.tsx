@@ -1047,14 +1047,6 @@ export default function FeedPage() {
             <Truck className="h-4 w-4" />
             Distribution
           </TabsTrigger>
-          <TabsTrigger value="purchase-orders" className="gap-2">
-            <ShoppingCart className="h-4 w-4" />
-            Purchase Orders
-          </TabsTrigger>
-          <TabsTrigger value="suppliers" className="gap-2">
-            <Package className="h-4 w-4" />
-            Suppliers
-          </TabsTrigger>
         </TabsList>
 
         {/* ========================= */}

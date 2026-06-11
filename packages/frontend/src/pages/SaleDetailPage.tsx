@@ -1,52 +1,29 @@
-import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { useFieldArray, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft, Banknote, CheckCircle2, CreditCard, DollarSign, Landmark, Plus, Receipt, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { SaleStatus } from '@farmflow/shared';
 import { useAuthStore } from '@/store/authStore';
-import { useSale, useCreatePayment, useUpdatePayment, useUpdateSale } from '@/hooks/useSales';
+import { useCreatePayment, useSale, useUpdatePayment, useUpdateSale } from '@/hooks/useSales';
+import { useTreasuryAccounts } from '@/hooks/useTreasury';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { paymentFormSchema, type PaymentFormValues } from '@/lib/validations/sales';
-import { ArrowLeft, Plus, DollarSign, CreditCard, Banknote, Receipt } from 'lucide-react';
-import { toast } from 'sonner';
+import { draftSaleDetailSchema, receiptFormSchema, type DraftSaleDetailValues, type ReceiptFormValues } from '@/lib/validations/sales';
 import { formatCurrency } from '@/lib/utils';
 import { generateInvoicePDF } from '@/lib/generateInvoice';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-slate-100 text-slate-800',
+  reviewed: 'bg-blue-100 text-blue-800',
   pending: 'bg-blue-100 text-blue-800',
   completed: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-800',
@@ -64,6 +41,29 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   bank_transfer: 'Bank Transfer',
 };
 
+function displaySaleStatus(status: SaleStatus | string) {
+  return status === SaleStatus.Pending ? SaleStatus.Reviewed : status;
+}
+
+const defaultReceiptLine = {
+  paymentAmount: 0,
+  paymentMethod: 'cash' as const,
+  financeAccountId: 0,
+  referenceNumber: '',
+  chequeNumber: '',
+  chequeDate: '',
+  bankName: '',
+  notes: '',
+};
+
+const defaultLorryLine = {
+  lorryNumber: '',
+  birdsCount: 0,
+  previousWeight: 0,
+  loadedWeight: 0,
+  notes: '',
+};
+
 export default function SaleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { hasPermission } = useAuthStore();
@@ -71,51 +71,180 @@ export default function SaleDetailPage() {
   const createPaymentMutation = useCreatePayment(id!);
   const updatePaymentMutation = useUpdatePayment();
   const updateSaleMutation = useUpdateSale(id!);
-
+  const { data: treasuryAccountsResponse, isLoading: treasuryAccountsLoading } = useTreasuryAccounts();
   const [showAddPayment, setShowAddPayment] = useState(false);
 
   const saleData = data?.data;
   const sale = saleData?.sale;
   const buyer = saleData?.buyer;
+  const lorryLines = saleData?.lorryLines ?? [];
   const payments = saleData?.payments ?? [];
+  const treasuryAccounts = treasuryAccountsResponse?.data?.filter((account) => account.status === 'active') ?? [];
+  const treasuryAccountLookup = useMemo(
+    () => new Map(treasuryAccounts.map((account) => [account.id, account])),
+    [treasuryAccounts],
+  );
   const totalPaid = saleData?.totalPaid ?? 0;
   const outstandingBalance = saleData?.outstandingBalance ?? 0;
+  const availableBuyerCredit = saleData?.availableBuyerCredit ?? 0;
+  const workflowStatus = sale ? displaySaleStatus(sale.status) : undefined;
 
-  const paymentForm = useForm<PaymentFormValues>({
-    resolver: zodResolver(paymentFormSchema),
+  const isDraft = workflowStatus === SaleStatus.Draft;
+  const canRecordReceipt = sale ? [SaleStatus.Reviewed, SaleStatus.Pending, SaleStatus.Completed].includes(sale.status) : false;
+  const canMarkCompleted = workflowStatus === SaleStatus.Reviewed && outstandingBalance <= 0.01;
+
+  const draftForm = useForm<DraftSaleDetailValues>({
+    resolver: zodResolver(draftSaleDetailSchema),
     defaultValues: {
-      paymentAmount: 0,
-      paymentDate: new Date().toISOString().split('T')[0],
-      paymentMethod: undefined,
-      chequeNumber: '',
-      chequeDate: '',
-      bankName: '',
+      pricePerKg: 0,
+      lorries: [defaultLorryLine],
       notes: '',
     },
   });
 
-  const watchedMethod = paymentForm.watch('paymentMethod');
+  const draftLorryFieldArray = useFieldArray({
+    control: draftForm.control,
+    name: 'lorries',
+  });
 
-  const handleAddPayment = async (values: PaymentFormValues) => {
+  useEffect(() => {
+    if (!sale) return;
+    draftForm.reset({
+      pricePerKg: Number(sale.pricePerKg),
+      lorries: lorryLines.length
+        ? lorryLines.map((line) => ({
+            lorryNumber: line.lorryNumber,
+            birdsCount: Number(line.birdsCount),
+            previousWeight: Number(line.previousWeight),
+            loadedWeight: Number(line.loadedWeight),
+            notes: line.notes ?? '',
+          }))
+        : [defaultLorryLine],
+      notes: sale.notes ?? '',
+    });
+  }, [draftForm, lorryLines, sale]);
+
+  const watchedDraftLorries = draftForm.watch('lorries');
+  const watchedDraftPrice = draftForm.watch('pricePerKg');
+  const draftTotals = useMemo(() => {
+    const totalBirds = (watchedDraftLorries ?? []).reduce((sum, lorry) => sum + (Number(lorry.birdsCount) || 0), 0);
+    const totalWeight = (watchedDraftLorries ?? []).reduce((sum, lorry) => {
+      const netWeight = (Number(lorry.loadedWeight) || 0) - (Number(lorry.previousWeight) || 0);
+      return sum + (netWeight > 0 ? netWeight : 0);
+    }, 0);
+    return {
+      totalBirds,
+      totalWeight,
+      totalAmount: totalWeight * (watchedDraftPrice ?? 0),
+    };
+  }, [watchedDraftLorries, watchedDraftPrice]);
+
+  const receiptForm = useForm<ReceiptFormValues>({
+    resolver: zodResolver(receiptFormSchema),
+    defaultValues: {
+      receiptDate: new Date().toISOString().split('T')[0],
+      receiptNotes: '',
+      lines: [{ ...defaultReceiptLine, financeAccountId: treasuryAccounts[0]?.id ?? 0 }],
+    },
+  });
+
+  const receiptFieldArray = useFieldArray({
+    control: receiptForm.control,
+    name: 'lines',
+  });
+
+  const watchedReceiptLines = receiptForm.watch('lines');
+  const receiptTotal = useMemo(
+    () => (watchedReceiptLines ?? []).reduce((sum, line) => sum + (Number(line.paymentAmount) || 0), 0),
+    [watchedReceiptLines],
+  );
+
+  useEffect(() => {
+    if (!treasuryAccounts.length) return;
+    const lines = receiptForm.getValues('lines');
+    const needsDefaultAccount = lines.some((line) => !line.financeAccountId || line.financeAccountId <= 0);
+    if (!needsDefaultAccount) return;
+    receiptForm.setValue(
+      'lines',
+      lines.map((line) => ({
+        ...line,
+        financeAccountId: line.financeAccountId && line.financeAccountId > 0 ? line.financeAccountId : treasuryAccounts[0]!.id,
+      })),
+      { shouldValidate: false },
+    );
+  }, [receiptForm, treasuryAccounts]);
+
+  const persistDraft = async (values: DraftSaleDetailValues, nextStatus?: 'reviewed') => {
+    await updateSaleMutation.mutateAsync({
+      pricePerKg: values.pricePerKg,
+      notes: values.notes || null,
+      lorries: values.lorries.map((lorry) => ({
+        lorryNumber: lorry.lorryNumber,
+        birdsCount: lorry.birdsCount,
+        previousWeight: lorry.previousWeight,
+        loadedWeight: lorry.loadedWeight,
+        notes: lorry.notes || undefined,
+      })),
+      status: nextStatus,
+    });
+  };
+
+  const handleSaveDraft = async (values: DraftSaleDetailValues) => {
     try {
-      await createPaymentMutation.mutateAsync({
-        paymentAmount: values.paymentAmount,
-        paymentDate: values.paymentDate,
-        paymentMethod: values.paymentMethod as unknown as import('@farmflow/shared').PaymentMethod,
-        chequeNumber: values.chequeNumber || undefined,
-        chequeDate: values.chequeDate || undefined,
-        bankName: values.bankName || undefined,
-        notes: values.notes || undefined,
-      });
-      toast.success('Payment recorded');
-      paymentForm.reset();
-      setShowAddPayment(false);
+      await persistDraft(values);
+      toast.success('Draft sale updated');
     } catch {
-      toast.error('Failed to record payment');
+      toast.error('Failed to update draft sale');
     }
   };
 
-  const handleUpdatePaymentStatus = async (paymentId: number, newStatus: string) => {
+  const handleMarkReviewed = async (values: DraftSaleDetailValues) => {
+    try {
+      await persistDraft(values, 'reviewed');
+      toast.success('Sale reviewed. Receipts are now enabled.');
+    } catch {
+      toast.error('Failed to review sale');
+    }
+  };
+
+  const handleMarkCompleted = async () => {
+    try {
+      await updateSaleMutation.mutateAsync({ status: 'completed' });
+      toast.success('Sale marked as completed');
+    } catch {
+      toast.error('Failed to complete sale');
+    }
+  };
+
+  const handleAddPayment = async (values: ReceiptFormValues) => {
+    try {
+      await createPaymentMutation.mutateAsync({
+        receiptDate: values.receiptDate,
+        receiptNotes: values.receiptNotes || undefined,
+        lines: values.lines.map((line) => ({
+          paymentAmount: line.paymentAmount,
+          paymentMethod: line.paymentMethod,
+          financeAccountId: line.financeAccountId,
+          referenceNumber: line.referenceNumber || undefined,
+          chequeNumber: line.chequeNumber || undefined,
+          chequeDate: line.chequeDate || undefined,
+          bankName: line.bankName || undefined,
+          notes: line.notes || undefined,
+        })),
+      });
+      toast.success('Receipt recorded');
+      receiptForm.reset({
+        receiptDate: new Date().toISOString().split('T')[0],
+        receiptNotes: '',
+        lines: [{ ...defaultReceiptLine, financeAccountId: treasuryAccounts[0]?.id ?? 0 }],
+      });
+      setShowAddPayment(false);
+    } catch {
+      toast.error('Failed to record receipt');
+    }
+  };
+
+  const handleUpdatePaymentStatus = async (paymentId: string, newStatus: string) => {
     try {
       await updatePaymentMutation.mutateAsync({
         paymentId,
@@ -132,7 +261,7 @@ export default function SaleDetailPage() {
       await updateSaleMutation.mutateAsync({ status: 'cancelled' });
       toast.success('Sale cancelled');
     } catch {
-      toast.error('Failed to cancel sale. There may be completed payments.');
+      toast.error('Failed to cancel sale. The sale may already have payments or allocations.');
     }
   };
 
@@ -153,11 +282,11 @@ export default function SaleDetailPage() {
       totalWeight: Number(sale.totalWeight),
       pricePerKg: Number(sale.pricePerKg),
       totalAmount: Number(sale.totalAmount),
-      payments: payments.map((p) => ({
-        paymentDate: String(p.paymentDate),
-        paymentAmount: Number(p.paymentAmount),
-        paymentMethod: p.paymentMethod,
-        paymentStatus: p.paymentStatus,
+      payments: payments.map((payment) => ({
+        paymentDate: String(payment.paymentDate),
+        paymentAmount: Number(payment.paymentAmount),
+        paymentMethod: payment.paymentMethod as import('@farmflow/shared').PaymentMethod,
+        paymentStatus: payment.paymentStatus as import('@farmflow/shared').PaymentStatus,
       })),
       totalPaid,
       outstandingBalance,
@@ -168,7 +297,12 @@ export default function SaleDetailPage() {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 md:grid-cols-4"><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
+        <div className="grid gap-4 md:grid-cols-4">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+        </div>
         <Skeleton className="h-64" />
       </div>
     );
@@ -183,34 +317,49 @@ export default function SaleDetailPage() {
     );
   }
 
-  const isPending = sale.status === 'pending';
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost" size="icon"><Link to="/sales"><ArrowLeft className="h-4 w-4" /></Link></Button>
           <div>
             <h1 className="text-2xl font-bold text-foreground">{sale.saleCode}</h1>
-            <p className="text-sm text-muted-foreground">{sale.buyerName} | {sale.batchCode}</p>
+            <p className="text-sm text-muted-foreground">
+              <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">{sale.buyerName}</Link> | {sale.batchCode}
+            </p>
           </div>
-          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[sale.status] ?? ''}`}>
-            {sale.status}
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[workflowStatus ?? sale.status] ?? ''}`}>
+            {workflowStatus ?? sale.status}
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {isDraft && hasPermission('sales:update') && (
+            <Button onClick={draftForm.handleSubmit(handleMarkReviewed)} disabled={updateSaleMutation.isPending}>
+              <ShieldCheck className="h-4 w-4 mr-2" />
+              Mark Reviewed
+            </Button>
+          )}
+          {workflowStatus === SaleStatus.Reviewed && hasPermission('sales:update') && (
+            <Button
+              onClick={handleMarkCompleted}
+              disabled={updateSaleMutation.isPending || !canMarkCompleted}
+              title={canMarkCompleted ? undefined : 'Fully settle the sale before completing it'}
+            >
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              Mark Completed
+            </Button>
+          )}
           <Button variant="outline" onClick={handleDownloadInvoice}>
             <Receipt className="h-4 w-4 mr-2" />
             Invoice
           </Button>
-          {isPending && hasPermission('payments:create') && (
+          {canRecordReceipt && hasPermission('payments:create') && (
             <Button onClick={() => setShowAddPayment(true)}>
               <Plus className="h-4 w-4 mr-2" />
-              Add Payment
+              Add Receipt
             </Button>
           )}
-          {isPending && hasPermission('sales:update') && (
+          {sale.status !== 'cancelled' && hasPermission('sales:update') && (
             <Button variant="destructive" size="sm" onClick={handleCancelSale}>
               Cancel Sale
             </Button>
@@ -218,7 +367,14 @@ export default function SaleDetailPage() {
         </div>
       </div>
 
-      {/* Financial Summary Cards */}
+      {isDraft && (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardContent className="pt-6 text-sm text-amber-900">
+            This sale is still in draft. Add the lorries and confirm the compiled totals before marking it reviewed. Receipts are disabled until review.
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
@@ -237,7 +393,7 @@ export default function SaleDetailPage() {
               <CreditCard className="h-5 w-5 text-green-600" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(totalPaid)}</p>
-                <p className="text-xs text-muted-foreground">Total Paid</p>
+                <p className="text-xs text-muted-foreground">Applied Receipts</p>
               </div>
             </div>
           </CardContent>
@@ -258,21 +414,20 @@ export default function SaleDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-purple-600" />
+              <Receipt className="h-5 w-5 text-violet-600" />
               <div>
-                <p className="text-2xl font-bold">{sale.totalBirds.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Birds Sold</p>
+                <p className="text-2xl font-bold">{formatCurrency(availableBuyerCredit)}</p>
+                <p className="text-xs text-muted-foreground">Available Credit</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Sale Details Card */}
       <Card>
         <CardHeader><CardTitle>Sale Details</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
             <div>
               <p className="text-muted-foreground">Sale Date</p>
               <p className="font-medium">{new Date(sale.saleDate).toLocaleDateString()}</p>
@@ -299,7 +454,15 @@ export default function SaleDetailPage() {
             </div>
             <div>
               <p className="text-muted-foreground">Price per kg</p>
-              <p className="font-medium">Rs. {Number(sale.pricePerKg).toFixed(2)}</p>
+              <p className="font-medium">{formatCurrency(Number(sale.pricePerKg))}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Birds Sold</p>
+              <p className="font-medium">{sale.totalBirds.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Settlement</p>
+              <p className="font-medium capitalize">{sale.settlementStatus?.replace('_', ' ') ?? 'unpaid'}</p>
             </div>
             {sale.notes && (
               <div className="col-span-full">
@@ -311,22 +474,238 @@ export default function SaleDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Payments Table */}
+      {isDraft ? (
+        <Card>
+          <CardHeader><CardTitle>Sale Draft</CardTitle></CardHeader>
+          <CardContent>
+            <Form {...draftForm}>
+              <form className="space-y-5" onSubmit={draftForm.handleSubmit(handleSaveDraft)}>
+                <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+                  <FormField
+                    control={draftForm.control}
+                    name="pricePerKg"
+                  render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Price per kg (Rs.)</FormLabel>
+                        <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Formatted: {formatCurrency(Number(watchedDraftPrice) || 0)}
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={draftForm.control}
+                    name="notes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Notes</FormLabel>
+                        <FormControl><Textarea placeholder="Sale notes..." {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-foreground">Lorry Lines</h3>
+                      <p className="text-sm text-muted-foreground">These totals will become the sale totals when you save the draft or review it.</p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => draftLorryFieldArray.append(defaultLorryLine)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Lorry
+                    </Button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[980px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[60px]">#</TableHead>
+                          <TableHead>Lorry</TableHead>
+                          <TableHead>Birds</TableHead>
+                          <TableHead>Previous Weight</TableHead>
+                          <TableHead>After Weight</TableHead>
+                          <TableHead>Net Weight</TableHead>
+                          <TableHead>Notes</TableHead>
+                          <TableHead className="w-[70px]" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {draftLorryFieldArray.fields.map((field, index) => {
+                          const row = watchedDraftLorries?.[index];
+                          const netWeight = Math.max((Number(row?.loadedWeight) || 0) - (Number(row?.previousWeight) || 0), 0);
+                          return (
+                            <TableRow key={field.id} className="align-top">
+                              <TableCell className="font-medium text-muted-foreground">{index + 1}</TableCell>
+                              <TableCell className="min-w-[160px]">
+                                <FormField
+                                  control={draftForm.control}
+                                  name={`lorries.${index}.lorryNumber`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Lorry</FormLabel>
+                                      <FormControl><Input placeholder="e.g. CAB-1023" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[120px]">
+                                <FormField
+                                  control={draftForm.control}
+                                  name={`lorries.${index}.birdsCount`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Birds</FormLabel>
+                                      <FormControl><Input type="number" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[150px]">
+                                <FormField
+                                  control={draftForm.control}
+                                  name={`lorries.${index}.previousWeight`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Previous Weight</FormLabel>
+                                      <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[150px]">
+                                <FormField
+                                  control={draftForm.control}
+                                  name={`lorries.${index}.loadedWeight`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">After Weight</FormLabel>
+                                      <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[130px]">
+                                <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-medium text-foreground">
+                                  {netWeight.toFixed(2)} kg
+                                </div>
+                              </TableCell>
+                              <TableCell className="min-w-[220px]">
+                                <FormField
+                                  control={draftForm.control}
+                                  name={`lorries.${index}.notes`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Notes</FormLabel>
+                                      <FormControl><Input placeholder="Optional notes" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={draftLorryFieldArray.fields.length === 1}
+                                  onClick={() => draftLorryFieldArray.remove(index)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 rounded-lg border bg-muted/40 px-4 py-3 md:grid-cols-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Birds</p>
+                    <p className="text-lg font-semibold text-foreground">{draftTotals.totalBirds.toLocaleString()}</p>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Weight</p>
+                    <p className="text-lg font-semibold text-foreground">{draftTotals.totalWeight.toFixed(2)} kg</p>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Sale Amount</p>
+                    <p className="text-lg font-semibold text-foreground">{formatCurrency(draftTotals.totalAmount)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="submit" variant="outline" disabled={updateSaleMutation.isPending}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Draft
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader><CardTitle>Lorries ({lorryLines.length})</CardTitle></CardHeader>
+          <CardContent>
+            {lorryLines.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No lorry lines recorded on this sale.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Lorry</TableHead>
+                    <TableHead>Birds</TableHead>
+                    <TableHead>Previous Weight</TableHead>
+                    <TableHead>After Weight</TableHead>
+                    <TableHead>Net Weight</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lorryLines.map((line) => (
+                    <TableRow key={line.id}>
+                      <TableCell className="font-medium">{line.lorryNumber}</TableCell>
+                      <TableCell>{line.birdsCount.toLocaleString()}</TableCell>
+                      <TableCell>{Number(line.previousWeight).toFixed(2)} kg</TableCell>
+                      <TableCell>{Number(line.loadedWeight).toFixed(2)} kg</TableCell>
+                      <TableCell className="font-medium">{Number(line.netWeight).toFixed(2)} kg</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
-        <CardHeader>
-          <CardTitle>Payments ({payments.length})</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Receipts ({payments.length})</CardTitle></CardHeader>
         <CardContent>
-          {payments.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">No payments recorded yet.</p>
+          {!canRecordReceipt ? (
+            <p className="text-sm text-muted-foreground text-center py-4">Review the draft sale before recording receipts.</p>
+          ) : payments.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No receipts recorded yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
+                    <TableHead>Reference</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Method</TableHead>
+                    <TableHead className="hidden lg:table-cell">Treasury</TableHead>
                     <TableHead className="hidden sm:table-cell">Cheque #</TableHead>
                     <TableHead>Status</TableHead>
                     {hasPermission('payments:update') && <TableHead className="w-[150px]" />}
@@ -336,8 +715,25 @@ export default function SaleDetailPage() {
                   {payments.map((payment) => (
                     <TableRow key={payment.id}>
                       <TableCell>{new Date(payment.paymentDate).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{payment.receiptCode ?? payment.referenceNumber ?? payment.id}</TableCell>
                       <TableCell className="font-medium">{formatCurrency(Number(payment.paymentAmount))}</TableCell>
                       <TableCell>{PAYMENT_METHOD_LABELS[payment.paymentMethod] ?? payment.paymentMethod}</TableCell>
+                      <TableCell className="hidden lg:table-cell text-muted-foreground">
+                        <div>
+                          <p>
+                            {payment.financeAccountName
+                              || (payment.financeAccountId ? treasuryAccountLookup.get(payment.financeAccountId)?.accountName ?? `Account #${payment.financeAccountId}` : '--')}
+                          </p>
+                          {payment.treasuryTransactionId ? (
+                            <div className="mt-1 text-[11px] text-emerald-700">Txn #{payment.treasuryTransactionId}</div>
+                          ) : payment.source === 'receipt_line' ? (
+                            <div className="mt-1 text-[11px] text-amber-700">Not posted</div>
+                          ) : null}
+                          {payment.treasuryReversalTransactionId ? (
+                            <div className="text-[11px] text-rose-700">Reversal #{payment.treasuryReversalTransactionId}</div>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">{payment.chequeNumber ?? '--'}</TableCell>
                       <TableCell>
                         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${PAYMENT_STATUS_COLORS[payment.paymentStatus] ?? ''}`}>
@@ -379,119 +775,253 @@ export default function SaleDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Add Payment Dialog */}
       <Dialog open={showAddPayment} onOpenChange={setShowAddPayment}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[1120px]">
           <DialogHeader>
-            <DialogTitle>Add Payment</DialogTitle>
+            <DialogTitle>Add Receipt</DialogTitle>
             <DialogDescription>
-              Outstanding balance: {formatCurrency(outstandingBalance)}
+              Outstanding balance: {formatCurrency(outstandingBalance)}. Any extra receipt amount remains as buyer credit.
             </DialogDescription>
           </DialogHeader>
-          <Form {...paymentForm}>
-            <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={paymentForm.control}
-                  name="paymentAmount"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Amount (Rs.)</FormLabel>
-                      <FormControl><Input type="number" step="0.01" max={outstandingBalance} placeholder="0.00" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={paymentForm.control}
-                  name="paymentDate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Date</FormLabel>
-                      <FormControl><Input type="date" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={paymentForm.control}
-                name="paymentMethod"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Payment Method</FormLabel>
-                    <Select value={field.value ?? ''} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="cash">Cash</SelectItem>
-                        <SelectItem value="cheque">Cheque</SelectItem>
-                        <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {watchedMethod === 'cheque' && (
-                <div className="grid grid-cols-2 gap-4">
+          {treasuryAccountsLoading ? (
+            <div className="space-y-3 py-4">
+              <Skeleton className="h-12 rounded-lg" />
+              <Skeleton className="h-72 rounded-lg" />
+            </div>
+          ) : treasuryAccounts.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 p-6 text-center">
+              <Landmark className="mx-auto h-6 w-6 text-muted-foreground" />
+              <p className="mt-3 font-medium">Create a treasury account first</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Receipts must be assigned to a Treasury account so the incoming money updates the central finance balance.
+              </p>
+            </div>
+          ) : (
+            <Form {...receiptForm}>
+              <form onSubmit={receiptForm.handleSubmit(handleAddPayment)} className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
                   <FormField
-                    control={paymentForm.control}
-                    name="chequeNumber"
+                    control={receiptForm.control}
+                    name="receiptDate"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Cheque Number</FormLabel>
-                        <FormControl><Input placeholder="e.g. 123456" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={paymentForm.control}
-                    name="chequeDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cheque Date</FormLabel>
+                        <FormLabel>Receipt Date</FormLabel>
                         <FormControl><Input type="date" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+                  <div className="rounded-lg bg-muted px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Receipt Total</p>
+                    <p className="text-xl font-semibold text-foreground">{formatCurrency(receiptTotal)}</p>
+                  </div>
                 </div>
-              )}
-              {(watchedMethod === 'cheque' || watchedMethod === 'bank_transfer') && (
+
                 <FormField
-                  control={paymentForm.control}
-                  name="bankName"
+                  control={receiptForm.control}
+                  name="receiptNotes"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Bank Name</FormLabel>
-                      <FormControl><Input placeholder="e.g. FNB" {...field} /></FormControl>
+                      <FormLabel>Receipt Notes</FormLabel>
+                      <FormControl><Textarea placeholder="Optional header notes..." {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              )}
-              <FormField
-                control={paymentForm.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notes (Optional)</FormLabel>
-                    <FormControl><Textarea placeholder="Any notes..." {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setShowAddPayment(false)}>Cancel</Button>
-                <Button type="submit" disabled={createPaymentMutation.isPending}>
-                  {createPaymentMutation.isPending ? 'Recording...' : 'Record Payment'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
+
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-foreground">Payment Lines</h3>
+                      <p className="text-sm text-muted-foreground">Use multiple lines when the buyer pays with different methods. Each line must land in a treasury account.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => receiptFieldArray.append({ ...defaultReceiptLine, financeAccountId: treasuryAccounts[0]?.id ?? 0 })}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Line
+                    </Button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[1280px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[60px]">#</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Method</TableHead>
+                          <TableHead>Treasury Account</TableHead>
+                          <TableHead>Reference</TableHead>
+                          <TableHead>Cheque #</TableHead>
+                          <TableHead>Cheque Date</TableHead>
+                          <TableHead>Bank</TableHead>
+                          <TableHead>Notes</TableHead>
+                          <TableHead className="w-[70px]" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {receiptFieldArray.fields.map((field, index) => {
+                          const paymentMethod = watchedReceiptLines?.[index]?.paymentMethod;
+                          const isCheque = paymentMethod === 'cheque';
+                          const usesBank = paymentMethod === 'cheque' || paymentMethod === 'bank_transfer';
+                          return (
+                            <TableRow key={field.id} className="align-top">
+                              <TableCell className="font-medium text-muted-foreground">{index + 1}</TableCell>
+                              <TableCell className="min-w-[150px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.paymentAmount`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Amount</FormLabel>
+                                      <FormControl><Input type="number" step="0.01" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[180px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.paymentMethod`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Payment Method</FormLabel>
+                                      <Select value={field.value} onValueChange={field.onChange}>
+                                        <FormControl>
+                                          <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                          <SelectItem value="cash">Cash</SelectItem>
+                                          <SelectItem value="cheque">Cheque</SelectItem>
+                                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[210px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.financeAccountId`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Treasury Account</FormLabel>
+                                      <Select value={field.value ? String(field.value) : ''} onValueChange={(value) => field.onChange(Number(value))}>
+                                        <FormControl>
+                                          <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                          {treasuryAccounts.map((account) => (
+                                            <SelectItem key={account.id} value={String(account.id)}>
+                                              {account.accountName} • {account.accountCode}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[170px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.referenceNumber`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Reference</FormLabel>
+                                      <FormControl><Input placeholder="Optional reference" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[160px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.chequeNumber`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Cheque Number</FormLabel>
+                                      <FormControl><Input placeholder="Cheque number" disabled={!isCheque} {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[170px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.chequeDate`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Cheque Date</FormLabel>
+                                      <FormControl><Input type="date" disabled={!isCheque} {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[180px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.bankName`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Bank Name</FormLabel>
+                                      <FormControl><Input placeholder="Bank name" disabled={!usesBank} {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-[220px]">
+                                <FormField
+                                  control={receiptForm.control}
+                                  name={`lines.${index}.notes`}
+                                  render={({ field }) => (
+                                    <FormItem className="space-y-1">
+                                      <FormLabel className="sr-only">Line Notes</FormLabel>
+                                      <FormControl><Input placeholder="Optional notes" {...field} /></FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={receiptFieldArray.fields.length === 1}
+                                  onClick={() => receiptFieldArray.remove(index)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setShowAddPayment(false)}>Cancel</Button>
+                  <Button type="submit" disabled={createPaymentMutation.isPending}>
+                    {createPaymentMutation.isPending ? 'Recording...' : 'Record Receipt'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

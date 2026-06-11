@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { employees, employeeCompensationRevisions } from './employees';
 import { users } from './users';
+import { chequeLeaves, financeAccounts, treasuryTransactions } from './treasury';
 
 export const payroll = pgTable(
   'payroll',
@@ -32,6 +33,10 @@ export const payroll = pgTable(
     status: varchar('status', { length: 50 }).default('draft').notNull(),
     approvedBy: integer('approved_by').references(() => users.id),
     paidDate: date('paid_date'),
+    financeAccountId: integer('finance_account_id').references(() => financeAccounts.id),
+    paymentMethod: varchar('payment_method', { length: 50 }),
+    chequeLeafId: integer('cheque_leaf_id').references(() => chequeLeaves.id),
+    treasuryTransactionId: integer('treasury_transaction_id').references(() => treasuryTransactions.id),
     compensationRevisionId: integer('compensation_revision_id')
       .references(() => employeeCompensationRevisions.id),
     compensationSnapshot: jsonb('compensation_snapshot'),

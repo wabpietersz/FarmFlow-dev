@@ -10,6 +10,7 @@ import {
   useCreateCompensationTemplate,
   useDeleteCompensationTemplate,
 } from '@/hooks/usePayroll';
+import { useChequeLeaves, useTreasuryAccounts } from '@/hooks/useTreasury';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -68,6 +69,7 @@ export default function PayrollDetailPage() {
   const { data: deductionTemplatesData } = useCompensationTemplates('deduction');
   const { data: allowanceTemplatesData } = useCompensationTemplates('allowance');
   const { data: allTemplatesData } = useCompensationTemplates();
+  const { data: treasuryAccountsData } = useTreasuryAccounts();
   const createTemplateMutation = useCreateCompensationTemplate();
   const deleteTemplateMutation = useDeleteCompensationTemplate();
 
@@ -75,10 +77,18 @@ export default function PayrollDetailPage() {
   const [showAddAllowance, setShowAddAllowance] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showMarkPaidDialog, setShowMarkPaidDialog] = useState(false);
+  const [selectedFinanceAccountId, setSelectedFinanceAccountId] = useState('');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'bank_transfer' | 'cash' | 'cheque'>('bank_transfer');
+  const [selectedChequeLeafId, setSelectedChequeLeafId] = useState('');
   const [newTemplateName, setNewTemplateName] = useState('');
   const [newTemplateCategory, setNewTemplateCategory] = useState<'allowance' | 'deduction'>('allowance');
   const [newTemplateDefaultAmount, setNewTemplateDefaultAmount] = useState<number>(0);
   const [newTemplateDescription, setNewTemplateDescription] = useState('');
+  const { data: chequeLeavesData } = useChequeLeaves({
+    accountId: selectedFinanceAccountId ? Number(selectedFinanceAccountId) : undefined,
+    status: 'available',
+  });
 
   const payroll = data?.data;
   const deductionTemplates = deductionTemplatesData?.data ?? [];
@@ -88,6 +98,8 @@ export default function PayrollDetailPage() {
   const allowances = payroll?.allowances ?? [];
   const totalDeductions = payroll?.totalDeductions ?? 0;
   const totalAllowances = payroll?.totalAllowances ?? 0;
+  const treasuryAccounts = (treasuryAccountsData?.data ?? []).filter((account) => account.status === 'active');
+  const availableChequeLeaves = (chequeLeavesData?.data ?? []).filter((leaf) => leaf.status === 'available');
 
   const deductionForm = useForm<DeductionFormValues>({
     resolver: zodResolver(deductionFormSchema),
@@ -104,11 +116,43 @@ export default function PayrollDetailPage() {
     const next = NEXT_STATUS_LABELS[payroll.status];
     if (!next) return;
 
+    if (next.label === 'paid') {
+      setShowMarkPaidDialog(true);
+      return;
+    }
+
     try {
       await updateStatusMutation.mutateAsync({ status: next.label });
       toast.success(`Payroll status updated to ${next.label}`);
-    } catch {
-      toast.error('Failed to update payroll status');
+    } catch (error) {
+      parseApiError(error, 'Failed to update payroll status');
+    }
+  };
+
+  const handleMarkPaid = async () => {
+    if (!selectedFinanceAccountId) {
+      toast.error('Select the treasury account used for this payroll payout');
+      return;
+    }
+    if (selectedPaymentMethod === 'cheque' && !selectedChequeLeafId) {
+      toast.error('Select the cheque leaf used for this payroll payout');
+      return;
+    }
+
+    try {
+      await updateStatusMutation.mutateAsync({
+        status: 'paid',
+        financeAccountId: Number(selectedFinanceAccountId),
+        paymentMethod: selectedPaymentMethod,
+        chequeLeafId: selectedPaymentMethod === 'cheque' ? Number(selectedChequeLeafId) : undefined,
+      });
+      toast.success('Payroll marked as paid and posted to treasury');
+      setShowMarkPaidDialog(false);
+      setSelectedFinanceAccountId('');
+      setSelectedPaymentMethod('bank_transfer');
+      setSelectedChequeLeafId('');
+    } catch (error) {
+      parseApiError(error, 'Failed to mark payroll as paid');
     }
   };
 
@@ -369,6 +413,38 @@ export default function PayrollDetailPage() {
       </div>
 
       <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Treasury Posting</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {payroll.treasuryTransactionId ? (
+            <>
+              <p className="font-medium text-foreground">
+                Paid payroll is posted into Treasury.
+              </p>
+              <p className="text-muted-foreground">
+                Treasury transaction #{payroll.treasuryTransactionId} was posted from{' '}
+                {payroll.financeAccountName || (payroll.financeAccountId ? `account #${payroll.financeAccountId}` : 'an unassigned account')} on{' '}
+                {payroll.paidDate ? new Date(payroll.paidDate).toLocaleDateString() : '--'}.
+              </p>
+              <p className="text-muted-foreground">
+                Method: {payroll.paymentMethod ? payroll.paymentMethod.replace('_', ' ') : '--'}
+                {payroll.chequeNumber ? ` • Cheque ${payroll.chequeNumber}` : payroll.chequeLeafId ? ` • Leaf #${payroll.chequeLeafId}` : ''}
+              </p>
+            </>
+          ) : payroll.status === 'approved' ? (
+            <p className="text-muted-foreground">
+              When this payroll is marked as paid, you must choose the treasury account used for the payout so the farm cash position is updated immediately.
+            </p>
+          ) : (
+            <p className="text-muted-foreground">
+              Treasury posting becomes available when this payroll reaches the approved stage.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium text-muted-foreground">Payroll Breakdown</CardTitle>
         </CardHeader>
@@ -382,6 +458,9 @@ export default function PayrollDetailPage() {
           <p><span className="text-muted-foreground">Overtime Rate:</span> {formatCurrency(Number(payroll.overtimeRate ?? 0))}</p>
           <p><span className="text-muted-foreground">Allowances Total:</span> {formatCurrency(totalAllowances)}</p>
           <p><span className="text-muted-foreground">Deductions Total:</span> {formatCurrency(totalDeductions)}</p>
+          <p><span className="text-muted-foreground">Treasury Account:</span> {payroll.financeAccountName || (payroll.financeAccountId ? `Account #${payroll.financeAccountId}` : '--')}</p>
+          <p><span className="text-muted-foreground">Payment Method:</span> {payroll.paymentMethod ? payroll.paymentMethod.replace('_', ' ') : '--'}</p>
+          <p><span className="text-muted-foreground">Cheque:</span> {payroll.chequeNumber || (payroll.chequeLeafId ? `Leaf #${payroll.chequeLeafId}` : '--')}</p>
         </CardContent>
       </Card>
 
@@ -792,6 +871,90 @@ export default function PayrollDetailPage() {
               disabled={deletePayrollMutation.isPending}
             >
               {deletePayrollMutation.isPending ? 'Deleting...' : 'Delete Draft'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showMarkPaidDialog} onOpenChange={setShowMarkPaidDialog}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>Mark Payroll as Paid</DialogTitle>
+            <DialogDescription>
+              Select the treasury account used for this salary payout. This will immediately post the outflow into Treasury.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <FormLabel>Treasury Account</FormLabel>
+            <Select value={selectedFinanceAccountId} onValueChange={setSelectedFinanceAccountId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select treasury account" />
+              </SelectTrigger>
+              <SelectContent>
+                {treasuryAccounts.map((account) => (
+                  <SelectItem key={account.id} value={String(account.id)}>
+                    {account.accountName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {treasuryAccounts.length === 0 ? (
+              <p className="text-xs text-destructive">
+                No active treasury accounts are available. Create one in Treasury before marking payroll as paid.
+              </p>
+            ) : null}
+            <FormLabel className="pt-2">Payment Method</FormLabel>
+            <Select
+              value={selectedPaymentMethod}
+              onValueChange={(value: 'bank_transfer' | 'cash' | 'cheque') => {
+                setSelectedPaymentMethod(value);
+                if (value !== 'cheque') {
+                  setSelectedChequeLeafId('');
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select payment method" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
+              </SelectContent>
+            </Select>
+            {selectedPaymentMethod === 'cheque' ? (
+              <>
+                <FormLabel className="pt-2">Cheque Leaf</FormLabel>
+                <Select value={selectedChequeLeafId} onValueChange={setSelectedChequeLeafId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select available cheque leaf" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableChequeLeaves.map((leaf) => (
+                      <SelectItem key={leaf.id} value={String(leaf.id)}>
+                        {leaf.chequeNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {availableChequeLeaves.length === 0 ? (
+                  <p className="text-xs text-destructive">
+                    No available cheque leaves were found for the selected account. Create a cheque book in Treasury first.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowMarkPaidDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleMarkPaid()}
+              disabled={updateStatusMutation.isPending || treasuryAccounts.length === 0}
+            >
+              {updateStatusMutation.isPending ? 'Posting...' : 'Post to Treasury'}
             </Button>
           </DialogFooter>
         </DialogContent>

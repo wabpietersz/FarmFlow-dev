@@ -20,10 +20,14 @@ import {
   attendance,
   employeeCompensationRevisions,
   employeeCompensationComponents,
+  financeAccounts,
+  chequeLeaves,
 } from '../db/schema';
 import { eq, and, sql, desc, gte, lte, or, isNull, asc, inArray } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
+import { postPayrollToTreasury } from '../lib/treasury';
+import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
 const DEFAULT_STANDARD_HOURS_PER_DAY = 8;
@@ -377,6 +381,12 @@ router.get('/', authenticate, requirePermission('payroll:read'), async (req: Req
         status: payroll.status,
         approvedBy: payroll.approvedBy,
         paidDate: payroll.paidDate,
+        financeAccountId: payroll.financeAccountId,
+        financeAccountName: financeAccounts.accountName,
+        paymentMethod: payroll.paymentMethod,
+        chequeLeafId: payroll.chequeLeafId,
+        chequeNumber: chequeLeaves.chequeNumber,
+        treasuryTransactionId: payroll.treasuryTransactionId,
         compensationRevisionId: payroll.compensationRevisionId,
         totalAllowances: sql<string>`coalesce((select sum(${payrollAllowances.amount}) from ${payrollAllowances} where ${payrollAllowances.payrollId} = ${payroll.id}), 0)`,
         totalDeductions: sql<string>`coalesce((select sum(${payrollDeductions.amount}) from ${payrollDeductions} where ${payrollDeductions.payrollId} = ${payroll.id}), 0)`,
@@ -386,6 +396,8 @@ router.get('/', authenticate, requirePermission('payroll:read'), async (req: Req
       })
       .from(payroll)
       .leftJoin(employees, eq(payroll.employeeId, employees.id))
+      .leftJoin(financeAccounts, eq(payroll.financeAccountId, financeAccounts.id))
+      .leftJoin(chequeLeaves, eq(payroll.chequeLeafId, chequeLeaves.id))
       .$dynamic();
 
     const conditions = [];
@@ -624,6 +636,12 @@ router.get('/:id', authenticate, requirePermission('payroll:read'), async (req: 
         status: payroll.status,
         approvedBy: payroll.approvedBy,
         paidDate: payroll.paidDate,
+        financeAccountId: payroll.financeAccountId,
+        financeAccountName: financeAccounts.accountName,
+        paymentMethod: payroll.paymentMethod,
+        chequeLeafId: payroll.chequeLeafId,
+        chequeNumber: chequeLeaves.chequeNumber,
+        treasuryTransactionId: payroll.treasuryTransactionId,
         compensationRevisionId: payroll.compensationRevisionId,
         compensationSnapshot: payroll.compensationSnapshot,
         notes: payroll.notes,
@@ -632,6 +650,8 @@ router.get('/:id', authenticate, requirePermission('payroll:read'), async (req: 
       })
       .from(payroll)
       .leftJoin(employees, eq(payroll.employeeId, employees.id))
+      .leftJoin(financeAccounts, eq(payroll.financeAccountId, financeAccounts.id))
+      .leftJoin(chequeLeaves, eq(payroll.chequeLeafId, chequeLeaves.id))
       .where(eq(payroll.id, id))
       .limit(1);
 
@@ -1339,7 +1359,12 @@ router.put('/:id', authenticate, requirePermission('payroll:update'), validate(u
 router.put('/:id/status', authenticate, requirePermission('payroll:update'), validate(updatePayrollStatusSchema), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id as string);
-    const { status: newStatus } = req.body;
+    const { status: newStatus, financeAccountId, paymentMethod, chequeLeafId } = req.body as {
+      status: string;
+      financeAccountId?: number;
+      paymentMethod?: 'cash' | 'cheque' | 'bank_transfer';
+      chequeLeafId?: number;
+    };
 
     const [existing] = await db
       .select()
@@ -1380,14 +1405,44 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
       updateData.approvedBy = req.user!.id;
     }
     if (newStatus === 'paid') {
-      updateData.paidDate = new Date().toISOString().split('T')[0];
+      if (!financeAccountId) {
+        res.status(400).json({
+          success: false,
+          error: 'Treasury account is required when marking payroll as paid',
+          code: 'TREASURY_ACCOUNT_REQUIRED',
+          statusCode: 400,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
     }
 
-    const [updated] = await db
-      .update(payroll)
-      .set(updateData)
-      .where(eq(payroll.id, id))
-      .returning();
+    let updated;
+    if (newStatus === 'paid') {
+      await postPayrollToTreasury({
+        payrollId: id,
+        financeAccountId: financeAccountId!,
+        postedBy: req.user!.id,
+        paymentMethod,
+        chequeLeafId: chequeLeafId ?? null,
+      });
+      const [paidRecord] = await db
+        .update(payroll)
+        .set({
+          status: newStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(payroll.id, id))
+        .returning();
+      updated = paidRecord;
+    } else {
+      const [record] = await db
+        .update(payroll)
+        .set(updateData)
+        .where(eq(payroll.id, id))
+        .returning();
+      updated = record;
+    }
 
     createAuditLog({
       userId: req.user!.id,
@@ -1404,6 +1459,10 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
+      sendTreasurySchemaNotReady(res);
+      return;
+    }
     logger.error('Failed to update payroll status', { error });
     res.status(500).json({
       success: false,

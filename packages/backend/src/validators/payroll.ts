@@ -72,6 +72,25 @@ export const updatePayrollSchema = z.object({
 
 export const updatePayrollStatusSchema = z.object({
   status: z.enum(['reviewed', 'approved', 'paid']),
+  financeAccountId: z.number().int().positive().optional(),
+  paymentMethod: z.enum(['cash', 'cheque', 'bank_transfer']).optional(),
+  chequeLeafId: z.number().int().positive().optional(),
+}).superRefine((data, ctx) => {
+  if (data.status === 'paid' && !data.financeAccountId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Treasury account is required when marking payroll as paid',
+      path: ['financeAccountId'],
+    });
+  }
+
+  if (data.status === 'paid' && data.paymentMethod === 'cheque' && !data.chequeLeafId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Cheque leaf is required for cheque payroll disbursement',
+      path: ['chequeLeafId'],
+    });
+  }
 });
 
 export const createDeductionSchema = z.object({
