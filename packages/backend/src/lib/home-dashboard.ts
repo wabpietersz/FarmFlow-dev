@@ -21,6 +21,7 @@ import { listFinanceAccountsWithBalances } from './treasury';
 import { toIsoDate } from './bird-days';
 import { listDueHealthTasks } from './batch-health';
 import { expiringLots } from './stock';
+import { receivablesAgeing, upcomingBookings } from './sales-ops';
 
 export type TodoTone = 'warning' | 'danger' | 'info';
 
@@ -339,6 +340,30 @@ export async function buildHomeDashboard(params: {
     const [alerts] = await db.select({ count: sql<number>`count(*)::int` }).from(inventoryAlerts).where(eq(inventoryAlerts.status, 'active'));
     if (alerts.count > 0) {
       todos.push({ key: 'low-stock', title: `Reorder ${alerts.count} low-stock item${alerts.count === 1 ? '' : 's'}`, detail: 'Below reorder level', href: '/inventory', tone: 'warning' });
+    }
+  }
+
+  if (params.can('sales:read')) {
+    const [catches, ageing] = await Promise.all([upcomingBookings(3), receivablesAgeing()]);
+    if (catches.length > 0) {
+      const first = catches[0];
+      todos.push({
+        key: 'catching-soon',
+        title: `${catches.length} booked catch${catches.length === 1 ? '' : 'es'} in the next 3 days`,
+        detail: `${first.buyerName} · ${first.expectedBirds.toLocaleString('en-US')} birds on ${toIsoDate(first.catchDate)}`,
+        href: '/sales?tab=bookings',
+        tone: 'info',
+      });
+    }
+    const late = ageing.buyers.filter((buyer) => buyer.oldestDaysOverdue > 0);
+    if (late.length > 0) {
+      todos.push({
+        key: 'receivables-overdue',
+        title: `${late.length} buyer${late.length === 1 ? '' : 's'} late paying`,
+        detail: `Rs ${Math.round(ageing.overdue).toLocaleString('en-US')} overdue · ${late[0].buyerName} ${late[0].oldestDaysOverdue} days`,
+        href: '/sales?tab=receivables',
+        tone: late.some((buyer) => buyer.oldestDaysOverdue > 30) ? 'danger' : 'warning',
+      });
     }
   }
 

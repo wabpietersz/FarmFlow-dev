@@ -10,12 +10,13 @@ import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import {
   buildBuyerLedger,
-  createBuyerReceiptForSale,
+  recordBuyerReceipt,
+  ReceiptPostingError,
+  isPostingRuleError,
   getBuyerBalanceSummary,
   getSaleFinancialSummary,
   listBuyerReceiptLines,
 } from '../lib/sales-ledger';
-import { postBuyerReceiptLineToTreasury } from '../lib/treasury';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
@@ -172,23 +173,13 @@ router.post('/:id/receipts', authenticate, requirePermission('payments:create'),
     const receiptDate = req.body.receiptDate ?? req.body.paymentDate;
     const receiptNotes = req.body.receiptNotes ?? req.body.notes;
 
-    const receiptResult = await createBuyerReceiptForSale({
+    const receiptResult = await recordBuyerReceipt({
       buyerId,
       receiptDate,
       notes: receiptNotes || null,
       lines,
       recordedBy: req.user!.id,
     });
-
-    for (const line of receiptResult.lines) {
-      if (line.paymentStatus === 'completed' && line.financeAccountId) {
-        await postBuyerReceiptLineToTreasury({
-          receiptLineId: line.id,
-          financeAccountId: line.financeAccountId,
-          postedBy: req.user!.id,
-        });
-      }
-    }
 
     createAuditLog({
       userId: req.user!.id,
@@ -212,6 +203,10 @@ router.post('/:id/receipts', authenticate, requirePermission('payments:create'),
     });
   } catch (error) {
     if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
+    if (error instanceof ReceiptPostingError || isPostingRuleError(error)) {
+      res.status(400).json({ success: false, error: (error as Error).message, code: 'RECEIPT_NOT_POSTED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -224,7 +219,7 @@ router.post('/:id/receipts', authenticate, requirePermission('payments:create'),
 // POST /api/buyers — create buyer
 router.post('/', authenticate, requirePermission('sales:create'), validate(createBuyerSchema), async (req: Request, res: Response) => {
   try {
-    const { buyerName, contactPerson, phoneNumber, email, address, creditTerms } = req.body;
+    const { buyerName, contactPerson, phoneNumber, email, address, creditTerms, creditLimit } = req.body;
 
     const [existing] = await db.select().from(buyers).where(eq(buyers.buyerName, buyerName)).limit(1);
     if (existing) {
@@ -241,6 +236,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
         email: email || null,
         address: address || null,
         creditTerms: creditTerms ?? 0,
+        creditLimit: creditLimit != null ? Number(creditLimit).toFixed(2) : null,
         status: 'active',
       })
       .returning();
@@ -282,7 +278,11 @@ router.put('/:id', authenticate, requirePermission('sales:update'), validate(upd
 
     const [updated] = await db
       .update(buyers)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set({
+        ...req.body,
+        ...(req.body.creditLimit !== undefined ? { creditLimit: req.body.creditLimit != null ? Number(req.body.creditLimit).toFixed(2) : null } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(buyers.id, buyerId))
       .returning();
 

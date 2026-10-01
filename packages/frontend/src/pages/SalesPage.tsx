@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Plus, Eye, ShoppingCart, Trash2, Users2 } from 'lucide-react';
+import { CalendarClock, Eye, Leaf, Plus, ShoppingCart, Trash2, Users2, Wallet } from 'lucide-react';
+import type { SaleBooking } from '@farmflow/shared';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
 import { useSales, useBuyers, useCreateSale, useCreateBuyer, useUpdateBuyer, useDeleteBuyer } from '@/hooks/useSales';
@@ -19,6 +20,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { buyerFormSchema, saleFormSchema, type BuyerFormValues, type SaleFormValues } from '@/lib/validations/sales';
 import { formatCurrency } from '@/lib/utils';
+import { getApiErrorMessage } from '@/lib/api';
+import { BookingsTab } from '@/components/sales/BookingsTab';
+import { ReceivablesTab } from '@/components/sales/ReceivablesTab';
+import { OtherIncomeDialog } from '@/components/sales/OtherIncomeDialog';
+import { CreditLimitDialog, readCreditBlock, type CreditBlock } from '@/components/sales/CreditLimitDialog';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
   draft: 'bg-muted text-foreground',
@@ -53,14 +59,19 @@ const defaultLorry = {
 
 export default function SalesPage() {
   const { hasPermission } = useAuthStore();
-  const [activeTab, setActiveTab] = useState('sales');
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get('tab') ?? 'sales';
+  const setActiveTab = (tab: string) => setParams({ tab }, { replace: true });
+  const [fromBooking, setFromBooking] = useState<SaleBooking | null>(null);
+  const [showOtherIncome, setShowOtherIncome] = useState(false);
+  const [creditBlock, setCreditBlock] = useState<{ block: CreditBlock; values: SaleFormValues } | null>(null);
   const [salesPage, setSalesPage] = useState(1);
   const [salesStatusFilter, setSalesStatusFilter] = useState('');
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [buyersPage, setBuyersPage] = useState(1);
   const [buyerSearch, setBuyerSearch] = useState('');
   const [showBuyerDialog, setShowBuyerDialog] = useState(false);
-  const [editingBuyer, setEditingBuyer] = useState<{ id: number; buyerName: string; contactPerson?: string | null; phoneNumber?: string | null; email?: string | null; address?: string | null; creditTerms: number } | null>(null);
+  const [editingBuyer, setEditingBuyer] = useState<{ id: number; buyerName: string; contactPerson?: string | null; phoneNumber?: string | null; email?: string | null; address?: string | null; creditTerms: number; creditLimit?: number | string | null } | null>(null);
 
   const { data: salesData, isLoading: salesLoading } = useSales({
     page: salesPage,
@@ -124,14 +135,39 @@ export default function SalesPage() {
 
   const buyerForm = useForm<BuyerFormValues>({
     resolver: zodResolver(buyerFormSchema),
-    defaultValues: { buyerName: '', contactPerson: '', phoneNumber: '', email: '', address: '', creditTerms: 0 },
+    defaultValues: { buyerName: '', contactPerson: '', phoneNumber: '', email: '', address: '', creditTerms: 0, creditLimit: '' },
   });
 
-  const handleCreateSale = async (values: SaleFormValues) => {
+  const resetSaleForm = () => saleForm.reset({
+    batchId: undefined,
+    buyerId: undefined,
+    saleDate: new Date().toISOString().split('T')[0],
+    pricePerKg: 0,
+    lorries: [defaultLorry],
+    notes: '',
+  });
+
+  /** Open the sale form filled in from a booking. */
+  const makeSaleFromBooking = (booking: SaleBooking) => {
+    setFromBooking(booking);
+    saleForm.reset({
+      batchId: booking.batchId,
+      buyerId: booking.buyerId,
+      saleDate: booking.catchDate,
+      pricePerKg: booking.pricePerKg,
+      lorries: [{ ...defaultLorry, birdsCount: booking.expectedBirds }],
+      notes: booking.notes ?? '',
+    });
+    setShowCreateSale(true);
+  };
+
+  const handleCreateSale = async (values: SaleFormValues, creditOverrideReason?: string) => {
     try {
       await createSaleMutation.mutateAsync({
+        saleType: 'live_birds',
         batchId: values.batchId,
         buyerId: values.buyerId,
+        bookingId: fromBooking?.id,
         saleDate: values.saleDate,
         pricePerKg: values.pricePerKg,
         lorries: values.lorries.map((lorry) => ({
@@ -142,19 +178,16 @@ export default function SalesPage() {
           notes: lorry.notes || undefined,
         })),
         notes: values.notes || undefined,
+        creditOverrideReason,
       });
-      toast.success('Sale created in draft');
-      saleForm.reset({
-        batchId: undefined,
-        buyerId: undefined,
-        saleDate: new Date().toISOString().split('T')[0],
-        pricePerKg: 0,
-        lorries: [defaultLorry],
-        notes: '',
-      });
+      toast.success(fromBooking ? `Sale created from ${fromBooking.bookingCode}` : 'Sale created in draft');
+      resetSaleForm();
+      setFromBooking(null);
       setShowCreateSale(false);
-    } catch {
-      toast.error('Failed to create sale');
+    } catch (error) {
+      const block = readCreditBlock(error);
+      if (block) { setCreditBlock({ block, values }); return; }
+      toast.error(getApiErrorMessage(error, 'Failed to create sale'));
     }
   };
 
@@ -168,6 +201,7 @@ export default function SalesPage() {
           email: values.email || null,
           address: values.address || null,
           creditTerms: values.creditTerms,
+          creditLimit: values.creditLimit === '' || values.creditLimit == null ? null : Number(values.creditLimit),
         });
         toast.success('Buyer updated');
       } else {
@@ -178,6 +212,7 @@ export default function SalesPage() {
           email: values.email || null,
           address: values.address || null,
           creditTerms: values.creditTerms,
+          creditLimit: values.creditLimit === '' || values.creditLimit == null ? null : Number(values.creditLimit),
         });
         toast.success('Buyer created');
       }
@@ -199,6 +234,7 @@ export default function SalesPage() {
       email: buyer.email ?? '',
       address: buyer.address ?? '',
       creditTerms: buyer.creditTerms,
+      creditLimit: buyer.creditLimit != null ? Number(buyer.creditLimit) : '',
     });
     setShowBuyerDialog(true);
   };
@@ -215,12 +251,21 @@ export default function SalesPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Sales & Buyers</h1>
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Sales</h1>
+          <p className="mt-1 text-muted-foreground">Bookings, bird sales, other income and who owes you.</p>
+        </div>
         {hasPermission('sales:create') && (
-          <Button onClick={() => setShowCreateSale(true)} className="w-full sm:w-auto">
-            <Plus className="h-4 w-4 mr-2" />
-            New Sale
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => setShowOtherIncome(true)} className="w-full sm:w-auto">
+              <Leaf className="h-4 w-4 mr-2" />
+              Other income
+            </Button>
+            <Button onClick={() => { setFromBooking(null); resetSaleForm(); setShowCreateSale(true); }} className="w-full sm:w-auto">
+              <Plus className="h-4 w-4 mr-2" />
+              New Sale
+            </Button>
+          </div>
         )}
       </div>
 
@@ -232,6 +277,8 @@ export default function SalesPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="sales">Sales</SelectItem>
+              <SelectItem value="bookings">Bookings</SelectItem>
+              <SelectItem value="receivables">Owed to you</SelectItem>
               <SelectItem value="buyers">Buyers</SelectItem>
             </SelectContent>
           </Select>
@@ -241,6 +288,14 @@ export default function SalesPage() {
             <TabsTrigger value="sales" className="gap-2">
               <ShoppingCart className="h-4 w-4" />
               Sales
+            </TabsTrigger>
+            <TabsTrigger value="bookings" className="gap-2">
+              <CalendarClock className="h-4 w-4" />
+              Bookings
+            </TabsTrigger>
+            <TabsTrigger value="receivables" className="gap-2">
+              <Wallet className="h-4 w-4" />
+              Owed to you
             </TabsTrigger>
             <TabsTrigger value="buyers" className="gap-2">
               <Users2 className="h-4 w-4" />
@@ -293,9 +348,9 @@ export default function SalesPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Sale Code</TableHead>
-                        <TableHead>Batch</TableHead>
+                        <TableHead>What</TableHead>
                         <TableHead>Buyer</TableHead>
-                        <TableHead>Birds</TableHead>
+                        <TableHead>Birds / qty</TableHead>
                         <TableHead>Total</TableHead>
                         <TableHead>Outstanding</TableHead>
                         <TableHead>Settlement</TableHead>
@@ -312,13 +367,21 @@ export default function SalesPage() {
                               {sale.saleCode}
                             </Link>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{sale.batchCode ?? '--'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {sale.saleType === 'other_income'
+                              ? <span><span className="font-medium text-foreground">{sale.itemDescription}</span>{sale.batchCode ? ` · ${sale.batchCode}` : sale.siteName ? ` · ${sale.siteName}` : ''}</span>
+                              : sale.batchCode ?? '--'}
+                          </TableCell>
                           <TableCell className="text-muted-foreground">
                             <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">
                               {sale.buyerName ?? '--'}
                             </Link>
                           </TableCell>
-                          <TableCell>{sale.totalBirds.toLocaleString()}</TableCell>
+                          <TableCell>
+                            {sale.saleType === 'other_income'
+                              ? `${Number(sale.quantity ?? 0).toLocaleString()} ${sale.unit ?? ''}`
+                              : sale.totalBirds.toLocaleString()}
+                          </TableCell>
                           <TableCell className="font-medium">{formatCurrency(Number(sale.totalAmount))}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(sale.outstandingBalance ?? 0)}</TableCell>
                           <TableCell>
@@ -355,6 +418,14 @@ export default function SalesPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="bookings">
+          <BookingsTab canBook={hasPermission('sales:create')} onMakeSale={makeSaleFromBooking} />
+        </TabsContent>
+
+        <TabsContent value="receivables">
+          <ReceivablesTab />
         </TabsContent>
 
         <TabsContent value="buyers">
@@ -401,7 +472,7 @@ export default function SalesPage() {
                         <TableHead>Outstanding</TableHead>
                         <TableHead>Advance</TableHead>
                         <TableHead>Net Balance</TableHead>
-                        <TableHead>Credit (days)</TableHead>
+                        <TableHead>Terms / limit</TableHead>
                         <TableHead>Status</TableHead>
                         {hasPermission('sales:update') && <TableHead className="w-[100px]" />}
                       </TableRow>
@@ -422,7 +493,10 @@ export default function SalesPage() {
                           <TableCell className={`font-medium ${(buyer.netBalance ?? 0) > 0 ? 'text-danger' : 'text-success'}`}>
                             {formatCurrency(Math.abs(buyer.netBalance ?? 0))} {(buyer.netBalance ?? 0) > 0 ? 'due' : 'credit'}
                           </TableCell>
-                          <TableCell>{buyer.creditTerms}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {buyer.creditTerms ? `${buyer.creditTerms} days` : 'On delivery'}
+                            {buyer.creditLimit != null ? <span className="block text-xs">limit {formatCurrency(Number(buyer.creditLimit))}</span> : null}
+                          </TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${BUYER_STATUS_COLORS[buyer.status ?? 'active'] ?? ''}`}>
                               {buyer.status ?? 'active'}
@@ -461,14 +535,18 @@ export default function SalesPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={showCreateSale} onOpenChange={setShowCreateSale}>
+      <Dialog open={showCreateSale} onOpenChange={(open) => { setShowCreateSale(open); if (!open) setFromBooking(null); }}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[1080px]">
           <DialogHeader>
-            <DialogTitle>Create New Sale</DialogTitle>
-            <DialogDescription>Record a batch sale and the lorries dispatched to the buyer.</DialogDescription>
+            <DialogTitle>{fromBooking ? `Sale from ${fromBooking.bookingCode}` : 'Create New Sale'}</DialogTitle>
+            <DialogDescription>
+              {fromBooking
+                ? `Booked ${fromBooking.expectedBirds.toLocaleString()} birds for ${fromBooking.buyerName}. Enter the actual lorries and weights.`
+                : 'Record a batch sale and the lorries dispatched to the buyer.'}
+            </DialogDescription>
           </DialogHeader>
           <Form {...saleForm}>
-            <form onSubmit={saleForm.handleSubmit(handleCreateSale)} className="space-y-5">
+            <form onSubmit={saleForm.handleSubmit((values) => handleCreateSale(values))} className="space-y-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <FormField
                   control={saleForm.control}
@@ -781,6 +859,17 @@ export default function SalesPage() {
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={buyerForm.control}
+                  name="creditLimit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Credit limit (Rs)</FormLabel>
+                      <FormControl><Input type="number" inputMode="decimal" min="0" placeholder="No limit" {...field} value={field.value ?? ''} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
               <FormField
                 control={buyerForm.control}
@@ -803,6 +892,13 @@ export default function SalesPage() {
           </Form>
         </DialogContent>
       </Dialog>
+      {showOtherIncome ? <OtherIncomeDialog onClose={() => setShowOtherIncome(false)} /> : null}
+      <CreditLimitDialog
+        block={creditBlock?.block ?? null}
+        pending={createSaleMutation.isPending}
+        onClose={() => setCreditBlock(null)}
+        onConfirm={(reason) => { const values = creditBlock!.values; setCreditBlock(null); void handleCreateSale(values, reason); }}
+      />
     </div>
   );
 }

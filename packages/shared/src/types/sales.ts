@@ -26,6 +26,8 @@ export interface Buyer {
   email?: string | null;
   address?: string | null;
   creditTerms: number;
+  /** Most the buyer may owe at once; null = no limit */
+  creditLimit?: number | string | null;
   status: string;
   totalSales?: number;
   totalReceiptsCompleted?: number;
@@ -37,12 +39,23 @@ export interface Buyer {
   updatedAt: Date;
 }
 
+export type SaleType = 'live_birds' | 'other_income';
+
 export interface Sale {
   id: number;
   saleCode: string;
-  batchId: number;
+  /** live_birds, or other_income (manure, litter, scrap…) */
+  saleType?: SaleType;
+  batchId: number | null;
+  siteId?: number | null;
   buyerId: number;
+  bookingId?: number | null;
   saleDate: Date;
+  dueDate?: string | null;
+  itemDescription?: string | null;
+  quantity?: number | string | null;
+  unit?: string | null;
+  unitPrice?: number | string | null;
   totalBirds: number;
   totalWeight: number;
   pricePerKg: number;
@@ -126,4 +139,60 @@ export interface CreatePaymentRequest {
   receiptDate?: string;
   receiptNotes?: string;
   lines?: ReceiptPaymentLine[];
+}
+
+export type SaleBookingStatus = 'booked' | 'converted' | 'cancelled';
+
+export interface SaleBooking {
+  id: number;
+  bookingCode: string;
+  buyerId: number;
+  buyerName: string;
+  batchId: number;
+  batchCode: string;
+  siteId: number;
+  siteName: string | null;
+  catchDate: string;
+  expectedBirds: number;
+  expectedAvgWeightKg: number | null;
+  expectedWeightKg: number | null;
+  expectedValue: number | null;
+  pricePerKg: number;
+  status: SaleBookingStatus;
+  saleId: number | null;
+  saleCode: string | null;
+  notes: string | null;
+}
+
+export type AgeingBucket = 'current' | 'days1to30' | 'days31to60' | 'days61to90' | 'over90';
+
+export interface ReceivablesAgeing {
+  asOf: string;
+  totals: Record<AgeingBucket, number>;
+  totalOwed: number;
+  overdue: number;
+  buyers: Array<{
+    buyerId: number;
+    buyerName: string;
+    phoneNumber: string | null;
+    creditTerms: number;
+    creditLimit: number | null;
+    buckets: Record<AgeingBucket, number>;
+    totalOwed: number;
+    unappliedCredit: number;
+    oldestDaysOverdue: number;
+    sales: Array<{ saleId: number; saleCode: string; saleDate: string; dueDate: string; outstanding: number; daysOverdue: number; bucket: AgeingBucket }>;
+  }>;
+}
+
+export interface BuyerStatement {
+  buyer: { id: number; buyerName: string; contactPerson: string | null; phoneNumber: string | null; address: string | null; creditTerms: number; creditLimit: number | null };
+  from: string;
+  to: string;
+  openingBalance: number;
+  totalSales: number;
+  totalReceived: number;
+  closingBalance: number;
+  entries: Array<{ id: string; entryType: 'sale' | 'receipt'; entryDate: string; referenceCode: string; description: string; debit: number; credit: number; runningBalance: number; status: string; paymentMethod?: string | null }>;
+  ageing: Record<AgeingBucket, number>;
 }

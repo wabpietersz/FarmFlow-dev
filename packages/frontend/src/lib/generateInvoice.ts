@@ -23,6 +23,8 @@ interface InvoiceData {
   }[];
   totalPaid: number;
   outstandingBalance: number;
+  /** For other income (litter, manure…): replaces the broiler line */
+  line?: { description: string; quantityText: string; rateText: string };
 }
 
 export function generateInvoicePDF(data: InvoiceData) {
@@ -88,7 +90,7 @@ export function generateInvoicePDF(data: InvoiceData) {
   doc.setFont('helvetica', 'bold');
   doc.text('Batch:', metaX - 60, metaY);
   doc.setFont('helvetica', 'normal');
-  doc.text(data.batchCode, metaX, metaY, { align: 'right' });
+  doc.text(data.batchCode || '--', metaX, metaY, { align: 'right' });
 
   metaY += 6;
   doc.setFont('helvetica', 'bold');
@@ -109,15 +111,15 @@ export function generateInvoicePDF(data: InvoiceData) {
   doc.rect(14, y - 4, pageWidth - 28, 8, 'F');
   doc.text('Description', 16, y);
   doc.text('Qty / Weight', 100, y, { align: 'right' });
-  doc.text('Price/kg', 140, y, { align: 'right' });
+  doc.text(data.line ? 'Rate' : 'Price/kg', 140, y, { align: 'right' });
   doc.text('Amount', pageWidth - 16, y, { align: 'right' });
   y += 8;
 
   // --- Line Item ---
   doc.setFont('helvetica', 'normal');
-  doc.text(`Broiler chickens (${data.batchCode})`, 16, y);
-  doc.text(`${data.totalBirds.toLocaleString()} birds / ${data.totalWeight.toFixed(1)} kg`, 100, y, { align: 'right' });
-  doc.text(`Rs. ${data.pricePerKg.toFixed(2)}/kg`, 140, y, { align: 'right' });
+  doc.text(data.line ? data.line.description : `Broiler chickens (${data.batchCode})`, 16, y);
+  doc.text(data.line ? data.line.quantityText : `${data.totalBirds.toLocaleString()} birds / ${data.totalWeight.toFixed(1)} kg`, 100, y, { align: 'right' });
+  doc.text(data.line ? data.line.rateText : `Rs. ${data.pricePerKg.toFixed(2)}/kg`, 140, y, { align: 'right' });
   doc.text(`Rs. ${data.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 16, y, { align: 'right' });
   y += 8;
 

@@ -5,16 +5,16 @@ import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { updatePaymentSchema } from '../validators/sales';
 import { db } from '../db';
-import { buyerReceiptAllocations, buyerReceiptLines, payments, sales } from '../db/schema';
+import { buyerReceiptAllocations, buyerReceiptLines, buyerReceipts } from '../db/schema';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
-import { getSalePaymentRows, parsePaymentIdentifier, syncSaleStatusFromPayments } from '../lib/sales-ledger';
-import { postBuyerReceiptLineToTreasury, reverseBuyerReceiptLineTreasuryPosting } from '../lib/treasury';
+import { getSalePaymentRows, isPostingRuleError, parsePaymentIdentifier, syncSaleStatusFromPayments } from '../lib/sales-ledger';
+import { postBuyerReceiptLineWithin, reverseBuyerReceiptLineWithin } from '../lib/treasury';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
 
-// GET /api/payments — list payments (supports receipt lines and legacy payments)
+// GET /api/payments — list buyer receipt lines
 router.get('/', authenticate, requirePermission('payments:read'), async (req: Request, res: Response) => {
   try {
     const { saleId, page = '1', limit = '20' } = req.query;
@@ -37,31 +37,12 @@ router.get('/', authenticate, requirePermission('payments:read'), async (req: Re
       return;
     }
 
-    const legacyRows = await db
-      .select({
-        id: payments.id,
-        saleId: payments.saleId,
-        saleCode: sales.saleCode,
-        paymentAmount: payments.paymentAmount,
-        paymentDate: payments.paymentDate,
-        paymentMethod: payments.paymentMethod,
-        chequeNumber: payments.chequeNumber,
-        chequeDate: payments.chequeDate,
-        bankName: payments.bankName,
-        paymentStatus: payments.paymentStatus,
-        notes: payments.notes,
-        createdAt: payments.createdAt,
-        updatedAt: payments.updatedAt,
-      })
-      .from(payments)
-      .leftJoin(sales, eq(payments.saleId, sales.id))
-      .orderBy(desc(payments.paymentDate));
-
     const receiptLineRows = await db
       .select({
         id: buyerReceiptLines.id,
+        receiptCode: buyerReceipts.receiptCode,
         paymentAmount: buyerReceiptLines.paymentAmount,
-        paymentDate: buyerReceiptLines.createdAt,
+        paymentDate: buyerReceipts.receiptDate,
         paymentMethod: buyerReceiptLines.paymentMethod,
         chequeNumber: buyerReceiptLines.chequeNumber,
         chequeDate: buyerReceiptLines.chequeDate,
@@ -72,23 +53,16 @@ router.get('/', authenticate, requirePermission('payments:read'), async (req: Re
         updatedAt: buyerReceiptLines.updatedAt,
       })
       .from(buyerReceiptLines)
-      .orderBy(desc(buyerReceiptLines.createdAt));
+      .innerJoin(buyerReceipts, eq(buyerReceiptLines.receiptId, buyerReceipts.id))
+      .orderBy(desc(buyerReceipts.receiptDate), desc(buyerReceiptLines.id));
 
-    const combined = [
-      ...legacyRows.map((row) => ({
-        ...row,
-        id: `legacy-${row.id}`,
-        source: 'legacy',
-      })),
-      ...receiptLineRows.map((row) => ({
-        ...row,
-        id: `receipt-line-${row.id}`,
-        saleId: null,
-        saleCode: null,
-        paymentDate: row.paymentDate.toISOString().split('T')[0],
-        source: 'receipt_line',
-      })),
-    ].sort((a, b) => new Date(String(b.paymentDate)).getTime() - new Date(String(a.paymentDate)).getTime());
+    const combined = receiptLineRows.map((row) => ({
+      ...row,
+      id: `receipt-line-${row.id}`,
+      saleId: null,
+      saleCode: null,
+      source: 'receipt_line',
+    }));
 
     const start = (pageNum - 1) * limitNum;
     const pagedRows = combined.slice(start, start + limitNum);
@@ -154,35 +128,30 @@ router.put('/:id', authenticate, requirePermission('payments:update'), validate(
         return;
       }
 
-      const [updated] = await db
-        .update(buyerReceiptLines)
-        .set({ ...req.body, updatedAt: new Date() })
-        .where(eq(buyerReceiptLines.id, parsed.id))
-        .returning();
+      // Status change, ledger posting/reversal and sale status move together or not at all
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(buyerReceiptLines)
+          .set({ ...req.body, updatedAt: new Date() })
+          .where(eq(buyerReceiptLines.id, parsed.id))
+          .returning();
 
-      if (existing.paymentStatus !== 'completed' && updated.paymentStatus === 'completed' && updated.financeAccountId) {
-        await postBuyerReceiptLineToTreasury({
-          receiptLineId: updated.id,
-          financeAccountId: updated.financeAccountId,
-          postedBy: req.user!.id,
-        });
-      }
+        if (existing.paymentStatus !== 'completed' && row.paymentStatus === 'completed' && row.financeAccountId) {
+          await postBuyerReceiptLineWithin(tx, { receiptLineId: row.id, financeAccountId: row.financeAccountId, postedBy: req.user!.id });
+        }
+        if (existing.paymentStatus === 'completed' && row.paymentStatus === 'bounced' && existing.treasuryTransactionId) {
+          await reverseBuyerReceiptLineWithin(tx, { receiptLineId: row.id, postedBy: req.user!.id });
+        }
 
-      if (existing.paymentStatus === 'completed' && updated.paymentStatus === 'bounced' && existing.treasuryTransactionId) {
-        await reverseBuyerReceiptLineTreasuryPosting({
-          receiptLineId: updated.id,
-          postedBy: req.user!.id,
-        });
-      }
-
-      const allocations = await db
-        .select({ saleId: buyerReceiptAllocations.saleId })
-        .from(buyerReceiptAllocations)
-        .where(eq(buyerReceiptAllocations.receiptLineId, parsed.id));
-
-      for (const allocation of allocations) {
-        await syncSaleStatusFromPayments(allocation.saleId);
-      }
+        const allocations = await tx
+          .select({ saleId: buyerReceiptAllocations.saleId })
+          .from(buyerReceiptAllocations)
+          .where(eq(buyerReceiptAllocations.receiptLineId, parsed.id));
+        for (const allocation of allocations) {
+          await syncSaleStatusFromPayments(allocation.saleId, tx);
+        }
+        return row;
+      });
 
       createAuditLog({
         userId: req.user!.id,
@@ -203,40 +172,14 @@ router.put('/:id', authenticate, requirePermission('payments:update'), validate(
       return;
     }
 
-    const [existing] = await db.select().from(payments).where(eq(payments.id, parsed.id)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Payment not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const [updated] = await db
-      .update(payments)
-      .set({ ...req.body, updatedAt: new Date() })
-      .where(eq(payments.id, parsed.id))
-      .returning();
-
-    if (req.body.paymentStatus) {
-      await syncSaleStatusFromPayments(existing.saleId);
-    }
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'payment_updated',
-      entityType: 'payment',
-      entityId: parsed.id,
-      changes: { before: { paymentStatus: existing.paymentStatus }, after: { paymentStatus: updated.paymentStatus } },
-    });
-
-    res.json({
-      success: true,
-      data: {
-        ...updated,
-        id: `legacy-${updated.id}`,
-      },
-      timestamp: new Date().toISOString(),
-    });
+    // Old-style payment rows were converted to receipts (migration 0007) and are read-only history.
+    res.status(400).json({ success: false, error: 'This is an old payment record. Update the converted receipt instead.', code: 'LEGACY_PAYMENT_READ_ONLY', statusCode: 400, timestamp: new Date().toISOString() });
   } catch (error) {
     if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
+    if (isPostingRuleError(error)) {
+      res.status(400).json({ success: false, error: (error as Error).message, code: 'RECEIPT_NOT_POSTED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;

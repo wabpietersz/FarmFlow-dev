@@ -5,11 +5,11 @@ import {
   buyerReceiptLines,
   buyerReceipts,
   financeAccounts,
-  payments,
   saleLorries,
   sales,
 } from '../db/schema';
 import { assertPeriodOpen } from './period-locks';
+import { postBuyerReceiptLineWithin } from './treasury';
 
 export interface SaleLorryInput {
   lorryNumber: string;
@@ -177,8 +177,10 @@ export async function listSaleLorries(saleId: number) {
     .orderBy(asc(saleLorries.lineSequence));
 }
 
-export async function getNewSalePayments(saleId: number): Promise<PaymentRow[]> {
-  const rows = await db
+export async function getNewSalePayments(saleId: number, executor: typeof db | any = db): Promise<PaymentRow[]> {
+  // Typed view of the executor (db or a transaction) so row types are inferred
+  const runner: typeof db = executor;
+  const rows = await runner
     .select({
       lineId: buyerReceiptLines.id,
       receiptId: buyerReceipts.id,
@@ -232,40 +234,11 @@ export async function getNewSalePayments(saleId: number): Promise<PaymentRow[]> 
   }));
 }
 
-export async function getLegacySalePayments(saleId: number): Promise<PaymentRow[]> {
-  const rows = await db
-    .select()
-    .from(payments)
-    .where(eq(payments.saleId, saleId))
-    .orderBy(desc(payments.paymentDate));
+export async function getSalePaymentRows(saleId: number, executor: typeof db | any = db): Promise<PaymentRow[]> {
+  // Old-style `payments` rows were converted to receipts in migration 0007; receipts are the only source now.
+  const rows = await getNewSalePayments(saleId, executor);
 
-  return rows.map((row) => ({
-    id: `legacy-${row.id}`,
-    source: 'legacy',
-    saleId: row.saleId,
-    paymentAmount: String(row.paymentAmount),
-    paymentDate: toDateString(row.paymentDate),
-    paymentMethod: row.paymentMethod,
-    chequeNumber: row.chequeNumber,
-    chequeDate: row.chequeDate ? toDateString(row.chequeDate) : null,
-    bankName: row.bankName,
-    paymentStatus: row.paymentStatus,
-    notes: row.notes,
-    recordedBy: row.recordedBy,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
-}
-
-export async function getSalePaymentRows(saleId: number): Promise<PaymentRow[]> {
-  const [newRows, legacyRows] = await Promise.all([
-    getNewSalePayments(saleId),
-    getLegacySalePayments(saleId),
-  ]);
-
-  const effectiveRows = newRows.length > 0 ? newRows : legacyRows;
-
-  return effectiveRows.sort((a, b) => {
+  return rows.sort((a, b) => {
     const dateDiff = new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime();
     if (dateDiff !== 0) {
       return dateDiff;
@@ -274,8 +247,8 @@ export async function getSalePaymentRows(saleId: number): Promise<PaymentRow[]> 
   });
 }
 
-export async function getSaleFinancialSummary(saleId: number, totalAmount: number) {
-  const paymentRows = await getSalePaymentRows(saleId);
+export async function getSaleFinancialSummary(saleId: number, totalAmount: number, executor: typeof db | any = db) {
+  const paymentRows = await getSalePaymentRows(saleId, executor);
   const totalPaid = paymentRows
     .filter((row) => row.paymentStatus === 'completed')
     .reduce((sum, row) => sum + Number(row.paymentAmount), 0);
@@ -289,23 +262,23 @@ export async function getSaleFinancialSummary(saleId: number, totalAmount: numbe
   };
 }
 
-export async function syncSaleStatusFromPayments(saleId: number) {
-  const [sale] = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1);
+export async function syncSaleStatusFromPayments(saleId: number, executor: typeof db | any = db) {
+  const [sale] = await executor.select().from(sales).where(eq(sales.id, saleId)).limit(1);
   if (!sale || sale.status === 'cancelled' || sale.status === 'draft') {
     return;
   }
 
-  const financial = await getSaleFinancialSummary(saleId, Number(sale.totalAmount));
+  const financial = await getSaleFinancialSummary(saleId, Number(sale.totalAmount), executor);
   const nextStatus = financial.totalPaid >= Number(sale.totalAmount) - 0.01 ? 'completed' : 'reviewed';
 
   if (sale.status !== nextStatus) {
-    await db.update(sales).set({ status: nextStatus, updatedAt: new Date() }).where(eq(sales.id, saleId));
+    await executor.update(sales).set({ status: nextStatus, updatedAt: new Date() }).where(eq(sales.id, saleId));
   }
 }
 
-async function getNextReceiptCode(receiptDate: string) {
+async function getNextReceiptCode(receiptDate: string, executor: typeof db | any = db) {
   const dateStr = receiptDate.replace(/-/g, '');
-  const [countResult] = await db
+  const [countResult] = await executor
     .select({ count: sql<number>`count(*)::int` })
     .from(buyerReceipts)
     .where(sql`${buyerReceipts.receiptCode} LIKE ${'RCT-' + dateStr + '-%'}`);
@@ -369,10 +342,10 @@ export async function createBuyerReceiptForSale(params: {
   notes?: string | null;
   lines: ReceiptLineInput[];
   recordedBy: number;
-}) {
+}, executor: typeof db | any = db) {
   await assertPeriodOpen(params.receiptDate, 'financial');
-  const receiptCode = await getNextReceiptCode(params.receiptDate);
-  const [receipt] = await db
+  const receiptCode = await getNextReceiptCode(params.receiptDate, executor);
+  const [receipt] = await executor
     .insert(buyerReceipts)
     .values({
       receiptCode,
@@ -387,9 +360,9 @@ export async function createBuyerReceiptForSale(params: {
   let remainingForSale = 0;
 
   if (params.saleId) {
-    const [sale] = await db.select().from(sales).where(eq(sales.id, params.saleId)).limit(1);
+    const [sale] = await executor.select().from(sales).where(eq(sales.id, params.saleId)).limit(1);
     if (sale) {
-      const financial = await getSaleFinancialSummary(sale.id, Number(sale.totalAmount));
+      const financial = await getSaleFinancialSummary(sale.id, Number(sale.totalAmount), executor);
       remainingForSale = Math.max(financial.outstandingBalance, 0);
     }
   }
@@ -397,7 +370,7 @@ export async function createBuyerReceiptForSale(params: {
   for (let index = 0; index < params.lines.length; index += 1) {
     const line = params.lines[index];
     const paymentStatus = line.paymentMethod === 'cheque' ? 'pending' : 'completed';
-    const [createdLine] = await db
+    const [createdLine] = await executor
       .insert(buyerReceiptLines)
       .values({
         receiptId: receipt.id,
@@ -419,7 +392,7 @@ export async function createBuyerReceiptForSale(params: {
     if (params.saleId && remainingForSale > 0.009) {
       const allocatedAmount = Number(Math.min(line.paymentAmount, remainingForSale).toFixed(2));
       if (allocatedAmount > 0) {
-        await db.insert(buyerReceiptAllocations).values({
+        await executor.insert(buyerReceiptAllocations).values({
           receiptLineId: createdLine.id,
           saleId: params.saleId,
           allocatedAmount: allocatedAmount.toFixed(2),
@@ -430,7 +403,7 @@ export async function createBuyerReceiptForSale(params: {
   }
 
   if (params.saleId) {
-    await syncSaleStatusFromPayments(params.saleId);
+    await syncSaleStatusFromPayments(params.saleId, executor);
   }
 
   return { receipt, lines: createdLines };
@@ -441,22 +414,6 @@ export async function getBuyerBalanceSummary(buyerId: number): Promise<BuyerBala
     .select({ total: sql<number>`COALESCE(sum(${sales.totalAmount}::numeric), 0)::float` })
     .from(sales)
     .where(and(eq(sales.buyerId, buyerId), sql`${sales.status} <> 'cancelled'`));
-
-  const [legacyResult] = await db
-    .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
-    .from(payments)
-    .leftJoin(sales, eq(payments.saleId, sales.id))
-    .where(
-      and(
-        eq(sales.buyerId, buyerId),
-        eq(payments.paymentStatus, 'completed'),
-        sql`NOT EXISTS (
-          SELECT 1
-          FROM ${buyerReceiptAllocations}
-          WHERE ${buyerReceiptAllocations.saleId} = ${payments.saleId}
-        )`,
-      ),
-    );
 
   const [newReceiptResult] = await db
     .select({ total: sql<number>`COALESCE(sum(${buyerReceiptLines.paymentAmount}::numeric), 0)::float` })
@@ -472,10 +429,9 @@ export async function getBuyerBalanceSummary(buyerId: number): Promise<BuyerBala
     .where(and(eq(buyerReceipts.buyerId, buyerId), eq(buyerReceiptLines.paymentStatus, 'completed')));
 
   const totalSales = salesResult?.total ?? 0;
-  const totalLegacyReceipts = legacyResult?.total ?? 0;
   const totalNewReceipts = newReceiptResult?.total ?? 0;
-  const totalReceiptsCompleted = Number((totalLegacyReceipts + totalNewReceipts).toFixed(2));
-  const totalAppliedToSales = Number(((allocationResult?.total ?? 0) + totalLegacyReceipts).toFixed(2));
+  const totalReceiptsCompleted = Number(totalNewReceipts.toFixed(2));
+  const totalAppliedToSales = Number((allocationResult?.total ?? 0).toFixed(2));
   const outstandingBalance = Math.max(Number((totalSales - totalReceiptsCompleted).toFixed(2)), 0);
   const advanceCredit = Math.max(Number((totalNewReceipts - (allocationResult?.total ?? 0)).toFixed(2)), 0);
   const netBalance = Number((totalSales - totalReceiptsCompleted).toFixed(2));
@@ -598,7 +554,7 @@ export async function listBuyerReceiptLines(buyerId: number): Promise<BuyerRecei
 }
 
 export async function buildBuyerLedger(buyerId: number): Promise<BuyerLedgerEntry[]> {
-  const [buyerSales, legacyPayments, newReceipts] = await Promise.all([
+  const [buyerSales, newReceipts] = await Promise.all([
     db
       .select({
         id: sales.id,
@@ -606,22 +562,12 @@ export async function buildBuyerLedger(buyerId: number): Promise<BuyerLedgerEntr
         saleDate: sales.saleDate,
         totalAmount: sales.totalAmount,
         status: sales.status,
+        saleType: sales.saleType,
+        itemDescription: sales.itemDescription,
       })
       .from(sales)
       .where(and(eq(sales.buyerId, buyerId), sql`${sales.status} <> 'cancelled'`))
       .orderBy(asc(sales.saleDate), asc(sales.id)),
-    db
-      .select({
-        id: payments.id,
-        paymentDate: payments.paymentDate,
-        paymentAmount: payments.paymentAmount,
-        paymentMethod: payments.paymentMethod,
-        paymentStatus: payments.paymentStatus,
-      })
-      .from(payments)
-      .leftJoin(sales, eq(payments.saleId, sales.id))
-      .where(eq(sales.buyerId, buyerId))
-      .orderBy(asc(payments.paymentDate), asc(payments.id)),
     db
       .select({
         id: buyerReceiptLines.id,
@@ -643,26 +589,13 @@ export async function buildBuyerLedger(buyerId: number): Promise<BuyerLedgerEntr
       entryType: 'sale' as const,
       entryDate: toDateString(sale.saleDate),
       referenceCode: sale.saleCode ?? `SALE-${sale.id}`,
-      description: 'Batch sale',
+      description: sale.saleType === 'other_income' ? (sale.itemDescription || 'Other income') : 'Live bird sale',
       amount: Number(sale.totalAmount),
       debit: Number(sale.totalAmount),
       credit: 0,
       status: normalizeSaleWorkflowStatus(sale.status),
       paymentMethod: null,
       sortGroup: 0,
-    })),
-    ...legacyPayments.map((payment) => ({
-      id: `legacy-${payment.id}`,
-      entryType: 'receipt' as const,
-      entryDate: toDateString(payment.paymentDate),
-      referenceCode: `PAY-${payment.id}`,
-      description: 'Sale payment',
-      amount: Number(payment.paymentAmount),
-      debit: 0,
-      credit: payment.paymentStatus === 'completed' ? Number(payment.paymentAmount) : 0,
-      status: payment.paymentStatus,
-      paymentMethod: payment.paymentMethod,
-      sortGroup: 1,
     })),
     ...newReceipts.map((receiptLine) => ({
       id: `receipt-line-${receiptLine.id}`,
@@ -705,4 +638,30 @@ export async function buildBuyerLedger(buyerId: number): Promise<BuyerLedgerEntr
       paymentMethod: entry.paymentMethod,
     };
   });
+}
+
+/**
+ * Records a buyer receipt and posts every completed line into the money ledger in ONE transaction.
+ * If posting fails (closed account, period lock, missing category…) nothing is saved, so a receipt
+ * can never exist without its money line.
+ */
+export async function recordBuyerReceipt(params: Parameters<typeof createBuyerReceiptForSale>[0]) {
+  return db.transaction(async (tx) => {
+    const result = await createBuyerReceiptForSale(params, tx);
+    for (const line of result.lines) {
+      if (line.paymentStatus !== 'completed') continue;
+      if (!line.financeAccountId) {
+        throw new ReceiptPostingError('Choose the account the money was paid into');
+      }
+      await postBuyerReceiptLineWithin(tx, { receiptLineId: line.id, financeAccountId: line.financeAccountId, postedBy: params.recordedBy });
+    }
+    return result;
+  });
+}
+
+export class ReceiptPostingError extends Error {}
+
+/** Business-rule failures from posting that the person can fix (not server faults). */
+export function isPostingRuleError(error: unknown) {
+  return error instanceof Error && /closed period|finance account not found|finance account is required/i.test(error.message);
 }

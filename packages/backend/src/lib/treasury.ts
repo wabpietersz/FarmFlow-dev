@@ -223,7 +223,9 @@ async function getBuyerReceiptSaleLinks(receiptLineId: number, executor: typeof 
     .select({
       saleId: sales.id,
       saleCode: sales.saleCode,
+      saleType: sales.saleType,
       batchId: sales.batchId,
+      siteId: sales.siteId,
       allocatedAmount: buyerReceiptAllocations.allocatedAmount,
     })
     .from(buyerReceiptAllocations)
@@ -232,12 +234,19 @@ async function getBuyerReceiptSaleLinks(receiptLineId: number, executor: typeof 
     .orderBy(desc(buyerReceiptAllocations.id));
 }
 
-export async function postBuyerReceiptLineToTreasury(params: {
+type PostBuyerReceiptLineParams = {
   receiptLineId: number;
   financeAccountId?: number | null;
   postedBy: number;
-}) {
-  return db.transaction(async (tx) => {
+};
+
+export async function postBuyerReceiptLineToTreasury(params: PostBuyerReceiptLineParams) {
+  return db.transaction((tx) => postBuyerReceiptLineWithin(tx, params));
+}
+
+/** Posts a receipt line using the caller's transaction, so the receipt and its money line commit together. */
+export async function postBuyerReceiptLineWithin(tx: typeof db | any, params: PostBuyerReceiptLineParams) {
+  {
     const receiptLine = await getBuyerReceiptPostingContext(params.receiptLineId, tx);
     const targetAccountId = params.financeAccountId ?? receiptLine.financeAccountId;
 
@@ -338,15 +347,22 @@ export async function postBuyerReceiptLineToTreasury(params: {
       .where(eq(buyerReceiptLines.id, receiptLine.lineId));
 
     return { treasuryTransactionId: treasuryTransaction.id, posted: true };
-  });
+  }
 }
 
-export async function reverseBuyerReceiptLineTreasuryPosting(params: {
+type ReverseBuyerReceiptLineParams = {
   receiptLineId: number;
   postedBy: number;
   reversalDate?: string;
-}) {
-  return db.transaction(async (tx) => {
+};
+
+export async function reverseBuyerReceiptLineTreasuryPosting(params: ReverseBuyerReceiptLineParams) {
+  return db.transaction((tx) => reverseBuyerReceiptLineWithin(tx, params));
+}
+
+/** Reverses a receipt line's posting using the caller's transaction. */
+export async function reverseBuyerReceiptLineWithin(tx: typeof db | any, params: ReverseBuyerReceiptLineParams) {
+  {
     const receiptLine = await getBuyerReceiptPostingContext(params.receiptLineId, tx);
 
     if (!receiptLine.treasuryTransactionId || !receiptLine.financeAccountId) {
@@ -419,7 +435,7 @@ export async function reverseBuyerReceiptLineTreasuryPosting(params: {
       .where(eq(buyerReceiptLines.id, receiptLine.lineId));
 
     return { treasuryTransactionId: reversalTransaction.id, reversed: true };
-  });
+  }
 }
 
 export async function postPayrollToTreasury(params: {
@@ -619,13 +635,16 @@ async function buildReceiptEntries(params: {
   totalAmount: number;
   valueDate: string;
   notes: string;
-  saleLinks: Array<{ saleId: number | null; batchId: number | null; allocatedAmount: string | number }>;
+  saleLinks: Array<{ saleId: number | null; saleType?: string | null; batchId: number | null; siteId?: number | null; allocatedAmount: string | number }>;
 }): Promise<TreasuryEntryInput[]> {
   const entries: TreasuryEntryInput[] = [];
   let allocatedCents = 0;
   for (const link of params.saleLinks) {
     const cents = Math.round(Number(link.allocatedAmount) * 100);
-    if (cents <= 0 || !link.batchId) continue;
+    if (cents <= 0) continue;
+    // Bird sales belong to their batch; manure/litter/scrap go to Other Farm Income on the batch or farm
+    const isOtherIncome = link.saleType === 'other_income';
+    if (!link.batchId && !(isOtherIncome && link.siteId)) continue;
     allocatedCents += cents;
     entries.push({
       financeAccountId: params.financeAccountId,
@@ -633,7 +652,9 @@ async function buildReceiptEntries(params: {
       amount: cents / 100,
       valueDate: params.valueDate,
       notes: params.notes,
-      tags: { categoryCode: 'bird_sales', batchId: link.batchId },
+      tags: isOtherIncome
+        ? (link.batchId ? { categoryCode: 'other_farm_income', batchId: link.batchId } : { categoryCode: 'other_farm_income', siteId: link.siteId })
+        : { categoryCode: 'bird_sales', batchId: link.batchId },
     });
   }
   const remainderCents = Math.round(params.totalAmount * 100) - allocatedCents;

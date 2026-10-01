@@ -16,6 +16,7 @@ export const createBuyerSchema = z.object({
   email: z.string().email('Invalid email').max(100).nullable().optional().or(z.literal('')),
   address: z.string().max(500).nullable().optional(),
   creditTerms: z.number().int().min(0).default(0),
+  creditLimit: z.number().nonnegative().nullable().optional(),
 });
 
 export const updateBuyerSchema = z.object({
@@ -25,20 +26,42 @@ export const updateBuyerSchema = z.object({
   email: z.string().email().max(100).nullable().optional(),
   address: z.string().max(500).nullable().optional(),
   creditTerms: z.number().int().min(0).optional(),
+  creditLimit: z.number().nonnegative().nullable().optional(),
   status: z.enum(['active', 'inactive']).optional(),
 });
 
 // Sale validators
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)');
+
 export const createSaleSchema = z.object({
-  batchId: z.number().int().positive('Batch is required'),
+  /** live_birds (default) or other_income: manure, litter, scrap… */
+  saleType: z.enum(['live_birds', 'other_income']).default('live_birds'),
+  batchId: z.number().int().positive('Batch is required').optional(),
+  siteId: z.number().int().positive().optional(),
   buyerId: z.number().int().positive('Buyer is required'),
-  saleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+  bookingId: z.number().int().positive().optional(),
+  saleDate: isoDate,
   totalBirds: z.number().int().positive('Number of birds must be positive').optional(),
   totalWeight: z.number().positive('Total weight must be positive').optional(),
-  pricePerKg: z.number().positive('Price per kg must be positive'),
+  pricePerKg: z.number().positive('Price per kg must be positive').optional(),
   lorries: z.array(saleLorrySchema).min(1, 'At least one lorry line is required').optional(),
+  itemDescription: z.string().trim().max(200).optional(),
+  quantity: z.number().positive('Quantity must be positive').optional(),
+  unit: z.string().trim().max(30).optional(),
+  unitPrice: z.number().positive('Unit price must be positive').optional(),
+  /** Admins may go over a buyer's credit limit with a reason */
+  creditOverrideReason: z.string().trim().max(500).optional(),
   notes: z.string().max(1000).optional(),
 }).superRefine((data, ctx) => {
+  if (data.saleType === 'other_income') {
+    if (!data.itemDescription) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Say what was sold (e.g. Litter)', path: ['itemDescription'] });
+    if (!data.quantity) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Quantity is required', path: ['quantity'] });
+    if (!data.unitPrice) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Unit price is required', path: ['unitPrice'] });
+    if (!data.batchId && !data.siteId) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose the farm (or batch) this income belongs to', path: ['siteId'] });
+    return;
+  }
+  if (!data.batchId) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Batch is required', path: ['batchId'] });
+  if (!data.pricePerKg) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Price per kg is required', path: ['pricePerKg'] });
   if (!data.lorries?.length && (!data.totalBirds || !data.totalWeight)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -46,6 +69,20 @@ export const createSaleSchema = z.object({
       path: ['lorries'],
     });
   }
+});
+
+export const createBookingSchema = z.object({
+  buyerId: z.number().int().positive('Buyer is required'),
+  batchId: z.number().int().positive('Batch is required'),
+  catchDate: isoDate,
+  expectedBirds: z.number().int().positive('Expected birds must be positive'),
+  expectedAvgWeightKg: z.number().positive().max(10).nullable().optional(),
+  pricePerKg: z.number().positive('Price per kg must be positive'),
+  notes: z.string().max(1000).nullable().optional(),
+});
+
+export const updateBookingSchema = createBookingSchema.partial().extend({
+  status: z.enum(['booked', 'cancelled']).optional(),
 });
 
 export const updateSaleSchema = z.object({

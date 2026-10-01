@@ -130,7 +130,10 @@ Original plan:
 - GRN ↔ invoice quantity/price matching.
 - Lot expiry and alerts.
 
-### Phase 5: Sales completion
+### Phase 5: Sales completion — ✅ DONE (2026-10-01)
+Receipts and their money-ledger posting now save in one transaction (also cheque clear/bounce), so a receipt can never exist without its money line. Old `payments` rows converted to buyer receipts (migration 0007; 3 rows in dev) and no code reads that table any more. **Bookings**: buyer + batch + catch date + birds + price/kg, guarded against over-booking a batch; "Make the sale" pre-fills the sale and links it (cancelling the sale re-opens the booking). **Other income**: manure, litter, scrap etc. as a sale type with item/qty/unit price, farm and optional batch; receipts post to *Other Farm Income*. **Credit**: buyers get a credit limit; a sale that takes them over it is blocked unless a sales admin gives a reason (kept on the sale). Sales get a due date (sale date + credit terms). **Owed to you**: receivables ageing (not due / 1–30 / 31–60 / 61–90 / 90+) per buyer, and a buyer statement for any period with PDF. Home to-dos: catches in the next 3 days, buyers late paying. 4 new integration tests.
+
+Original plan:
 - Make receipt creation + treasury posting one DB transaction (today a receipt can save without its ledger posting if posting fails).
 - Sales orders/bookings → sale.
 - Remove legacy `payments` reads and move tests onto buyer receipts.

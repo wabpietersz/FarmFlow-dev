@@ -18,6 +18,8 @@ jest.mock('../lib/sales-ledger', () => {
   return {
     ...actual,
     createBuyerReceiptForSale: jest.fn(),
+    // Receipt + ledger posting run together in one transaction
+    recordBuyerReceipt: jest.fn(),
     syncSaleStatusFromPayments: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -25,6 +27,8 @@ jest.mock('../lib/sales-ledger', () => {
 jest.mock('../lib/treasury', () => ({
   postBuyerReceiptLineToTreasury: jest.fn().mockResolvedValue({ treasuryTransactionId: 1, posted: true }),
   reverseBuyerReceiptLineTreasuryPosting: jest.fn().mockResolvedValue({ treasuryTransactionId: 2, reversed: true }),
+  postBuyerReceiptLineWithin: jest.fn().mockResolvedValue({ treasuryTransactionId: 1, posted: true }),
+  reverseBuyerReceiptLineWithin: jest.fn().mockResolvedValue({ treasuryTransactionId: 2, reversed: true }),
 }));
 
 // Build a flexible chainable DB mock
@@ -55,6 +59,8 @@ jest.mock('../db', () => {
     get db() {
       const handler: ProxyHandler<object> = {
         get(_target, prop: string) {
+          // Transactions run their callback against the same chain mock
+          if (prop === 'transaction') return (fn: (tx: unknown) => unknown) => fn(proxy);
           if (['select', 'insert', 'update', 'delete'].includes(prop)) {
             const chain = dbChains[chainIndex] ?? dbChains[dbChains.length - 1];
             if (chainIndex < dbChains.length - 1) chainIndex++;
@@ -63,17 +69,18 @@ jest.mock('../db', () => {
           return undefined;
         },
       };
-      return new Proxy({}, handler);
+      const proxy: object = new Proxy({}, handler);
+      return proxy;
     },
   };
 });
 
 import { firebaseAuth } from '../lib/firebase';
-import { createBuyerReceiptForSale, syncSaleStatusFromPayments } from '../lib/sales-ledger';
+import { recordBuyerReceipt, syncSaleStatusFromPayments } from '../lib/sales-ledger';
 import { postBuyerReceiptLineToTreasury, reverseBuyerReceiptLineTreasuryPosting } from '../lib/treasury';
 
 const mockVerifyIdToken = firebaseAuth.verifyIdToken as jest.Mock;
-const mockCreateBuyerReceiptForSale = createBuyerReceiptForSale as jest.Mock;
+const mockCreateBuyerReceiptForSale = recordBuyerReceipt as jest.Mock;
 const mockSyncSaleStatusFromPayments = syncSaleStatusFromPayments as jest.Mock;
 const mockPostBuyerReceiptLineToTreasury = postBuyerReceiptLineToTreasury as jest.Mock;
 const mockReverseBuyerReceiptLineTreasuryPosting = reverseBuyerReceiptLineTreasuryPosting as jest.Mock;
@@ -155,6 +162,29 @@ const mockSale = {
   totalAmount: '12500.00',
   status: 'pending',
   notes: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+/** A receipt line allocated to sale 1, as read by getNewSalePayments */
+const mockReceiptAllocation = {
+  lineId: 1,
+  receiptId: 1,
+  receiptCode: 'RCT-20260201-001',
+  paymentAmount: '5000.00',
+  paymentDate: '2026-02-01',
+  paymentMethod: 'cash',
+  financeAccountId: 1,
+  financeAccountName: 'Cash',
+  treasuryTransactionId: 1,
+  treasuryReversalTransactionId: null,
+  referenceNumber: null,
+  chequeNumber: null,
+  chequeDate: null,
+  bankName: null,
+  paymentStatus: 'completed',
+  notes: null,
+  recordedBy: 4,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -423,12 +453,10 @@ describe('Sales Module Routes', () => {
           [saleDetail],      // sale lookup with joins
           [mockBuyer],       // buyer
           [],                // lorry lines
-          [],                // new allocation-backed payments
-          [mockPayment],     // legacy payments list
+          [mockReceiptAllocation], // receipt allocations to this sale
           [{ total: 12500 }], // buyer total sales
-          [{ total: 5000 }],  // buyer legacy receipts
-          [{ total: 0 }],     // buyer new receipts
-          [{ total: 0 }],     // buyer applied allocations
+          [{ total: 5000 }],  // buyer receipts
+          [{ total: 5000 }],  // buyer applied allocations
         );
 
         const res = await authedRequest('get', '/api/sales/1');
@@ -542,12 +570,11 @@ describe('Sales Module Routes', () => {
         setupAuth(accountant);
         const reviewedSale = { ...mockSale, status: 'reviewed' };
         const completed = { ...mockSale, status: 'completed' };
-        const settledPayment = { ...mockPayment, paymentAmount: mockSale.totalAmount, paymentStatus: 'completed' };
+        const settledPayment = { ...mockReceiptAllocation, paymentAmount: mockSale.totalAmount };
         setChains(
           [accountant],
           [reviewedSale],   // existing lookup
-          [],               // no receipt-line allocations
-          [settledPayment], // legacy payment rows
+          [settledPayment], // receipt allocations settle the sale
           [completed],      // update returning
         );
 
@@ -732,17 +759,16 @@ describe('Sales Module Routes', () => {
     describe('PUT /api/payments/:id', () => {
       it('should update payment status', async () => {
         setupAuth(accountant);
-        const updatedPayment = { ...mockPayment, paymentStatus: 'bounced' };
-        const saleForRecalc = { ...mockSale, status: 'pending' };
+        const line = { id: 1, receiptId: 1, paymentAmount: '5000.00', paymentMethod: 'cheque', paymentStatus: 'pending', financeAccountId: 1, treasuryTransactionId: null, treasuryReversalTransactionId: null };
+        const bounced = { ...line, paymentStatus: 'bounced' };
         setChains(
           [accountant],
-          [mockPayment],       // existing payment
-          [updatedPayment],    // update returning
-          [saleForRecalc],     // sale for recalculation
-          [{ total: 0 }],     // recalculate paid total
+          [line],     // existing receipt line
+          [bounced],  // update returning
+          [],         // allocations to re-check
         );
 
-        const res = await authedRequest('put', '/api/payments/1').send({
+        const res = await authedRequest('put', '/api/payments/receipt-line-1').send({
           paymentStatus: 'bounced',
         });
         expect(res.status).toBe(200);
@@ -753,7 +779,7 @@ describe('Sales Module Routes', () => {
         setupAuth(accountant);
         setChains([accountant], []);
 
-        const res = await authedRequest('put', '/api/payments/999').send({
+        const res = await authedRequest('put', '/api/payments/receipt-line-999').send({
           paymentStatus: 'completed',
         });
         expect(res.status).toBe(404);

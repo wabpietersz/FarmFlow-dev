@@ -292,6 +292,7 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
   }
   const salesByBatch = new Map<number, Array<{ date: string; count: number }>>();
   for (const row of saleRows) {
+    if (row.batchId == null) continue; // other income not tied to a batch
     const list = salesByBatch.get(row.batchId) ?? [];
     list.push({ date: toIsoDate(row.date), count: row.count });
     salesByBatch.set(row.batchId, list);

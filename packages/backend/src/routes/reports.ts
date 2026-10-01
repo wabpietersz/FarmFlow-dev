@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { db } from '../db';
 import {
-  batches, dailyRecords, sales, payments, buyers, sites, feedInventory,
+  batches, dailyRecords, sales, buyerReceiptAllocations, buyers, sites, feedInventory,
   feedProductionBatches, feedRecipes, feedDistributions,
   batchInventoryConsumptions, inventoryItemTypes,
   buyerReceiptLines, buyerReceipts, treasuryTransactionEntries, treasuryTransactionLinks, treasuryTransactions,
@@ -684,14 +684,15 @@ router.get('/sales-summary', authenticate, requirePermission('reports:read'), as
     // Total paid across matching sales
     let paidQuery = db
       .select({
-        totalPaid: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float`,
+        totalPaid: sql<number>`COALESCE(sum(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float`,
       })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
+      .from(buyerReceiptAllocations)
+      .innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id))
+      .innerJoin(sales, eq(buyerReceiptAllocations.saleId, sales.id))
       .$dynamic();
 
     const paidConditions = [...conditions];
-    paidConditions.push(eq(payments.paymentStatus, 'completed'));
+    paidConditions.push(eq(buyerReceiptLines.paymentStatus, 'completed'));
     paidQuery = paidQuery.where(and(...paidConditions));
 
     const [paidResult] = await paidQuery;
@@ -724,13 +725,14 @@ router.get('/sales-summary', authenticate, requirePermission('reports:read'), as
 
         let buyerPaidQuery = db
           .select({
-            paid: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float`,
+            paid: sql<number>`COALESCE(sum(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float`,
           })
-          .from(payments)
-          .innerJoin(sales, eq(payments.saleId, sales.id))
+          .from(buyerReceiptAllocations)
+          .innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id))
+          .innerJoin(sales, eq(buyerReceiptAllocations.saleId, sales.id))
           .$dynamic();
 
-        const buyerPaidConditions = [...buyerSaleConditions, eq(payments.paymentStatus, 'completed')];
+        const buyerPaidConditions = [...buyerSaleConditions, eq(buyerReceiptLines.paymentStatus, 'completed')];
         buyerPaidQuery = buyerPaidQuery.where(and(...buyerPaidConditions));
 
         const [buyerPaid] = await buyerPaidQuery;

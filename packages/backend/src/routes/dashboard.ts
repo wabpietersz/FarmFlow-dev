@@ -3,7 +3,7 @@ import { hasPermission } from '../lib/permissions';
 import { buildHomeDashboard } from '../lib/home-dashboard';
 import { authenticate } from '../middleware/auth';
 import { db } from '../db';
-import { batches, buyerReceiptAllocations, buyerReceiptLines, buyerReceipts, buyers, chickPlacements, dailyRecords, employees, feedInventory, financeAccounts, financeReconciliations, inventoryLots, operationalExpenses, payments, payroll, sales, serviceWorkOrders, supplierContracts, supplierInvoices, supplierPaymentAllocations, supplierPayments, treasuryTransactionEntries, treasuryTransactions, attendance, auditLogs } from '../db/schema';
+import { batches, buyerReceiptAllocations, buyerReceiptLines, buyerReceipts, buyers, chickPlacements, dailyRecords, employees, feedInventory, financeAccounts, financeReconciliations, inventoryLots, operationalExpenses, payroll, sales, serviceWorkOrders, supplierContracts, supplierInvoices, supplierPaymentAllocations, supplierPayments, treasuryTransactionEntries, treasuryTransactions, attendance, auditLogs } from '../db/schema';
 import { eq, sql, and, gte, lte, desc, or } from 'drizzle-orm';
 import logger from '../lib/logger';
 import type { DashboardPeriod } from '@farmflow/shared';
@@ -66,10 +66,11 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
       .where(sql`${sales.status} IN ('reviewed', 'pending')`);
 
     const paidResult = await db
-      .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed')));
+      .select({ total: sql<number>`COALESCE(sum(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float` })
+      .from(buyerReceiptAllocations)
+      .innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id))
+      .innerJoin(sales, eq(buyerReceiptAllocations.saleId, sales.id))
+      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(buyerReceiptLines.paymentStatus, 'completed')));
 
     // Total active employees
     const empConditions = [eq(employees.status, 'active')];
@@ -179,10 +180,11 @@ router.get('/enhanced', authenticate, async (req: Request, res: Response) => {
       .where(sql`${sales.status} IN ('reviewed', 'pending')`);
 
     const paidResult = await db
-      .select({ total: sql<number>`COALESCE(sum(${payments.paymentAmount}::numeric), 0)::float` })
-      .from(payments)
-      .innerJoin(sales, eq(payments.saleId, sales.id))
-      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed')));
+      .select({ total: sql<number>`COALESCE(sum(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float` })
+      .from(buyerReceiptAllocations)
+      .innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id))
+      .innerJoin(sales, eq(buyerReceiptAllocations.saleId, sales.id))
+      .where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(buyerReceiptLines.paymentStatus, 'completed')));
 
     // Total active employees
     const empConditions = [eq(employees.status, 'active')];
@@ -446,7 +448,7 @@ router.get('/executive', authenticate, async (_req: Request, res: Response) => {
         .where(sql`${supplierInvoices.status} IN ('approved', 'recorded') AND ${supplierInvoices.dueDate} < ${today}`),
       Promise.all([
         db.select({ total: sql<number>`COALESCE(SUM(${sales.totalAmount}::numeric), 0)::float` }).from(sales).where(sql`${sales.status} IN ('reviewed', 'pending')`),
-        db.select({ total: sql<number>`COALESCE(SUM(${payments.paymentAmount}::numeric), 0)::float` }).from(payments).innerJoin(sales, eq(payments.saleId, sales.id)).where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(payments.paymentStatus, 'completed'))),
+        db.select({ total: sql<number>`COALESCE(SUM(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float` }).from(buyerReceiptAllocations).innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id)).innerJoin(sales, eq(buyerReceiptAllocations.saleId, sales.id)).where(and(sql`${sales.status} IN ('reviewed', 'pending')`, eq(buyerReceiptLines.paymentStatus, 'completed'))),
       ]),
     ]);
 

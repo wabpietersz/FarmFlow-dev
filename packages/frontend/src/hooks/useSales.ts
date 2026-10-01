@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import type { Buyer, Sale } from '@farmflow/shared';
+import type { Buyer, BuyerStatement, ReceivablesAgeing, Sale, SaleBooking, SaleType } from '@farmflow/shared';
 
 // --- Response interfaces ---
 
@@ -151,10 +151,18 @@ export interface SalePaymentRow {
 }
 
 export interface CreateSalePayload {
-  batchId: number;
+  saleType?: SaleType;
+  batchId?: number;
+  siteId?: number;
   buyerId: number;
+  bookingId?: number;
   saleDate: string;
-  pricePerKg: number;
+  pricePerKg?: number;
+  itemDescription?: string;
+  quantity?: number;
+  unit?: string;
+  unitPrice?: number;
+  creditOverrideReason?: string;
   totalBirds?: number;
   totalWeight?: number;
   lorries?: Array<{
@@ -290,6 +298,8 @@ export function useCreateSale() {
       apiPost<Sale>('/sales', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['receivables'] });
+      queryClient.invalidateQueries({ queryKey: ['sale-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['buyers'] });
     },
@@ -303,6 +313,8 @@ export function useUpdateSale(id: string) {
       apiPut<Sale>(`/sales/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['receivables'] });
+      queryClient.invalidateQueries({ queryKey: ['sale-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['sales', id] });
       queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -320,6 +332,8 @@ export function useCreatePayment(saleId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales', saleId] });
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['receivables'] });
+      queryClient.invalidateQueries({ queryKey: ['sale-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['treasury'] });
@@ -334,9 +348,57 @@ export function useUpdatePayment() {
       apiPut<SalePaymentRow>(`/payments/${paymentId}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales'] });
+      queryClient.invalidateQueries({ queryKey: ['receivables'] });
+      queryClient.invalidateQueries({ queryKey: ['sale-bookings'] });
       queryClient.invalidateQueries({ queryKey: ['buyers'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['treasury'] });
     },
+  });
+}
+
+// --- Bookings & receivables ---
+
+export interface BookingPayload {
+  buyerId: number;
+  batchId: number;
+  catchDate: string;
+  expectedBirds: number;
+  expectedAvgWeightKg?: number | null;
+  pricePerKg: number;
+  notes?: string | null;
+}
+
+export function useSaleBookings(status: string = 'booked') {
+  return useQuery({
+    queryKey: ['sale-bookings', status],
+    queryFn: () => apiGet<SaleBooking[]>(`/sale-bookings?status=${status}`),
+  });
+}
+
+export function useSaveBooking() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id?: number; data: Partial<BookingPayload> & { status?: 'booked' | 'cancelled' } }) =>
+      id ? apiPut<SaleBooking>(`/sale-bookings/${id}`, data) : apiPost<SaleBooking>('/sale-bookings', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sale-bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useReceivablesAgeing(asOf?: string) {
+  return useQuery({
+    queryKey: ['receivables', 'ageing', asOf ?? 'today'],
+    queryFn: () => apiGet<ReceivablesAgeing>(`/receivables/ageing${asOf ? `?asOf=${asOf}` : ''}`),
+  });
+}
+
+export function useBuyerStatement(buyerId: number | null, from: string, to: string) {
+  return useQuery({
+    queryKey: ['receivables', 'statement', buyerId, from, to],
+    queryFn: () => apiGet<BuyerStatement>(`/receivables/statement/${buyerId}?from=${from}&to=${to}`),
+    enabled: !!buyerId && !!from && !!to,
   });
 }

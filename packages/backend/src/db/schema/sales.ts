@@ -10,6 +10,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import { batches } from './batches';
+import { sites } from './sites';
 import { users } from './users';
 import { financeAccounts, treasuryTransactions } from './treasury';
 
@@ -21,6 +22,8 @@ export const buyers = pgTable('buyers', {
   email: varchar('email', { length: 100 }),
   address: text('address'),
   creditTerms: integer('credit_terms').default(0),
+  /** Most this buyer may owe at once; null = no limit */
+  creditLimit: decimal('credit_limit', { precision: 12, scale: 2 }),
   status: varchar('status', { length: 50 }).default('active'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -31,13 +34,22 @@ export const sales = pgTable(
   {
     id: serial('id').primaryKey(),
     saleCode: varchar('sale_code', { length: 50 }).unique().notNull(),
-    batchId: integer('batch_id')
-      .references(() => batches.id)
-      .notNull(),
+    /** live_birds | other_income (manure, litter, scrap…) */
+    saleType: varchar('sale_type', { length: 30 }).default('live_birds').notNull(),
+    /** Required for live birds; optional for other income */
+    batchId: integer('batch_id').references(() => batches.id),
+    /** Farm the income belongs to (from the batch, or chosen for other income) */
+    siteId: integer('site_id').references(() => sites.id),
     buyerId: integer('buyer_id')
       .references(() => buyers.id)
       .notNull(),
+    bookingId: integer('booking_id'),
     saleDate: date('sale_date').notNull(),
+    dueDate: date('due_date'),
+    itemDescription: varchar('item_description', { length: 200 }),
+    quantity: decimal('quantity', { precision: 12, scale: 2 }),
+    unit: varchar('unit', { length: 30 }),
+    unitPrice: decimal('unit_price', { precision: 12, scale: 2 }),
     totalBirds: integer('total_birds').notNull(),
     totalWeight: decimal('total_weight', { precision: 10, scale: 2 }).notNull(),
     pricePerKg: decimal('price_per_kg', { precision: 10, scale: 2 }).notNull(),
@@ -166,5 +178,31 @@ export const buyerReceiptAllocations = pgTable(
   (table) => [
     index('idx_buyer_receipt_allocations_line_id').on(table.receiptLineId),
     index('idx_buyer_receipt_allocations_sale_id').on(table.saleId),
+  ],
+);
+
+/** A booking made before catching: buyer, batch, expected birds and agreed price. Becomes a sale. */
+export const saleBookings = pgTable(
+  'sale_bookings',
+  {
+    id: serial('id').primaryKey(),
+    bookingCode: varchar('booking_code', { length: 50 }).unique().notNull(),
+    buyerId: integer('buyer_id').references(() => buyers.id).notNull(),
+    batchId: integer('batch_id').references(() => batches.id).notNull(),
+    catchDate: date('catch_date').notNull(),
+    expectedBirds: integer('expected_birds').notNull(),
+    expectedAvgWeightKg: decimal('expected_avg_weight_kg', { precision: 6, scale: 3 }),
+    pricePerKg: decimal('price_per_kg', { precision: 10, scale: 2 }).notNull(),
+    /** booked | converted | cancelled */
+    status: varchar('status', { length: 20 }).default('booked').notNull(),
+    saleId: integer('sale_id').references(() => sales.id),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_sale_bookings_catch_date').on(table.catchDate),
+    index('idx_sale_bookings_status').on(table.status),
   ],
 );

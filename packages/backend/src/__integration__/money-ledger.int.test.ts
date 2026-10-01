@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { operationalExpenses, payroll, pettyCashExpenses } from '../db/schema';
+import { buyerReceiptLines, buyerReceipts, financeAccounts, operationalExpenses, payroll, pettyCashExpenses, sales } from '../db/schema';
 import {
   createManualTreasuryTransaction,
   createOperationalExpense,
@@ -14,7 +14,7 @@ import {
   settleOperationalExpense,
   submitPettyCashExpense,
 } from '../lib/treasury';
-import { createBuyerReceiptForSale } from '../lib/sales-ledger';
+import { createBuyerReceiptForSale, recordBuyerReceipt } from '../lib/sales-ledger';
 import { FinanceTagError, splitAmountByWeights } from '../lib/finance-tags';
 import {
   categoryId,
@@ -128,6 +128,36 @@ describe('manual money movements', () => {
 });
 
 describe('customer receipts', () => {
+  it('saves the receipt and its money line together, or neither', async () => {
+    const user = await createUser();
+    const account = await createAccount();
+    const { batch } = await createSiteWithBatch();
+    const { buyer, sale } = await createSale(batch.id, 100000);
+    await db.update(sales).set({ status: 'reviewed' }).where(eq(sales.id, sale.id));
+
+    // Posting fails (account closed) → no receipt is left behind and the sale is untouched
+    await db.update(financeAccounts).set({ status: 'inactive' }).where(eq(financeAccounts.id, account.id));
+    await expect(recordBuyerReceipt({
+      buyerId: buyer.id, saleId: sale.id, receiptDate: DATE,
+      lines: [{ paymentAmount: 100000, paymentMethod: 'cash', financeAccountId: account.id }],
+      recordedBy: user.id,
+    })).rejects.toThrow(/finance account not found/i);
+    expect(await db.select().from(buyerReceipts)).toHaveLength(0);
+    const [unchanged] = await db.select().from(sales).where(eq(sales.id, sale.id));
+    expect(unchanged.status).toBe('reviewed');
+
+    await db.update(financeAccounts).set({ status: 'active' }).where(eq(financeAccounts.id, account.id));
+    const { lines } = await recordBuyerReceipt({
+      buyerId: buyer.id, saleId: sale.id, receiptDate: DATE,
+      lines: [{ paymentAmount: 100000, paymentMethod: 'cash', financeAccountId: account.id }],
+      recordedBy: user.id,
+    });
+    const [savedLine] = await db.select().from(buyerReceiptLines).where(eq(buyerReceiptLines.id, lines[0].id));
+    expect(savedLine.treasuryTransactionId).not.toBeNull();
+    const [paid] = await db.select().from(sales).where(eq(sales.id, sale.id));
+    expect(paid.status).toBe('completed');
+  });
+
   it('splits a receipt into bird sales for the allocated sale and a customer advance for the rest, and mirrors it on reversal', async () => {
     const user = await createUser();
     const account = await createAccount();

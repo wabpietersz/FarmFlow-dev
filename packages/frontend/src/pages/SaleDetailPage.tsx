@@ -90,6 +90,7 @@ export default function SaleDetailPage() {
   const workflowStatus = sale ? displaySaleStatus(sale.status) : undefined;
 
   const isDraft = workflowStatus === SaleStatus.Draft;
+  const isOtherIncome = sale?.saleType === 'other_income';
   const canRecordReceipt = sale ? [SaleStatus.Reviewed, SaleStatus.Pending, SaleStatus.Completed].includes(sale.status) : false;
   const canMarkCompleted = workflowStatus === SaleStatus.Reviewed && outstandingBalance <= 0.01;
 
@@ -207,6 +208,16 @@ export default function SaleDetailPage() {
     }
   };
 
+  /** Other income has no lorries to confirm: reviewing just opens it for receipts. */
+  const handleReviewOtherIncome = async () => {
+    try {
+      await updateSaleMutation.mutateAsync({ status: 'reviewed' });
+      toast.success('Sale reviewed. Receipts are now enabled.');
+    } catch {
+      toast.error('Failed to review sale');
+    }
+  };
+
   const handleMarkCompleted = async () => {
     try {
       await updateSaleMutation.mutateAsync({ status: 'completed' });
@@ -278,6 +289,13 @@ export default function SaleDetailPage() {
       },
       batchCode: sale.batchCode ?? '',
       siteName: sale.siteName ?? '',
+      line: isOtherIncome
+        ? {
+            description: sale.itemDescription ?? 'Other income',
+            quantityText: `${Number(sale.quantity ?? 0).toLocaleString()} ${sale.unit ?? ''}`.trim(),
+            rateText: `Rs. ${Number(sale.unitPrice ?? 0).toFixed(2)}${sale.unit ? `/${sale.unit}` : ''}`,
+          }
+        : undefined,
       totalBirds: sale.totalBirds,
       totalWeight: Number(sale.totalWeight),
       pricePerKg: Number(sale.pricePerKg),
@@ -325,7 +343,7 @@ export default function SaleDetailPage() {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-foreground">{sale.saleCode}</h1>
             <p className="text-sm text-muted-foreground">
-              <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">{sale.buyerName}</Link> | {sale.batchCode}
+              <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">{sale.buyerName}</Link> | {isOtherIncome ? sale.itemDescription : sale.batchCode}
             </p>
           </div>
           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[workflowStatus ?? sale.status] ?? ''}`}>
@@ -334,7 +352,7 @@ export default function SaleDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {isDraft && hasPermission('sales:update') && (
-            <Button onClick={draftForm.handleSubmit(handleMarkReviewed)} disabled={updateSaleMutation.isPending}>
+            <Button onClick={isOtherIncome ? handleReviewOtherIncome : draftForm.handleSubmit(handleMarkReviewed)} disabled={updateSaleMutation.isPending}>
               <ShieldCheck className="h-4 w-4 mr-2" />
               Mark Reviewed
             </Button>
@@ -370,7 +388,9 @@ export default function SaleDetailPage() {
       {isDraft && (
         <Card className="border-warning/30 bg-warning-soft">
           <CardContent className="pt-6 text-sm text-warning">
-            This sale is still in draft. Add the lorries and confirm the compiled totals before marking it reviewed. Receipts are disabled until review.
+            {isOtherIncome
+              ? 'This sale is still in draft. Check the details and mark it reviewed to take payment.'
+              : 'This sale is still in draft. Add the lorries and confirm the compiled totals before marking it reviewed. Receipts are disabled until review.'}
           </CardContent>
         </Card>
       )}
@@ -433,8 +453,12 @@ export default function SaleDetailPage() {
               <p className="font-medium">{new Date(sale.saleDate).toLocaleDateString()}</p>
             </div>
             <div>
+              <p className="text-muted-foreground">Due</p>
+              <p className="font-medium">{sale.dueDate ? new Date(sale.dueDate).toLocaleDateString() : '--'}</p>
+            </div>
+            <div>
               <p className="text-muted-foreground">Batch</p>
-              <p className="font-medium">{sale.batchCode}</p>
+              <p className="font-medium">{sale.batchCode ?? '--'}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Site</p>
@@ -445,21 +469,40 @@ export default function SaleDetailPage() {
               <p className="font-medium">{buyer?.buyerName ?? '--'}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">Total Weight</p>
-              <p className="font-medium">{Number(sale.totalWeight).toLocaleString(undefined, { minimumFractionDigits: 2 })} kg</p>
-            </div>
-            <div>
               <p className="text-muted-foreground">Contact</p>
               <p className="font-medium">{buyer?.contactPerson ?? '--'}</p>
             </div>
-            <div>
-              <p className="text-muted-foreground">Price per kg</p>
-              <p className="font-medium">{formatCurrency(Number(sale.pricePerKg))}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Birds Sold</p>
-              <p className="font-medium">{sale.totalBirds.toLocaleString()}</p>
-            </div>
+            {isOtherIncome ? (
+              <>
+                <div>
+                  <p className="text-muted-foreground">Item</p>
+                  <p className="font-medium">{sale.itemDescription}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Quantity</p>
+                  <p className="font-medium">{Number(sale.quantity ?? 0).toLocaleString()} {sale.unit ?? ''}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Price per {sale.unit || 'unit'}</p>
+                  <p className="font-medium">{formatCurrency(Number(sale.unitPrice ?? 0))}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-muted-foreground">Total Weight</p>
+                  <p className="font-medium">{Number(sale.totalWeight).toLocaleString(undefined, { minimumFractionDigits: 2 })} kg</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Price per kg</p>
+                  <p className="font-medium">{formatCurrency(Number(sale.pricePerKg))}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Birds Sold</p>
+                  <p className="font-medium">{sale.totalBirds.toLocaleString()}</p>
+                </div>
+              </>
+            )}
             <div>
               <p className="text-muted-foreground">Settlement</p>
               <p className="font-medium capitalize">{sale.settlementStatus?.replace('_', ' ') ?? 'unpaid'}</p>
@@ -474,7 +517,7 @@ export default function SaleDetailPage() {
         </CardContent>
       </Card>
 
-      {isDraft ? (
+      {isOtherIncome ? null : isDraft ? (
         <Card>
           <CardHeader><CardTitle>Sale Draft</CardTitle></CardHeader>
           <CardContent>

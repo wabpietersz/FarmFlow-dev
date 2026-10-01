@@ -15,6 +15,8 @@ export const buyerFormSchema = z.object({
   email: z.string().email('Invalid email').max(100).optional().or(z.literal('')),
   address: z.string().max(500).optional().or(z.literal('')),
   creditTerms: z.coerce.number().int().min(0).default(0),
+  /** Blank = no limit */
+  creditLimit: z.union([z.literal(''), z.coerce.number().nonnegative('Credit limit cannot be negative')]).optional(),
 });
 
 export type BuyerFormValues = z.infer<typeof buyerFormSchema>;

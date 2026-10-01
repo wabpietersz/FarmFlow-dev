@@ -8,6 +8,7 @@ import batchRoutes from './batches';
 import documentRoutes from './documents';
 import buyerRoutes from './buyers';
 import saleRoutes from './sales';
+import saleBookingRoutes, { receivablesRouter } from './sale-bookings';
 import paymentRoutes from './payments';
 import reportRoutes from './reports';
 import feedRoutes from './feed';
@@ -52,6 +53,8 @@ router.use('/documents', documentRoutes);
 // Buyers, Sales, Payments
 router.use('/buyers', buyerRoutes);
 router.use('/sales', saleRoutes);
+router.use('/sale-bookings', saleBookingRoutes);
+router.use('/receivables', receivablesRouter);
 router.use('/payments', paymentRoutes);
 
 // Reports & Analytics
