@@ -71,6 +71,11 @@ describe('every list endpoint answers against a real database', () => {
     expect(paths.length).toBeGreaterThan(60);
   });
 
+  it.each(paths)('GET %s refuses anyone not signed in', async (path) => {
+    const res = await request(app).get(path);
+    expect(res.status).toBe(401);
+  });
+
   it.each(paths)('GET %s', async (path) => {
     const res = await request(app).get(QUERY[path] ? `${path}?${QUERY[path]}` : path).set('Authorization', 'Bearer smoke');
     // 4xx for missing required query input is acceptable; a 500 never is

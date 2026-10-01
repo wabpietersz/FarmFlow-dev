@@ -1,6 +1,9 @@
 import request from 'supertest';
 import app from '../app';
 
+// Health checks never touch Firebase; firebase-admin 14 is ESM-only (jose), which Jest's CJS mode can't load
+jest.mock('../lib/firebase', () => ({ firebaseAuth: { verifyIdToken: jest.fn() } }));
+
 describe('Health Check', () => {
   it('GET /health should return 200 with status ok', async () => {
     const res = await request(app).get('/health');

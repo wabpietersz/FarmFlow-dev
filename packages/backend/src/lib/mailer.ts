@@ -1,9 +1,9 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from '../config';
 import logger from './logger';
 
 // Create transporter — uses SMTP config from env, falls back to console logging in dev
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
@@ -18,7 +18,7 @@ export function isEmailConfigured() {
   return Boolean(config.smtp?.host && !isPlaceholder(config.smtp?.user) && !isPlaceholder(config.smtp?.pass));
 }
 
-function getTransporter(): nodemailer.Transporter | null {
+function getTransporter(): Transporter | null {
   if (transporter) return transporter;
 
   const smtpHost = config.smtp?.host;
