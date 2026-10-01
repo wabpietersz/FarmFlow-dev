@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface EmployeeFormProps {
   defaultValues?: Partial<EmployeeFormValues>;
@@ -51,6 +52,8 @@ export default function EmployeeForm({
       employmentType: undefined,
       joinDate: '',
       phone: '',
+      epfNumber: '',
+      epfEligible: true,
       ...defaultValues,
     },
   });
@@ -207,6 +210,31 @@ export default function EmployeeForm({
                   <Input placeholder="Enter phone number" {...field} />
                 </FormControl>
                 <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="epfNumber"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>EPF number</FormLabel>
+                <FormControl>
+                  <Input placeholder="EPF member no." disabled={!form.watch('epfEligible')} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="epfEligible"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-center gap-3 self-end pb-2">
+                <FormControl>
+                  <Checkbox checked={field.value} onCheckedChange={(checked) => field.onChange(checked === true)} />
+                </FormControl>
+                <FormLabel className="!mt-0 font-normal">EPF/ETF member (8% / 12% / 3% taken on payroll)</FormLabel>
               </FormItem>
             )}
           />

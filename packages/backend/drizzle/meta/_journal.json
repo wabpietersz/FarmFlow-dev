@@ -64,6 +64,13 @@
       "when": 1790830954231,
       "tag": "0008_sales_bookings_other_income",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790831843556,
+      "tag": "0009_epf_etf_staff_loans",
+      "breakpoints": true
     }
   ]
 }

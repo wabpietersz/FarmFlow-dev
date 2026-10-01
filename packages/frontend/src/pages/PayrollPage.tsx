@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useEmployees } from '@/hooks/useEmployees';
 import {
@@ -9,6 +9,7 @@ import {
   usePayrollGeneratePrecheck,
   usePayrollPreview,
   useDeletePayroll,
+  useStatutoryRates,
   type PayrollGenerateResponse,
   type PayrollPrecheckResponse,
   type PayrollPreviewRow,
@@ -29,7 +30,11 @@ import {
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Eye, Banknote, AlertTriangle, Trash2 } from 'lucide-react';
+import { Plus, Eye, Banknote, AlertTriangle, Trash2, CalendarDays, HandCoins, Landmark, ListChecks, type LucideIcon } from 'lucide-react';
+import { PayMonthPanel } from '@/components/payroll/PayMonthPanel';
+import { LoansPanel } from '@/components/payroll/LoansPanel';
+import { StatutoryPanel } from '@/components/payroll/StatutoryPanel';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
@@ -92,7 +97,8 @@ function toEditableRow(row: PayrollPreviewRow): EditablePayrollRow {
   };
 }
 
-function calculateRowTotals(row: EditablePayrollRow) {
+/** Live totals while editing; EPF and loan recovery follow the server's preview for this employee. */
+function calculateRowTotals(row: EditablePayrollRow, epfRate = 8) {
   const workingDays = Number(row.workingDays);
   const attendedDays = Number(row.attendedDays);
   const baseSalary = Number(row.baseSalary);
@@ -109,23 +115,44 @@ function calculateRowTotals(row: EditablePayrollRow) {
   const proRatedBase = workingDays > 0 ? (baseSalary / workingDays) * attendedDays : 0;
   const overtimePay = overtimeHours * overtimeRate;
   const gross = proRatedBase + overtimePay + allowanceTotal;
-  const net = Math.max(0, gross - deductionTotal);
+
+  const epfEligible = row.epfEmployeePreview === undefined || row.epfEmployeePreview > 0 || row.grossSalaryPreview === 0;
+  const epfAllowances = row.allowances
+    .filter((allowance) => allowance.included !== false && allowance.countsForEpf)
+    .reduce((sum, allowance) => sum + Number(allowance.amount), 0);
+  const epf = epfEligible ? Math.round((proRatedBase + epfAllowances) * epfRate) / 100 : 0;
+  const loan = Math.min(row.loanRecoveryPreview ?? 0, Math.max(0, gross - epf - deductionTotal));
+  const net = Math.max(0, gross - epf - deductionTotal - loan);
 
   return {
     allowanceTotal,
-    deductionTotal,
+    deductionTotal: deductionTotal + epf + loan,
+    epf,
+    loan,
     gross,
     net,
   };
 }
 
+const PAYROLL_VIEWS: Array<{ key: string; label: string; icon: LucideIcon }> = [
+  { key: 'runs', label: 'Pay runs', icon: ListChecks },
+  { key: 'month', label: 'Month & payslips', icon: CalendarDays },
+  { key: 'loans', label: 'Advances & loans', icon: HandCoins },
+  { key: 'epf', label: 'EPF / ETF', icon: Landmark },
+];
+
 export default function PayrollPage() {
   const { hasPermission } = useAuthStore();
+  const epfRate = useStatutoryRates().data?.data?.epfEmployeeRate ?? 8;
 
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [periodFilter, setPeriodFilter] = useState('');
   const activeStatusTab = statusFilter || 'all';
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') ?? 'runs';
+  /** The month panels need a month: the period filter, else this month */
+  const panelMonth = periodFilter || getCurrentMonthValue();
 
   const [showCreatePayroll, setShowCreatePayroll] = useState(false);
   const [showGeneratePayroll, setShowGeneratePayroll] = useState(false);
@@ -192,7 +219,7 @@ export default function PayrollPage() {
     return bulkRows
       .filter((row) => row.selected)
       .reduce((acc, row) => {
-        const totals = calculateRowTotals(row);
+        const totals = calculateRowTotals(row, epfRate);
         return {
           gross: acc.gross + totals.gross,
           net: acc.net + totals.net,
@@ -384,7 +411,7 @@ export default function PayrollPage() {
             <span className="text-sm text-muted-foreground">Period</span>
             <Input
               type="month"
-              value={periodFilter}
+              value={view === 'runs' ? periodFilter : panelMonth}
               onChange={(event) => {
                 setPeriodFilter(event.target.value);
                 setPage(1);
@@ -414,6 +441,29 @@ export default function PayrollPage() {
         </div>
       </div>
 
+      <nav aria-label="Payroll sections" className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 scrollbar-none sm:mx-0 sm:px-0">
+        {PAYROLL_VIEWS.map((section) => (
+          <button
+            key={section.key}
+            type="button"
+            aria-current={view === section.key ? 'page' : undefined}
+            onClick={() => setParams({ view: section.key }, { replace: true })}
+            className={cn(
+              'flex min-h-10 shrink-0 items-center gap-2 rounded-full px-4 text-sm font-semibold transition-colors',
+              view === section.key ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <section.icon className="h-4 w-4" />
+            {section.label}
+          </button>
+        ))}
+      </nav>
+
+      {view === 'month' ? <PayMonthPanel month={panelMonth} canPay={hasPermission('payroll:update')} /> : null}
+      {view === 'loans' ? <LoansPanel canIssue={hasPermission('payroll:create')} canWriteOff={hasPermission('payroll:approve')} /> : null}
+      {view === 'epf' ? <StatutoryPanel month={panelMonth} canPay={hasPermission('payroll:update')} /> : null}
+
+      {view === 'runs' ? (
       <Tabs value={activeStatusTab} onValueChange={(v) => { setStatusFilter(v === 'all' ? '' : v); setPage(1); }}>
         <div className="sm:hidden">
           <Select
@@ -553,6 +603,7 @@ export default function PayrollPage() {
           </Card>
         </TabsContent>
       </Tabs>
+      ) : null}
 
       <Dialog
         open={showGeneratePayroll}
@@ -637,19 +688,20 @@ export default function PayrollPage() {
                   <TableHead>Deductions</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead>Gross</TableHead>
+                  <TableHead>EPF / advances</TableHead>
                   <TableHead>Net</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {bulkRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground py-6">
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
                       {previewMutation.isPending ? 'Loading preview rows...' : 'No employees available for selected month.'}
                     </TableCell>
                   </TableRow>
                 ) : (
                   bulkRows.map((row) => {
-                    const totals = calculateRowTotals(row);
+                    const totals = calculateRowTotals(row, epfRate);
                     return (
                       <TableRow key={row.employeeId}>
                         <TableCell>
@@ -807,6 +859,10 @@ export default function PayrollPage() {
                           />
                         </TableCell>
                         <TableCell>{formatCurrency(totals.gross)}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {totals.epf > 0 ? formatCurrency(totals.epf) : '—'}
+                          {totals.loan > 0 ? <span className="block text-xs">+ {formatCurrency(totals.loan)} advance</span> : null}
+                        </TableCell>
                         <TableCell className="font-medium">{formatCurrency(totals.net)}</TableCell>
                       </TableRow>
                     );
@@ -1032,13 +1088,15 @@ export default function PayrollPage() {
               </div>
 
               {(() => {
-                const totals = calculateRowTotals(singleRow);
+                const totals = calculateRowTotals(singleRow, epfRate);
                 return (
                   <div className="rounded-md border p-3 text-sm flex flex-wrap gap-6">
                     <p>Gross: <span className="font-medium">{formatCurrency(totals.gross)}</span></p>
                     <p>Net: <span className="font-medium">{formatCurrency(totals.net)}</span></p>
                     <p>Allowances: <span className="font-medium">{formatCurrency(totals.allowanceTotal)}</span></p>
                     <p>Deductions: <span className="font-medium">{formatCurrency(totals.deductionTotal)}</span></p>
+                    {totals.epf > 0 ? <p>EPF ({epfRate}%): <span className="font-medium">{formatCurrency(totals.epf)}</span></p> : null}
+                    {totals.loan > 0 ? <p>Advance/loan: <span className="font-medium">{formatCurrency(totals.loan)}</span></p> : null}
                   </div>
                 );
               })()}

@@ -18,6 +18,7 @@ import shiftRoutes from './shifts';
 import attendanceRoutes from './attendance';
 import leaveBalanceRoutes from './leave-balances';
 import payrollRoutes from './payroll';
+import staffPayrollRoutes from './staff-payroll';
 import compensationTemplateRoutes from './compensation-templates';
 import treasuryRoutes from './treasury';
 import { healthCheckHandler, metricsHandler } from '../middleware/monitoring';
@@ -76,6 +77,8 @@ router.use('/system-config', systemConfigRoutes);
 router.use('/shifts', shiftRoutes);
 router.use('/attendance', attendanceRoutes);
 router.use('/leave-balances', leaveBalanceRoutes);
+// Specific payroll paths (loans, register, EPF/ETF) must come before /payroll/:id
+router.use('/payroll', staffPayrollRoutes);
 router.use('/payroll', payrollRoutes);
 router.use('/compensation-templates', compensationTemplateRoutes);
 

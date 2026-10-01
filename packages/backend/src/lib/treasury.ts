@@ -438,129 +438,137 @@ export async function reverseBuyerReceiptLineWithin(tx: typeof db | any, params:
   }
 }
 
-export async function postPayrollToTreasury(params: {
+type PostPayrollParams = {
   payrollId: number;
   financeAccountId: number;
   postedBy: number;
   paymentMethod?: 'cash' | 'cheque' | 'bank_transfer';
   chequeLeafId?: number | null;
-}) {
-  return db.transaction(async (tx) => {
-    const [payrollRecord] = await tx
-      .select({
-        id: payroll.id,
-        payPeriod: payroll.payPeriod,
-        netSalary: payroll.netSalary,
-        status: payroll.status,
-        treasuryTransactionId: payroll.treasuryTransactionId,
-        employeeId: employees.id,
-        employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
-        employeeCostCentreId: employees.costCentreId,
-        employeeSiteId: employees.siteId,
-      })
-      .from(payroll)
-      .leftJoin(employees, eq(payroll.employeeId, employees.id))
-      .where(eq(payroll.id, params.payrollId))
-      .limit(1);
+  payDate?: string;
+};
 
-    if (!payrollRecord) {
-      throw new Error('Payroll record not found');
-    }
-    if (payrollRecord.treasuryTransactionId) {
-      return { treasuryTransactionId: payrollRecord.treasuryTransactionId, posted: false };
-    }
-
-    const paymentMethod = params.paymentMethod ?? 'bank_transfer';
-    const payDate = new Date().toISOString().split('T')[0];
-    await assertPeriodOpen(payDate, 'financial');
-    const account = paymentMethod === 'cheque'
-      ? await ensureChequeEnabledCurrentAccount(params.financeAccountId, tx)
-      : await ensureActiveFinanceAccount(params.financeAccountId, tx);
-    const chequeLeaf = paymentMethod === 'cheque' && params.chequeLeafId
-      ? await getIssuableChequeLeaf(params.chequeLeafId, params.financeAccountId, tx)
-      : null;
-
-    const transactionCode = await getNextTreasuryTransactionCode(payDate, tx);
-    const [treasuryTransaction] = await tx
-      .insert(treasuryTransactions)
-      .values({
-        transactionCode,
-        transactionType: 'payroll_disbursement',
-        transactionDate: payDate,
-        status: paymentMethod === 'cheque' ? 'pending' : 'posted',
-        referenceNumber: `PAYROLL-${payrollRecord.id}`,
-        counterpartyType: 'employee',
-        counterpartyId: payrollRecord.employeeId,
-        counterpartyNameSnapshot: payrollRecord.employeeName,
-        sourceModule: 'payroll',
-        narrative: `Payroll disbursement for ${payrollRecord.employeeName}`,
-        createdBy: params.postedBy,
-        approvedBy: params.postedBy,
-        postedBy: params.postedBy,
-      })
-      .returning();
-
-    await insertTaggedEntries(
-      treasuryTransaction.id,
-      [{
-        financeAccountId: params.financeAccountId,
-        entryDirection: 'outflow',
-        amount: Number(payrollRecord.netSalary),
-        valueDate: payDate,
-        notes: `Payroll ${payrollRecord.id}`,
-        tags: {
-          categoryCode: 'wages_salaries',
-          costCentreId: payrollRecord.employeeCostCentreId,
-          siteId: payrollRecord.employeeSiteId,
-        },
-      }],
-      tx,
-    );
-
-    await tx.insert(treasuryTransactionLinks).values({
-      treasuryTransactionId: treasuryTransaction.id,
-      sourceModule: 'payroll',
-      sourceEntityType: 'payroll',
-      sourceEntityId: payrollRecord.id,
-      sourceCodeSnapshot: `PAYROLL-${payrollRecord.id}`,
-      allocatedAmount: Number(payrollRecord.netSalary).toFixed(2),
-    });
-
-    await tx
-      .update(payroll)
-      .set({
-        paidDate: payDate,
-        financeAccountId: params.financeAccountId,
-        paymentMethod,
-        chequeLeafId: chequeLeaf?.id ?? null,
-        treasuryTransactionId: treasuryTransaction.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(payroll.id, payrollRecord.id));
-
-    if (chequeLeaf) {
-      await tx
-        .update(chequeLeaves)
-        .set({
-          status: 'issued',
-          issueDate: payDate,
-          amount: Number(payrollRecord.netSalary).toFixed(2),
-          payeeName: payrollRecord.employeeName,
-          treasuryTransactionId: treasuryTransaction.id,
-          sourceModule: 'payroll',
-          sourceEntityType: 'payroll',
-          sourceEntityId: payrollRecord.id,
-          notes: `Payroll cheque for ${payrollRecord.employeeName}`,
-          updatedAt: new Date(),
-        })
-        .where(eq(chequeLeaves.id, chequeLeaf.id));
-    }
-
-    return { treasuryTransactionId: treasuryTransaction.id, posted: true, paidDate: payDate };
-  });
+export async function postPayrollToTreasury(params: PostPayrollParams) {
+  return db.transaction((tx) => postPayrollWithin(tx, params));
 }
 
-type TreasuryEntryInput = {
+/**
+ * Pays one approved payroll and marks it paid, in the caller's transaction.
+ * The cash that leaves is the net pay, split so each part lands in the right place:
+ *   Wages & Salaries (out)   gross pay less manual deductions        → employee's cost centre
+ *   EPF withheld (in)        employee EPF kept back, paid over later  → employee's cost centre
+ *   Staff advances (in)      advance/loan instalments recovered       → employee's cost centre
+ */
+export async function postPayrollWithin(tx: typeof db | any, params: PostPayrollParams) {
+  const [payrollRecord] = await tx
+    .select({
+      id: payroll.id,
+      payPeriod: payroll.payPeriod,
+      grossSalary: payroll.grossSalary,
+      otherDeductions: payroll.otherDeductions,
+      epfEmployee: payroll.epfEmployee,
+      loanRecovery: payroll.loanRecovery,
+      netSalary: payroll.netSalary,
+      status: payroll.status,
+      treasuryTransactionId: payroll.treasuryTransactionId,
+      employeeId: employees.id,
+      employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
+      employeeCostCentreId: employees.costCentreId,
+      employeeSiteId: employees.siteId,
+    })
+    .from(payroll)
+    .leftJoin(employees, eq(payroll.employeeId, employees.id))
+    .where(eq(payroll.id, params.payrollId))
+    .limit(1);
+
+  if (!payrollRecord) {
+    throw new Error('Payroll record not found');
+  }
+  if (payrollRecord.treasuryTransactionId) {
+    return { treasuryTransactionId: payrollRecord.treasuryTransactionId, posted: false };
+  }
+  if (payrollRecord.status !== 'approved') {
+    throw new FinanceTagError(`Only approved payroll can be paid (this one is ${payrollRecord.status})`);
+  }
+
+  const paymentMethod = params.paymentMethod ?? 'bank_transfer';
+  const payDate = params.payDate ?? new Date().toISOString().split('T')[0];
+  await assertPeriodOpen(payDate, 'financial');
+  if (paymentMethod === 'cheque') {
+    await ensureChequeEnabledCurrentAccount(params.financeAccountId, tx);
+  } else {
+    await ensureActiveFinanceAccount(params.financeAccountId, tx);
+  }
+  const chequeLeaf = paymentMethod === 'cheque' && params.chequeLeafId
+    ? await getIssuableChequeLeaf(params.chequeLeafId, params.financeAccountId, tx)
+    : null;
+
+  const net = Number(payrollRecord.netSalary);
+  const epfWithheld = Number(payrollRecord.epfEmployee ?? 0);
+  const recovered = Number(payrollRecord.loanRecovery ?? 0);
+  const wages = Number((net + epfWithheld + recovered).toFixed(2));
+  const tags = { costCentreId: payrollRecord.employeeCostCentreId, siteId: payrollRecord.employeeSiteId };
+  const base = { financeAccountId: params.financeAccountId, valueDate: payDate };
+  const entries: TreasuryEntryInput[] = [
+    { ...base, entryDirection: 'outflow', amount: wages, notes: `Pay ${payrollRecord.employeeName}`, tags: { categoryCode: 'wages_salaries', ...tags } },
+  ];
+  if (epfWithheld > 0) {
+    entries.push({ ...base, entryDirection: 'inflow', amount: epfWithheld, notes: 'Employee EPF withheld', tags: { categoryCode: 'epf_withheld', ...tags } });
+  }
+  if (recovered > 0) {
+    entries.push({ ...base, entryDirection: 'inflow', amount: recovered, notes: 'Advance/loan recovered', tags: { categoryCode: 'staff_advances', ...tags } });
+  }
+
+  const treasuryTransaction = await createTreasuryTransactionRecord({
+    transactionType: 'payroll_disbursement',
+    transactionDate: payDate,
+    status: paymentMethod === 'cheque' ? 'pending' : 'posted',
+    referenceNumber: `PAYROLL-${payrollRecord.id}`,
+    counterpartyType: 'employee',
+    counterpartyId: payrollRecord.employeeId,
+    counterpartyNameSnapshot: payrollRecord.employeeName,
+    sourceModule: 'payroll',
+    narrative: `Payroll disbursement for ${payrollRecord.employeeName}`,
+    createdBy: params.postedBy,
+    entries,
+    links: [{ sourceModule: 'payroll', sourceEntityType: 'payroll', sourceEntityId: payrollRecord.id, sourceCodeSnapshot: `PAYROLL-${payrollRecord.id}`, allocatedAmount: net }],
+    executor: tx,
+  });
+
+  await tx
+    .update(payroll)
+    .set({
+      status: 'paid',
+      paidDate: payDate,
+      financeAccountId: params.financeAccountId,
+      paymentMethod,
+      chequeLeafId: chequeLeaf?.id ?? null,
+      treasuryTransactionId: treasuryTransaction.id,
+      updatedAt: new Date(),
+    })
+    .where(eq(payroll.id, payrollRecord.id));
+
+  if (chequeLeaf) {
+    await tx
+      .update(chequeLeaves)
+      .set({
+        status: 'issued',
+        issueDate: payDate,
+        amount: net.toFixed(2),
+        payeeName: payrollRecord.employeeName,
+        treasuryTransactionId: treasuryTransaction.id,
+        sourceModule: 'payroll',
+        sourceEntityType: 'payroll',
+        sourceEntityId: payrollRecord.id,
+        notes: `Payroll cheque for ${payrollRecord.employeeName}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(chequeLeaves.id, chequeLeaf.id));
+  }
+
+  return { treasuryTransactionId: treasuryTransaction.id, posted: true, paidDate: payDate };
+}
+
+export type TreasuryEntryInput = {
   financeAccountId: number;
   entryDirection: 'inflow' | 'outflow';
   amount: number;
@@ -682,7 +690,7 @@ type TreasuryLinkInput = {
   allocatedAmount?: number | null;
 };
 
-async function createTreasuryTransactionRecord(params: {
+export async function createTreasuryTransactionRecord(params: {
   transactionType: string;
   transactionDate: string;
   status?: string;
@@ -755,7 +763,7 @@ function buildTreasuryOwnedLink(args: {
   };
 }
 
-async function ensureActiveFinanceAccount(
+export async function ensureActiveFinanceAccount(
   financeAccountId: number,
   executor: typeof db | any = db,
 ) {

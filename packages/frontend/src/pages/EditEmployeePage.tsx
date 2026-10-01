@@ -69,6 +69,8 @@ export default function EditEmployeePage() {
         costCentreId: values.costCentreId ? Number(values.costCentreId) : null,
         employmentType: values.employmentType as unknown as import('@farmflow/shared').EmploymentType,
         phone: values.phone || undefined,
+        epfNumber: values.epfNumber || null,
+        epfEligible: values.epfEligible,
       });
       toast.success('Employee updated successfully');
       navigate(`/employees/${id}`);
@@ -134,6 +136,8 @@ export default function EditEmployeePage() {
                 ? employee.joinDate
                 : new Date(employee.joinDate).toISOString().split('T')[0],
               phone: employee.phone ?? '',
+              epfNumber: employee.epfNumber ?? '',
+              epfEligible: employee.epfEligible ?? true,
             }}
             onSubmit={handleSubmit}
             isSubmitting={updateMutation.isPending}

@@ -5,6 +5,7 @@ const payPeriodSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date fo
 const allowanceInputSchema = z.object({
   allowanceType: z.string().min(1, 'Allowance type is required').max(100),
   amount: z.number().min(0, 'Allowance amount cannot be negative'),
+  countsForEpf: z.boolean().optional(),
   remarks: z.string().max(500).optional(),
   included: z.boolean().optional(),
 });
@@ -102,5 +103,6 @@ export const createDeductionSchema = z.object({
 export const createAllowanceSchema = z.object({
   allowanceType: z.string().min(1, 'Allowance type is required').max(100),
   amount: z.number().positive('Amount must be positive'),
+  countsForEpf: z.boolean().optional(),
   remarks: z.string().max(500).optional(),
 });

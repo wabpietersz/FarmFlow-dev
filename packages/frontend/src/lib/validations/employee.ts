@@ -12,6 +12,8 @@ export const employeeFormSchema = z.object({
   }),
   joinDate: z.string().min(1, 'Join date is required'),
   phone: z.string().max(20).optional().or(z.literal('')),
+  epfNumber: z.string().max(30).optional().or(z.literal('')),
+  epfEligible: z.boolean().default(true),
 });
 
 export type EmployeeFormValues = z.infer<typeof employeeFormSchema>;
@@ -50,6 +52,8 @@ export const compensationComponentFormSchema = z.object({
   calculationType: z.enum(['fixed', 'percentage']),
   value: z.coerce.number().positive('Value must be positive'),
   isTaxable: z.boolean().default(false),
+  /** Earnings that are part of "earnings for EPF/ETF" */
+  countsForEpf: z.boolean().default(false),
   isActive: z.boolean().default(true),
 });
 

@@ -30,6 +30,7 @@ export type DeductionFormValues = z.infer<typeof deductionFormSchema>;
 export const allowanceFormSchema = z.object({
   allowanceType: z.string().min(1, 'Allowance type is required').max(100),
   amount: z.coerce.number().positive('Amount must be positive'),
+  countsForEpf: z.boolean().default(false),
   remarks: z.string().max(500).optional(),
 });
 

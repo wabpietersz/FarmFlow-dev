@@ -64,6 +64,14 @@ export interface Payroll {
   overtimeHours: number;
   overtimeRate?: number | null;
   grossSalary: number;
+  /** Earnings EPF/ETF are worked out on */
+  epfBase?: number | string;
+  epfEmployee?: number | string;
+  epfEmployer?: number | string;
+  etfEmployer?: number | string;
+  otherDeductions?: number | string;
+  loanRecovery?: number | string;
+  statutoryRates?: StatutoryRates | null;
   netSalary: number;
   status: PayrollStatus;
   approvedBy?: number | null;
@@ -133,6 +141,7 @@ export interface PayrollAllowance {
   payrollId: number;
   allowanceType: string;
   amount: number;
+  countsForEpf?: boolean;
   remarks?: string | null;
 }
 
@@ -208,6 +217,7 @@ export interface CreatePayrollRequest {
 export interface PayrollAllowanceInput {
   allowanceType: string;
   amount: number;
+  countsForEpf?: boolean;
   remarks?: string;
   included?: boolean;
 }
@@ -268,4 +278,84 @@ export interface UpdateCompensationTemplateRequest {
   defaultAmount?: number | null;
   description?: string | null;
   isActive?: boolean;
+}
+
+export interface StatutoryRates {
+  epfEmployeeRate: number;
+  epfEmployerRate: number;
+  etfEmployerRate: number;
+}
+
+export type StaffLoanType = 'advance' | 'loan';
+
+export interface StaffLoan {
+  id: number;
+  loanCode: string;
+  employeeId: number;
+  employeeName: string;
+  siteName: string | null;
+  loanType: StaffLoanType;
+  principal: number;
+  installmentAmount: number;
+  issuedDate: string;
+  firstRecoveryPeriod: string;
+  status: 'active' | 'settled' | 'written_off';
+  notes: string | null;
+  /** Taken in paid payrolls or paid back directly */
+  recovered: number;
+  /** In payrolls not yet paid */
+  scheduled: number;
+  outstanding: number;
+  leftAfterScheduled: number;
+}
+
+export interface PayrollRegisterRow {
+  payrollId: number;
+  status: PayrollStatus;
+  employeeId: number;
+  employeeName: string;
+  designation: string;
+  epfNumber: string | null;
+  siteName: string | null;
+  costCentreName: string | null;
+  baseSalary: number;
+  workingDays: number;
+  attendedDays: number;
+  basicEarned: number;
+  overtimeHours: number;
+  overtimeRate: number;
+  overtimePay: number;
+  grossSalary: number;
+  epfBase: number;
+  epfEmployee: number;
+  epfEmployer: number;
+  etfEmployer: number;
+  otherDeductions: number;
+  loanRecovery: number;
+  netSalary: number;
+  statutoryRates: StatutoryRates | null;
+  paidDate: string | null;
+  paymentMethod: string | null;
+  bankName: string | null;
+  branchCode: string | null;
+  accountNumber: string | null;
+  accountHolderName: string | null;
+  allowances: Array<{ name: string; amount: number; countsForEpf: boolean }>;
+  deductions: Array<{ name: string; amount: number }>;
+  loanRecoveries: Array<{ name: string; amount: number }>;
+}
+
+export interface PayrollRegister {
+  payPeriod: string;
+  rows: PayrollRegisterRow[];
+  totals: { employees: number; grossSalary: number; epfEmployee: number; otherDeductions: number; loanRecovery: number; netSalary: number; epfEmployer: number; etfEmployer: number; employerCost: number };
+}
+
+export interface StatutoryReturn {
+  payPeriod: string;
+  lines: Array<{ payrollId: number; status: PayrollStatus; employeeId: number; employeeName: string; epfNumber: string | null; epfBase: number; epfEmployee: number; epfEmployer: number; epfTotal: number; etfEmployer: number }>;
+  totals: { epfBase: number; epfEmployee: number; epfEmployer: number; epfTotal: number; etfEmployer: number };
+  payable: { employees: number; epfEmployee: number; epfEmployer: number; etfEmployer: number };
+  unpaidPayrolls: number;
+  remittance: { id: number; paidDate: string; epfReference: string | null; etfReference: string | null; epfEmployee: string; epfEmployer: string; etfEmployer: string; treasuryTransactionId: number | null } | null;
 }

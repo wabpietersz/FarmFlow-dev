@@ -13,6 +13,21 @@ jest.mock('../lib/audit', () => ({
   createAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
+// EPF/ETF and loan recovery run against real Postgres in payroll.int.test.ts; here they are stubbed
+jest.mock('../lib/payroll-calc', () => {
+  const actual = jest.requireActual('../lib/payroll-calc');
+  return {
+    ...actual,
+    getStatutoryRates: jest.fn().mockResolvedValue(actual.DEFAULT_STATUTORY_RATES),
+    loansDueForPeriod: jest.fn().mockResolvedValue([]),
+    recomputePayroll: jest.fn().mockResolvedValue(null),
+  };
+});
+jest.mock('../lib/staff-payroll', () => ({
+  ...jest.requireActual('../lib/staff-payroll'),
+  refreshLoanStatuses: jest.fn().mockResolvedValue(undefined),
+}));
+
 // Build a flexible chainable DB mock
 function createChainMock(resolvedValue: unknown = []) {
   const chain: Record<string, jest.Mock> = {};

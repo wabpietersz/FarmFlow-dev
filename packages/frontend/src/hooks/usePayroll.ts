@@ -8,6 +8,10 @@ import type {
   PayrollDeductionInput,
   CompensationTemplate,
   PayrollGenerationWarning,
+  PayrollRegister,
+  StaffLoan,
+  StatutoryRates,
+  StatutoryReturn,
 } from '@farmflow/shared';
 
 // --- Response interfaces ---
@@ -74,6 +78,10 @@ interface PayrollPreviewRow {
   compensationSnapshot?: Payroll['compensationSnapshot'] | null;
   warnings: PayrollGenerationWarning[];
   grossSalaryPreview: number;
+  epfEmployeePreview?: number;
+  epfEmployerPreview?: number;
+  etfEmployerPreview?: number;
+  loanRecoveryPreview?: number;
   netSalaryPreview: number;
   notes?: string;
 }
@@ -152,6 +160,8 @@ export function useCreatePayroll() {
     }) => apiPost<Payroll>('/payroll', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
     },
   });
 }
@@ -178,6 +188,8 @@ export function useGeneratePayroll() {
       apiPost<Payroll[]>('/payroll/generate', data) as unknown as Promise<PayrollGenerateResponse>,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
     },
   });
 }
@@ -204,6 +216,8 @@ export function useUpdatePayroll(id: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls', id] });
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
     },
   });
 }
@@ -216,6 +230,8 @@ export function useUpdatePayrollStatus(id: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls', id] });
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
       queryClient.invalidateQueries({ queryKey: ['treasury'] });
     },
   });
@@ -227,6 +243,8 @@ export function useDeletePayroll() {
     mutationFn: (id: number) => apiDelete<{ message: string }>(`/payroll/${id}`),
     onSuccess: (_response, id) => {
       queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
       queryClient.invalidateQueries({ queryKey: ['payrolls', String(id)] });
     },
   });
@@ -257,7 +275,7 @@ export function useRemoveDeduction(payrollId: string) {
 export function useAddAllowance(payrollId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { allowanceType: string; amount: number; remarks?: string }) =>
+    mutationFn: (data: { allowanceType: string; amount: number; countsForEpf?: boolean; remarks?: string }) =>
       apiPost<PayrollAllowance>(`/payroll/${payrollId}/allowances`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payrolls', payrollId] });
@@ -341,3 +359,100 @@ export type {
   PayrollPrecheckResponse,
   PayrollPrecheckItem,
 };
+
+// --- EPF/ETF, advances & loans, register ---
+
+const invalidatePayrollMoney = (queryClient: ReturnType<typeof useQueryClient>) => {
+  queryClient.invalidateQueries({ queryKey: ['payrolls'] });
+  queryClient.invalidateQueries({ queryKey: ['payroll'] });
+  queryClient.invalidateQueries({ queryKey: ['staff-loans'] });
+  queryClient.invalidateQueries({ queryKey: ['treasury'] });
+  queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+};
+
+export function useStatutoryRates() {
+  return useQuery({ queryKey: ['payroll', 'statutory-rates'], queryFn: () => apiGet<StatutoryRates>('/payroll/settings/statutory') });
+}
+
+export function useSaveStatutoryRates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (rates: StatutoryRates) => apiPut<StatutoryRates>('/payroll/settings/statutory', rates),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payroll', 'statutory-rates'] }),
+  });
+}
+
+export function useStaffLoans(status = 'active') {
+  return useQuery({ queryKey: ['staff-loans', status], queryFn: () => apiGet<StaffLoan[]>(`/payroll/loans?status=${status}`) });
+}
+
+export interface IssueLoanPayload {
+  employeeId: number;
+  loanType: 'advance' | 'loan';
+  principal: number;
+  installmentAmount?: number;
+  issuedDate: string;
+  firstRecoveryPeriod: string;
+  financeAccountId: number;
+  paymentMethod: 'cash' | 'bank_transfer';
+  notes?: string | null;
+}
+
+export function useIssueLoan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: IssueLoanPayload) => apiPost('/payroll/loans', data),
+    onSuccess: () => invalidatePayrollMoney(queryClient),
+  });
+}
+
+export function useRepayLoan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number; amount: number; date: string; financeAccountId: number; notes?: string | null }) =>
+      apiPost(`/payroll/loans/${id}/repayments`, data),
+    onSuccess: () => invalidatePayrollMoney(queryClient),
+  });
+}
+
+export function useWriteOffLoan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) => apiPost(`/payroll/loans/${id}/write-off`, { reason }),
+    onSuccess: () => invalidatePayrollMoney(queryClient),
+  });
+}
+
+export function usePayrollRegister(period: string) {
+  return useQuery({
+    queryKey: ['payroll', 'register', period],
+    queryFn: () => apiGet<PayrollRegister>(`/payroll/register?period=${period}`),
+    enabled: /^\d{4}-\d{2}/.test(period),
+  });
+}
+
+export function usePayPeriod() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { payPeriod: string; financeAccountId: number; paymentMethod: 'cash' | 'bank_transfer'; payDate?: string }) =>
+      apiPost<{ paid: number; total: number }>('/payroll/pay-period', data),
+    onSuccess: () => invalidatePayrollMoney(queryClient),
+  });
+}
+
+export function useStatutoryReturn(period: string) {
+  return useQuery({
+    queryKey: ['payroll', 'statutory', period],
+    queryFn: () => apiGet<StatutoryReturn>(`/payroll/statutory?period=${period}`),
+    enabled: /^\d{4}-\d{2}/.test(period),
+  });
+}
+
+export function useRemitStatutory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { payPeriod: string; financeAccountId: number; paidDate: string; epfReference?: string | null; etfReference?: string | null }) =>
+      apiPost('/payroll/statutory/remit', data),
+    onSuccess: () => invalidatePayrollMoney(queryClient),
+  });
+}

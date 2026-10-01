@@ -9,7 +9,9 @@ import {
   useCompensationTemplates,
   useCreateCompensationTemplate,
   useDeleteCompensationTemplate,
+  usePayrollRegister,
 } from '@/hooks/usePayroll';
+import { generatePayslipsPDF } from '@/lib/generatePayslips';
 import { useChequeLeaves, useTreasuryAccounts } from '@/hooks/useTreasury';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,7 +39,7 @@ import {
   deductionFormSchema, allowanceFormSchema,
   type DeductionFormValues, type AllowanceFormValues,
 } from '@/lib/validations/payroll';
-import { ArrowLeft, Plus, Trash2, Banknote, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Banknote, TrendingUp, TrendingDown, DollarSign, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
@@ -60,6 +62,12 @@ export default function PayrollDetailPage() {
   const navigate = useNavigate();
   const { hasPermission } = useAuthStore();
   const { data, isLoading } = usePayroll(id);
+  // Payslip uses the register row (it carries bank details, EPF number and loan lines)
+  const payslipPeriod = data?.data?.payPeriod ? String(data.data.payPeriod).slice(0, 7) : '';
+  const payslipRow = usePayrollRegister(payslipPeriod).data?.data?.rows.find((row) => row.payrollId === Number(id));
+  const downloadPayslip = () => {
+    if (payslipRow) generatePayslipsPDF(payslipPeriod, [payslipRow]);
+  };
   const updateStatusMutation = useUpdatePayrollStatus(id!);
   const deletePayrollMutation = useDeletePayroll();
   const addDeductionMutation = useAddDeduction(id!);
@@ -108,7 +116,7 @@ export default function PayrollDetailPage() {
 
   const allowanceForm = useForm<AllowanceFormValues>({
     resolver: zodResolver(allowanceFormSchema),
-    defaultValues: { allowanceType: '', amount: 0, remarks: '' },
+    defaultValues: { allowanceType: '', amount: 0, countsForEpf: false, remarks: '' },
   });
 
   const handleAdvanceStatus = async () => {
@@ -327,6 +335,10 @@ export default function PayrollDetailPage() {
         <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium capitalize ${PAYROLL_STATUS_COLORS[payroll.status] ?? ''}`}>
           {payroll.status}
         </span>
+        <Button variant="outline" onClick={downloadPayslip} disabled={!payslipRow}>
+          <FileText className="h-4 w-4 mr-2" />
+          Payslip
+        </Button>
         {hasPermission('payroll:update') && (
           <Button variant="outline" onClick={() => setShowTemplateManager(true)}>
             Manage Templates
@@ -461,6 +473,21 @@ export default function PayrollDetailPage() {
           <p><span className="text-muted-foreground">Treasury Account:</span> {payroll.financeAccountName || (payroll.financeAccountId ? `Account #${payroll.financeAccountId}` : '--')}</p>
           <p><span className="text-muted-foreground">Payment Method:</span> {payroll.paymentMethod ? payroll.paymentMethod.replace('_', ' ') : '--'}</p>
           <p><span className="text-muted-foreground">Cheque:</span> {payroll.chequeNumber || (payroll.chequeLeafId ? `Leaf #${payroll.chequeLeafId}` : '--')}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-muted-foreground">EPF / ETF and advances</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+          <p><span className="text-muted-foreground">Earnings for EPF:</span> {formatCurrency(Number(payroll.epfBase ?? 0))}</p>
+          <p><span className="text-muted-foreground">Employee EPF ({payroll.statutoryRates?.epfEmployeeRate ?? 8}%, deducted):</span> {formatCurrency(Number(payroll.epfEmployee ?? 0))}</p>
+          <p><span className="text-muted-foreground">Advance / loan recovered:</span> {formatCurrency(Number(payroll.loanRecovery ?? 0))}</p>
+          <p><span className="text-muted-foreground">Employer EPF ({payroll.statutoryRates?.epfEmployerRate ?? 12}%):</span> {formatCurrency(Number(payroll.epfEmployer ?? 0))}</p>
+          <p><span className="text-muted-foreground">Employer ETF ({payroll.statutoryRates?.etfEmployerRate ?? 3}%):</span> {formatCurrency(Number(payroll.etfEmployer ?? 0))}</p>
+          <p><span className="text-muted-foreground">Cost to the business:</span> <span className="font-semibold">{formatCurrency(Number(payroll.grossSalary) + Number(payroll.epfEmployer ?? 0) + Number(payroll.etfEmployer ?? 0))}</span></p>
+          {Number(payroll.epfBase ?? 0) === 0 ? <p className="text-muted-foreground md:col-span-3">No EPF on this payroll: the employee is not an EPF member, or it was made before EPF was added.</p> : null}
         </CardContent>
       </Card>
 
@@ -744,6 +771,18 @@ export default function PayrollDetailPage() {
                     <FormLabel>Remarks (Optional)</FormLabel>
                     <FormControl><Input placeholder="Optional remarks" {...field} /></FormControl>
                     <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={allowanceForm.control}
+                name="countsForEpf"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center gap-2">
+                    <FormControl>
+                      <input type="checkbox" className="h-4 w-4 accent-[var(--primary)]" checked={field.value} onChange={(e) => field.onChange(e.target.checked)} />
+                    </FormControl>
+                    <FormLabel className="!mt-0 font-normal">Counts for EPF/ETF</FormLabel>
                   </FormItem>
                 )}
               />

@@ -9,6 +9,8 @@ export const createEmployeeSchema = z.object({
   employmentType: z.enum(['permanent', 'contract', 'seasonal']),
   joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
   phone: z.string().max(20).optional(),
+  epfNumber: z.string().trim().max(30).optional(),
+  epfEligible: z.boolean().optional(),
   emergencyContacts: z
     .array(
       z.object({
@@ -38,6 +40,8 @@ export const updateEmployeeSchema = z.object({
   costCentreId: z.number().int().positive().nullable().optional(),
   employmentType: z.enum(['permanent', 'contract', 'seasonal']).optional(),
   phone: z.string().max(20).nullable().optional(),
+  epfNumber: z.string().trim().max(30).nullable().optional(),
+  epfEligible: z.boolean().optional(),
   status: z.enum(['active', 'on_leave', 'terminated']).optional(),
 });
 
@@ -82,6 +86,7 @@ export const compensationComponentSchema = z.object({
   calculationType: z.enum(['fixed', 'percentage']),
   value: z.number().positive('Component value must be positive'),
   isTaxable: z.boolean().optional(),
+  countsForEpf: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 

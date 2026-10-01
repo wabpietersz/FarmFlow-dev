@@ -139,7 +139,10 @@ Original plan:
 - Remove legacy `payments` reads and move tests onto buyer receipts.
 - AR ageing and buyer statements. Other-income sales (manure/litter/scrap).
 
-### Phase 6: HR & payroll completion
+### Phase 6: HR & payroll completion — ✅ DONE (2026-10-01)
+One pay engine (`lib/payroll-calc.ts`) for preview, generation and edits: **EPF** employee 8% (deducted) and employer 12%, **ETF** 3%, rates in Settings → Payroll and frozen on each payroll; worked out on basic + allowances marked "counts for EPF"; employees have EPF number and member flag. **Advances & loans**: paid out from Money (category *Staff Advances & Loans*), recovered automatically in payroll (instalments, capped so net pay never goes negative), or paid back directly; write-off. **Paying**: marking paid is now one transaction with the posting; pay a whole month at once; each payment posts Wages (gross less manual deductions) out, EPF withheld in, advance recovery in — so only net pay leaves the bank. **EPF/ETF return** per month with CSV, paid over in one posting split by each employee's cost centre (employee share clears *EPF Withheld*, employer share is *EPF/ETF* expense). Labour cost in batch costing = gross + employer EPF/ETF. **Payslip PDFs** (one or all), **payroll register** (CSV), **bank transfer list** (CSV). 3 new integration tests.
+
+Original plan:
 - EPF (8% / 12%) and ETF (3%): configurable rates, payroll lines, monthly contribution report, remittance posting.
 - Salary advances and staff loans with payroll recovery.
 - Payslip PDF, payroll register, bank transfer list.

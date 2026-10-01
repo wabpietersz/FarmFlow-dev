@@ -1,5 +1,6 @@
 import { useSearchParams, Link } from 'react-router-dom';
-import { ArrowRight, Bell, Boxes, HeartPulse, KeyRound, ListChecks, Settings, Store, Users, Wallet, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Bell, Boxes, HandCoins, HeartPulse, KeyRound, ListChecks, Settings, Store, Users, Wallet, type LucideIcon } from 'lucide-react';
+import { PayrollSettings } from '@/components/settings/PayrollSettings';
 import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/lib/utils';
 import { AccessSettings } from '@/components/settings/AccessSettings';
@@ -26,6 +27,7 @@ const SECTIONS: Section[] = [
   { key: 'item-types', label: 'Stock item types', description: 'The kinds of stock you keep and how each behaves.', icon: Boxes, view: 'inventory:read', edit: 'inventory:create' },
   { key: 'stores', label: 'Stores', description: 'Where stock is kept. Each farm has its own store.', icon: Store, view: 'inventory:read', edit: 'inventory:create' },
   { key: 'money', label: 'Money setup', description: 'Money categories and cost centres used to tag every rupee.', icon: Wallet, view: 'treasury:read', edit: 'treasury:accounts:manage' },
+  { key: 'payroll', label: 'Payroll', description: 'EPF and ETF rates used on every payslip.', icon: HandCoins, view: 'payroll:read', edit: 'payroll:approve' },
   { key: 'health', label: 'Health & growth', description: 'Vaccination programmes and target growth curves.', icon: HeartPulse, view: 'batches:read', edit: 'batches:update' },
   { key: 'alerts', label: 'Alerts', description: 'When FarmFlow warns you about a batch.', icon: Bell, view: 'system:read', edit: 'system:update' },
 ];
@@ -89,6 +91,7 @@ export default function SettingsPage() {
           {active.key === 'item-types' ? <ItemTypesSettings canEdit={canEdit} /> : null}
           {active.key === 'stores' ? <StoresSettings canEdit={canEdit} /> : null}
           {active.key === 'money' ? <FinanceSetupTab canManage={canEdit} /> : null}
+          {active.key === 'payroll' ? <PayrollSettings canEdit={canEdit} /> : null}
           {active.key === 'health' ? <HealthLinks /> : null}
           {active.key === 'alerts' ? <AlertSettings canEdit={canEdit} /> : null}
         </section>

@@ -23,11 +23,14 @@ import {
   employeeCompensationComponents,
   financeAccounts,
   chequeLeaves,
+  staffLoanRecoveries,
 } from '../db/schema';
 import { eq, and, sql, desc, gte, lte, or, isNull, asc, inArray } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import { postPayrollToTreasury } from '../lib/treasury';
+import { computePay, getStatutoryRates, loansDueForPeriod, recomputePayroll } from '../lib/payroll-calc';
+import { refreshLoanStatuses } from '../lib/staff-payroll';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
@@ -53,6 +56,7 @@ interface GenerationWarning {
 interface PayrollAllowanceInput {
   allowanceType: string;
   amount: number;
+  countsForEpf?: boolean;
   remarks?: string;
   included?: boolean;
 }
@@ -283,6 +287,7 @@ function buildDefaultComponents(args: {
     .map((component) => ({
       allowanceType: component.name,
       amount: Number(component.calculatedAmount.toFixed(2)),
+      countsForEpf: component.countsForEpf,
       remarks: `Recurring compensation component (${component.calculationType})`,
       included: true,
     }));
@@ -299,50 +304,12 @@ function buildDefaultComponents(args: {
   return { allowances, deductions };
 }
 
-// Helper: recalculate payroll totals (gross + net) from base, overtime, allowances, deductions
+// Helper: recalculate every payroll total (EPF/ETF, loan recovery, net). Drafts re-check loans due.
 async function recalculatePayrollTotals(payrollId: number, tx?: typeof db) {
   const database = tx ?? db;
-
-  const [record] = await database
-    .select()
-    .from(payroll)
-    .where(eq(payroll.id, payrollId))
-    .limit(1);
-
+  const [record] = await database.select({ status: payroll.status }).from(payroll).where(eq(payroll.id, payrollId)).limit(1);
   if (!record) return;
-
-  const [allowanceSum] = await database
-    .select({ total: sql<string>`coalesce(sum(${payrollAllowances.amount}), 0)` })
-    .from(payrollAllowances)
-    .where(eq(payrollAllowances.payrollId, payrollId));
-
-  const [deductionSum] = await database
-    .select({ total: sql<string>`coalesce(sum(${payrollDeductions.amount}), 0)` })
-    .from(payrollDeductions)
-    .where(eq(payrollDeductions.payrollId, payrollId));
-
-  const baseSalary = Number(record.baseSalary);
-  const workingDays = record.workingDays;
-  const attendedDays = Number(record.attendedDays);
-  const overtimeHours = Number(record.overtimeHours ?? 0);
-  const overtimeRate = Number(record.overtimeRate ?? 0);
-
-  const proRatedBase = workingDays > 0 ? (baseSalary / workingDays) * attendedDays : 0;
-  const overtimePay = overtimeHours * overtimeRate;
-  const totalAllowances = Number(allowanceSum.total);
-  const totalDeductions = Number(deductionSum.total);
-
-  const grossSalary = proRatedBase + overtimePay + totalAllowances;
-  const netSalary = Math.max(0, grossSalary - totalDeductions);
-
-  await database
-    .update(payroll)
-    .set({
-      grossSalary: grossSalary.toFixed(2),
-      netSalary: netSalary.toFixed(2),
-      updatedAt: new Date(),
-    })
-    .where(eq(payroll.id, payrollId));
+  await recomputePayroll(payrollId, database, { refreshLoans: record.status === 'draft' });
 }
 
 // Valid status transitions
@@ -477,11 +444,13 @@ router.post('/preview', authenticate, requirePermission('payroll:create'), valid
       conditions.push(eq(employees.id, employeeId));
     }
 
+    const rates = await getStatutoryRates();
     const employeeRows = await db
       .select({
         id: employees.id,
         firstName: employees.firstName,
         lastName: employees.lastName,
+        epfEligible: employees.epfEligible,
       })
       .from(employees)
       .where(and(...conditions))
@@ -557,14 +526,18 @@ router.post('/preview', authenticate, requirePermission('payroll:create'), valid
       }
 
       const defaults = buildDefaultComponents({ components: evaluatedComponents });
-      const totals = computePayrollTotals({
+      const dueLoans = await loansDueForPeriod(employee.id, normalizedPayPeriod);
+      const pay = computePay({
         baseSalary,
         workingDays,
         attendedDays,
         overtimeHours: 0,
         overtimeRate,
         allowances: defaults.allowances,
-        deductions: defaults.deductions,
+        otherDeductions: defaults.deductions.reduce((sum, d) => sum + Number(d.amount), 0),
+        loanInstallments: dueLoans.map((loan) => loan.due),
+        epfEligible: employee.epfEligible,
+        rates,
       });
 
       rows.push({
@@ -582,8 +555,12 @@ router.post('/preview', authenticate, requirePermission('payroll:create'), valid
         compensationRevisionId,
         compensationSnapshot,
         warnings: rowWarnings,
-        grossSalaryPreview: Number(totals.grossSalary.toFixed(2)),
-        netSalaryPreview: Number(totals.netSalary.toFixed(2)),
+        grossSalaryPreview: pay.gross,
+        epfEmployeePreview: pay.epfEmployee,
+        epfEmployerPreview: pay.epfEmployer,
+        etfEmployerPreview: pay.etfEmployer,
+        loanRecoveryPreview: pay.loanRecovery,
+        netSalaryPreview: pay.net,
         notes: '',
       });
     }
@@ -854,6 +831,7 @@ router.post('/', authenticate, requirePermission('payroll:create'), validate(cre
           payrollId: record.id,
           allowanceType: allowance.allowanceType,
           amount: Number(allowance.amount).toFixed(2),
+          countsForEpf: allowance.countsForEpf ?? false,
           remarks: allowance.remarks ?? null,
         }));
       if (allowanceRows.length > 0) {
@@ -872,7 +850,9 @@ router.post('/', authenticate, requirePermission('payroll:create'), validate(cre
         await tx.insert(payrollDeductions).values(deductionRows);
       }
 
-      return record;
+      // EPF/ETF and loan recoveries
+      const recomputed = await recomputePayroll(record.id, tx, { refreshLoans: true });
+      return recomputed?.record ?? record;
     });
 
     createAuditLog({
@@ -1215,6 +1195,7 @@ router.post('/generate', authenticate, requirePermission('payroll:create'), vali
             payrollId: record.id,
             allowanceType: allowance.allowanceType,
             amount: Number(allowance.amount).toFixed(2),
+            countsForEpf: allowance.countsForEpf ?? false,
             remarks: allowance.remarks ?? null,
           }));
         if (allowanceRows.length > 0) {
@@ -1233,7 +1214,8 @@ router.post('/generate', authenticate, requirePermission('payroll:create'), vali
           await tx.insert(payrollDeductions).values(deductionRows);
         }
 
-        results.push(record);
+        const recomputed = await recomputePayroll(record.id, tx, { refreshLoans: true });
+        results.push(recomputed?.record ?? record);
       }
 
       return { results, employeesWithoutCompensation, skipped };
@@ -1427,6 +1409,7 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
 
     let updated;
     if (newStatus === 'paid') {
+      // Posting and the status change happen in one transaction
       await postPayrollToTreasury({
         payrollId: id,
         financeAccountId: financeAccountId!,
@@ -1434,15 +1417,10 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
         paymentMethod,
         chequeLeafId: chequeLeafId ?? null,
       });
-      const [paidRecord] = await db
-        .update(payroll)
-        .set({
-          status: newStatus,
-          updatedAt: new Date(),
-        })
-        .where(eq(payroll.id, id))
-        .returning();
+      const [paidRecord] = await db.select().from(payroll).where(eq(payroll.id, id)).limit(1);
       updated = paidRecord;
+      const recoveredLoans = await db.select({ loanId: staffLoanRecoveries.loanId }).from(staffLoanRecoveries).where(eq(staffLoanRecoveries.payrollId, id));
+      await refreshLoanStatuses(recoveredLoans.map((row) => row.loanId));
     } else {
       const [record] = await db
         .update(payroll)
@@ -1722,7 +1700,7 @@ router.post('/:id/allowances', authenticate, requirePermission('payroll:update')
       return;
     }
 
-    const { allowanceType, amount, remarks } = req.body;
+    const { allowanceType, amount, remarks, countsForEpf } = req.body;
 
     const [created] = await db
       .insert(payrollAllowances)
@@ -1730,6 +1708,7 @@ router.post('/:id/allowances', authenticate, requirePermission('payroll:update')
         payrollId,
         allowanceType,
         amount: amount.toFixed(2),
+        countsForEpf: countsForEpf ?? false,
         remarks: remarks ?? null,
       })
       .returning();

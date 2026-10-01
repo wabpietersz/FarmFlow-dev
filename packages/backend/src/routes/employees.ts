@@ -373,6 +373,8 @@ router.get(
             joinDate: employees.joinDate,
             status: employees.status,
             phone: employees.phone,
+          epfNumber: employees.epfNumber,
+          epfEligible: employees.epfEligible,
             hasCompensation: sql<boolean>`${employeeCompensation.id} is not null`,
             createdAt: employees.createdAt,
             updatedAt: employees.updatedAt,
@@ -403,6 +405,8 @@ router.get(
             joinDate: employees.joinDate,
             status: employees.status,
             phone: employees.phone,
+          epfNumber: employees.epfNumber,
+          epfEligible: employees.epfEligible,
             hasCompensation: sql<boolean>`false`,
             createdAt: employees.createdAt,
             updatedAt: employees.updatedAt,
@@ -458,6 +462,8 @@ router.get(
           joinDate: employees.joinDate,
           status: employees.status,
           phone: employees.phone,
+          epfNumber: employees.epfNumber,
+          epfEligible: employees.epfEligible,
         })
         .from(employees)
         .leftJoin(sites, eq(employees.siteId, sites.id))
@@ -524,6 +530,8 @@ router.get(
           joinDate: employees.joinDate,
           status: employees.status,
           phone: employees.phone,
+          epfNumber: employees.epfNumber,
+          epfEligible: employees.epfEligible,
           createdAt: employees.createdAt,
           updatedAt: employees.updatedAt,
         })
@@ -649,6 +657,8 @@ router.post(
           employmentType: data.employmentType,
           joinDate: data.joinDate,
           phone: data.phone ?? null,
+          epfNumber: data.epfNumber || null,
+          epfEligible: data.epfEligible ?? true,
         })
         .returning();
 
@@ -1388,6 +1398,7 @@ router.post(
               calculationType: string;
               value: number;
               isTaxable?: boolean;
+              countsForEpf?: boolean;
               isActive?: boolean;
             }) => ({
               revisionId: revision.id,
@@ -1396,6 +1407,7 @@ router.post(
               calculationType: component.calculationType,
               value: component.value.toFixed(2),
               isTaxable: component.isTaxable ?? false,
+              countsForEpf: component.countsForEpf ?? false,
               isActive: component.isActive ?? true,
             })),
           );
@@ -1596,6 +1608,7 @@ router.put(
               calculationType: string;
               value: number;
               isTaxable?: boolean;
+              countsForEpf?: boolean;
               isActive?: boolean;
             }) => ({
               revisionId,
@@ -1604,6 +1617,7 @@ router.put(
               calculationType: component.calculationType,
               value: component.value.toFixed(2),
               isTaxable: component.isTaxable ?? false,
+              countsForEpf: component.countsForEpf ?? false,
               isActive: component.isActive ?? true,
             })),
           );

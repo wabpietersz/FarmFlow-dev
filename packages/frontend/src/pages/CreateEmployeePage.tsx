@@ -20,6 +20,8 @@ export default function CreateEmployeePage() {
         employmentType: values.employmentType as unknown as import('@farmflow/shared').EmploymentType,
         joinDate: values.joinDate,
         phone: values.phone || undefined,
+        epfNumber: values.epfNumber || undefined,
+        epfEligible: values.epfEligible,
       });
       toast.success('Employee created successfully');
       navigate(`/employees/${result.data?.id ?? ''}`);

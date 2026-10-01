@@ -33,6 +33,10 @@ export const employees = pgTable(
     joinDate: date('join_date').notNull(),
     status: varchar('status', { length: 50 }).default('active').notNull(),
     phone: varchar('phone', { length: 20 }),
+    /** EPF member number (shown on payslips and the monthly EPF/ETF return) */
+    epfNumber: varchar('epf_number', { length: 30 }),
+    /** Casual/trainee staff may be outside EPF/ETF */
+    epfEligible: boolean('epf_eligible').default(true).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -129,6 +133,8 @@ export const employeeCompensationComponents = pgTable(
     calculationType: varchar('calculation_type', { length: 20 }).notNull(),
     value: decimal('value', { precision: 12, scale: 2 }).notNull(),
     isTaxable: boolean('is_taxable').default(false).notNull(),
+    /** Included in "earnings for EPF/ETF" (basic salary always is) */
+    countsForEpf: boolean('counts_for_epf').default(false).notNull(),
     isActive: boolean('is_active').default(true).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

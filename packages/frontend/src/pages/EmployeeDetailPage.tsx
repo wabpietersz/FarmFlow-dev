@@ -25,6 +25,7 @@ import {
   type CompensationRevisionFormValues,
 } from '@/lib/validations/employee';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -206,6 +207,7 @@ export default function EmployeeDetailPage() {
           calculationType: component.calculationType as NonNullable<CreateCompensationRevisionRequest['components']>[number]['calculationType'],
           value: component.value,
           isTaxable: component.isTaxable,
+          countsForEpf: component.countsForEpf,
           isActive: component.isActive,
         })),
       };
@@ -279,6 +281,7 @@ export default function EmployeeDetailPage() {
       calculationType: 'fixed' | 'percentage';
       value: number;
       isTaxable: boolean;
+      countsForEpf?: boolean;
       isActive: boolean;
     }) => ({
       componentType: component.componentType,
@@ -286,6 +289,7 @@ export default function EmployeeDetailPage() {
       calculationType: component.calculationType,
       value: Number(component.value),
       isTaxable: component.isTaxable,
+      countsForEpf: component.countsForEpf ?? false,
       isActive: component.isActive,
     }));
 
@@ -344,6 +348,7 @@ export default function EmployeeDetailPage() {
             <InfoRow label="Employment Type" value={employee.employmentType} />
             <InfoRow label="Join Date" value={new Date(employee.joinDate).toLocaleDateString()} />
             <InfoRow label="Phone" value={employee.phone ?? '--'} />
+            <InfoRow label="EPF" value={employee.epfEligible === false ? 'Not a member' : employee.epfNumber ?? 'Member · number missing'} />
           </CardContent>
         </Card>
 
@@ -793,6 +798,7 @@ export default function EmployeeDetailPage() {
                       calculationType: 'fixed',
                       value: 0,
                       isTaxable: false,
+                      countsForEpf: false,
                       isActive: true,
                     })}
                   >
@@ -869,6 +875,20 @@ export default function EmployeeDetailPage() {
                               </FormItem>
                             )}
                           />
+                          {compensationForm.watch(`components.${index}.componentType`) === 'earning' ? (
+                            <FormField
+                              control={compensationForm.control}
+                              name={`components.${index}.countsForEpf`}
+                              render={({ field: componentField }) => (
+                                <FormItem className="flex flex-row items-center gap-2 pb-2 sm:col-span-8">
+                                  <FormControl>
+                                    <Checkbox checked={componentField.value} onCheckedChange={(checked) => componentField.onChange(checked === true)} />
+                                  </FormControl>
+                                  <FormLabel className="!mt-0 font-normal">Counts for EPF/ETF</FormLabel>
+                                </FormItem>
+                              )}
+                            />
+                          ) : null}
                         </div>
                         <div className="flex justify-end pt-1">
                           <Button type="button" size="sm" variant="ghost" onClick={() => componentsFieldArray.remove(index)}>

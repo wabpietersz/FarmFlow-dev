@@ -237,6 +237,7 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
       payrollId: payroll.id,
       payPeriod: payroll.payPeriod,
       grossSalary: payroll.grossSalary,
+      employerContributions: sql<number>`(${payroll.epfEmployer}::numeric + ${payroll.etfEmployer}::numeric)::float`,
       employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
       employeeSiteId: employees.siteId,
       centreType: costCentres.centreType,
@@ -375,7 +376,8 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
       kind,
       siteId: kind === 'site' ? (row.centreSiteId ?? row.employeeSiteId) : null,
       date: toIsoDate(row.payPeriod),
-      amount: Number(row.grossSalary),
+      // Labour cost = gross pay + employer EPF/ETF
+      amount: Number(row.grossSalary) + Number(row.employerContributions ?? 0),
       component: 'labor',
       sourceType: 'payroll',
       sourceId: row.payrollId,

@@ -35,6 +35,9 @@ export interface Employee {
   siteId: number;
   costCentreId?: number | null;
   siteName?: string;
+  /** EPF member number */
+  epfNumber?: string | null;
+  epfEligible?: boolean;
   employmentType: EmploymentType;
   joinDate: Date;
   status: EmployeeStatus;
@@ -83,6 +86,7 @@ export interface EmployeeCompensationComponent {
   calculationType: CompensationCalculationType;
   value: number;
   isTaxable: boolean;
+  countsForEpf?: boolean;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -124,6 +128,8 @@ export interface CreateEmployeeRequest {
   employmentType: EmploymentType;
   joinDate: string;
   phone?: string;
+  epfNumber?: string;
+  epfEligible?: boolean;
   emergencyContacts?: Omit<EmergencyContact, 'id' | 'employeeId'>[];
   bankDetails?: Omit<BankDetails, 'id' | 'employeeId' | 'createdAt' | 'updatedAt'>;
 }
@@ -136,6 +142,8 @@ export interface UpdateEmployeeRequest {
   costCentreId?: number | null;
   employmentType?: EmploymentType;
   phone?: string;
+  epfNumber?: string | null;
+  epfEligible?: boolean;
   status?: EmployeeStatus;
 }
 
@@ -153,6 +161,7 @@ export interface CompensationComponentInput {
   calculationType: CompensationCalculationType;
   value: number;
   isTaxable?: boolean;
+  countsForEpf?: boolean;
   isActive?: boolean;
 }
 
