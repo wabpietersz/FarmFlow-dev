@@ -56,9 +56,9 @@ export const ACCESS_MODULES: ModuleDefinition[] = [
     label: 'Money',
     description: 'Accounts, ledger, payments, cheques, petty cash',
     userCan: 'See accounts and the ledger; submit petty cash spending',
-    adminCan: 'Record money movements, pay expenses, manage accounts, cheques and finance setup',
+    adminCan: 'Record money movements, pay expenses, manage accounts, cheques and finance setup; approve over-limit spending',
     userPermissions: ['treasury:read', 'treasury:petty_cash:submit'],
-    adminPermissions: ['treasury:*'],
+    adminPermissions: ['treasury:*', 'approvals:decide'],
   },
   {
     key: 'people',
@@ -103,7 +103,7 @@ export const ACCESS_MODULES: ModuleDefinition[] = [
     userCan: 'See settings',
     adminCan: 'Manage users, access levels and all settings',
     userPermissions: ['system:read'],
-    adminPermissions: ['system:*', 'users:*'],
+    adminPermissions: ['system:*', 'users:*', 'approvals:decide'],
   },
 ];
 

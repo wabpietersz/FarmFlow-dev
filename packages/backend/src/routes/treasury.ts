@@ -1,3 +1,4 @@
+import { needsApproval } from '../lib/approvals';
 import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
@@ -843,6 +844,9 @@ router.post(
         categoryId: req.body.categoryId ?? null,
         costCentreId: req.body.costCentreId ?? null,
         batchId: req.body.batchId ?? null,
+        approval: req.body.transactionType === 'manual_outflow' && await needsApproval('money_out', Number(req.body.amount), req.user!.userRole)
+          ? { requestedBy: req.user!.id, summary: `${req.body.narrative} (${req.body.counterpartyName || 'money out'})` }
+          : null,
         sourceLink:
           req.body.sourceEntityType && req.body.sourceEntityId
             ? {

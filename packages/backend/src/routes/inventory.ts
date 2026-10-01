@@ -1,3 +1,4 @@
+import { needsApproval, requestApproval } from '../lib/approvals';
 import { siteScope } from '../lib/site-scope';
 import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
@@ -57,8 +58,7 @@ import {
   suppliers,
   treasuryTransactionLinks,
   stockLocations,
-  stockTransfers,
-} from '../db/schema';
+  stockTransfers, approvalRequests } from '../db/schema';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import { createSupplierPayment } from '../lib/treasury';
@@ -2408,12 +2408,25 @@ router.put('/purchase-orders/:id/status', authenticate, requirePermission('inven
       return;
     }
 
-    if (status === 'cancelled' && !['draft', 'submitted'].includes(existing.status)) {
+    if (status === 'cancelled' && !['draft', 'submitted', 'pending_approval'].includes(existing.status)) {
       res.status(400).json({ success: false, error: 'Can only cancel draft or submitted purchase orders', code: 'INVALID_PO_TRANSITION', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
-    const [updated] = await db.update(purchaseOrders).set({ status, updatedAt: new Date() }).where(eq(purchaseOrders.id, poId)).returning();
+    // Over the approval limit: wait for a manager instead of going to the supplier
+    const total = Number(existing.totalCost ?? 0);
+    const waits = status === 'submitted' && await needsApproval('purchase_order', total, req.user!.userRole);
+    const updated = await db.transaction(async (tx) => {
+      const [row] = await tx.update(purchaseOrders).set({ status: waits ? 'pending_approval' : status, updatedAt: new Date() }).where(eq(purchaseOrders.id, poId)).returning();
+      if (waits) {
+        await requestApproval(tx, { entityType: 'purchase_order', entityId: poId, amount: total, summary: `Purchase order ${existing.orderCode}`, requestedBy: req.user!.id });
+      }
+      if (status === 'cancelled' && existing.status === 'pending_approval') {
+        await tx.update(approvalRequests).set({ status: 'rejected', decisionNote: 'Cancelled', decidedBy: req.user!.id, decidedAt: new Date() })
+          .where(and(eq(approvalRequests.entityType, 'purchase_order'), eq(approvalRequests.entityId, poId), eq(approvalRequests.status, 'pending')));
+      }
+      return row;
+    });
 
     createAuditLog({
       userId: req.user!.id,

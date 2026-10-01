@@ -197,6 +197,7 @@ const STATUS_BADGES: Record<string, string> = {
   active: 'bg-success-soft text-success',
   inactive: 'bg-muted text-foreground',
   pending: 'bg-warning-soft text-warning',
+  pending_approval: 'bg-warning-soft text-warning',
   posted: 'bg-info-soft text-info',
   cleared: 'bg-success-soft text-success',
   reversed: 'bg-danger-soft text-danger',

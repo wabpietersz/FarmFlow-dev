@@ -4,6 +4,7 @@ import {
   varchar,
   integer,
   boolean,
+  decimal,
   text,
   timestamp,
   jsonb,
@@ -31,7 +32,14 @@ export const notifications = pgTable(
     notificationType: varchar('notification_type', { length: 50 }).notNull(),
     entityType: varchar('entity_type', { length: 50 }),
     entityId: integer('entity_id'),
+    title: varchar('title', { length: 200 }),
     message: text('message').notNull(),
+    /** Where clicking takes you */
+    link: varchar('link', { length: 300 }),
+    /** info | warning | danger */
+    tone: varchar('tone', { length: 20 }).default('info').notNull(),
+    /** One notification per user per thing (e.g. "health-task:42") */
+    dedupeKey: varchar('dedupe_key', { length: 120 }),
     isRead: boolean('is_read').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     readAt: timestamp('read_at'),
@@ -39,6 +47,7 @@ export const notifications = pgTable(
   (table) => [
     index('idx_notifications_user_id').on(table.userId),
     index('idx_notifications_is_read').on(table.isRead),
+    unique('uq_notifications_user_dedupe').on(table.userId, table.dedupeKey),
   ],
 );
 
@@ -77,4 +86,25 @@ export const roleModuleAccess = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => [unique('uq_role_module').on(table.role, table.moduleKey)],
+);
+
+/** Something waiting for a manager's yes/no because it is over an approval limit. */
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: serial('id').primaryKey(),
+    /** purchase_order | money_out */
+    entityType: varchar('entity_type', { length: 40 }).notNull(),
+    entityId: integer('entity_id').notNull(),
+    amount: decimal('amount', { precision: 14, scale: 2 }).notNull(),
+    summary: text('summary').notNull(),
+    /** pending | approved | rejected */
+    status: varchar('status', { length: 20 }).default('pending').notNull(),
+    requestedBy: integer('requested_by').references(() => users.id).notNull(),
+    decidedBy: integer('decided_by').references(() => users.id),
+    decidedAt: timestamp('decided_at'),
+    decisionNote: text('decision_note'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [index('idx_approval_requests_status').on(table.status), index('idx_approval_requests_entity').on(table.entityType, table.entityId)],
 );

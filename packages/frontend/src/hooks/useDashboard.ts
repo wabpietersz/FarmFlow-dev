@@ -79,6 +79,17 @@ export interface HomeDashboard {
     moneyOutLastMonth: number;
     spendByGroup: Array<{ group: string; amount: number }>;
   };
+  /** Owner view: this month's result and who owes whom (financial-report users only) */
+  business: null | {
+    monthProfit: number;
+    monthIncome: number;
+    monthExpenses: number;
+    owedToYou: number;
+    owedToYouOverdue: number;
+    youOwe: number;
+    youOweOverdue: number;
+    approvalsWaiting: number;
+  };
   liveBirds: number | null;
   batches: HomeBatchCard[] | null;
   todos: HomeTodo[];

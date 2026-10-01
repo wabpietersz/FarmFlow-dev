@@ -15,6 +15,7 @@ import { initOfflineSync } from '@/lib/offlineSync';
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const TodayCheckPage = lazy(() => import('@/pages/TodayCheckPage'));
 const FarmCarePage = lazy(() => import('@/pages/FarmCarePage'));
+const ApprovalsPage = lazy(() => import('@/pages/ApprovalsPage'));
 const EmployeesPage = lazy(() => import('@/pages/EmployeesPage'));
 const EmployeeDetailPage = lazy(() => import('@/pages/EmployeeDetailPage'));
 const CreateEmployeePage = lazy(() => import('@/pages/CreateEmployeePage'));
@@ -155,6 +156,14 @@ export default function App() {
                   element={
                     <Suspense fallback={<PageLoader />}>
                       <TodayCheckPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/approvals"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <ApprovalsPage />
                     </Suspense>
                   }
                 />

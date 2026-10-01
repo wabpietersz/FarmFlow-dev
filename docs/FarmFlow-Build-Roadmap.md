@@ -157,7 +157,10 @@ Original plan:
 - AP ageing, supplier statements.
 - Capital, drawings and loan flows (categories + loan register).
 
-### Phase 8: Platform
+### Phase 8: Platform — ✅ DONE (2026-10-01)
+**Farm scope** (`lib/site-scope.ts`): a user with a farm only sees and changes that farm — 55 routes guarded by record (batch, sale, employee, payroll, health task, vet visit, turnaround, farm), lists and reports filtered, creates for other farms refused; system admin and farm-less users see all. **Approvals** (`lib/approvals.ts`): limits in Settings → Approvals for purchase orders and money out; over-limit items by people who can't approve wait as *pending approval* (money isn't in balances or reports until approved); approve/reject with reason, no self-approval; rejected PO back to draft. **Approvals page** lists those plus every other review waiting (petty cash, expenses, supplier invoices, work orders, contracts, stock requests, payroll, draft sales). **Notifications** (`lib/notifications.ts`): bell in the top bar; every 30 minutes the server notifies the right people (by permission and farm) about vaccinations due/overdue, expiring/expired lots, low stock, buyer cheques to deposit, approvals waiting, catches tomorrow and late payers; each thing once; approval decisions notify the requester. **Owner dashboard**: Home shows this month's profit, owed to you, you owe suppliers and approvals waiting. 4 new integration tests.
+
+Original plan:
 - Site-scoped data access (users see only their site's data unless their scope is global) (G4).
 - Approvals engine: configurable thresholds and an approval inbox (G5).
 - Notifications (vaccination due, low stock, expiring lots, cheques due, approvals).

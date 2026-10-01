@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { useHomeDashboard, type HomeBatchCard } from '@/hooks/useDashboard';
+import { useHomeDashboard, type HomeBatchCard, type HomeDashboard } from '@/hooks/useDashboard';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -78,6 +78,8 @@ export default function DashboardPage() {
         </section>
       ) : null}
 
+      {home.business ? <BusinessStrip business={home.business} monthName={monthName} /> : null}
+
       <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,0.9fr)]">
         <section aria-labelledby="live-batches" className="space-y-3">
           <div className="flex items-baseline justify-between">
@@ -144,6 +146,27 @@ export default function DashboardPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+/** Owner view: this month's profit, who owes whom, and what's waiting for a decision. */
+function BusinessStrip({ business, monthName }: { business: NonNullable<HomeDashboard['business']>; monthName: string }) {
+  const tiles = [
+    { to: '/treasury?tab=pnl', label: `Profit · ${monthName}`, value: compactRs(business.monthProfit), note: `${compactRs(business.monthIncome)} in, ${compactRs(business.monthExpenses)} out`, tone: business.monthProfit >= 0 ? 'text-success' : 'text-danger' },
+    { to: '/sales?tab=receivables', label: 'Owed to you', value: compactRs(business.owedToYou), note: business.owedToYouOverdue > 0 ? `${compactRs(business.owedToYouOverdue)} overdue` : 'Nothing overdue', tone: business.owedToYouOverdue > 0 ? 'text-warning' : 'text-muted-foreground' },
+    { to: '/treasury?tab=payables', label: 'You owe suppliers', value: compactRs(business.youOwe), note: business.youOweOverdue > 0 ? `${compactRs(business.youOweOverdue)} overdue` : 'Nothing overdue', tone: business.youOweOverdue > 0 ? 'text-warning' : 'text-muted-foreground' },
+    { to: '/approvals', label: 'Waiting for approval', value: String(business.approvalsWaiting), note: business.approvalsWaiting ? 'Over the approval limit' : 'All clear', tone: business.approvalsWaiting ? 'text-warning' : 'text-muted-foreground' },
+  ];
+  return (
+    <section aria-label="Business this month" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {tiles.map((tile) => (
+        <Link key={tile.label} to={tile.to} className="rounded-3xl border border-border p-4 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <p className="text-sm text-muted-foreground">{tile.label}</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{tile.value}</p>
+          <p className={`mt-0.5 text-[13px] font-semibold ${tile.tone}`}>{tile.note}</p>
+        </Link>
+      ))}
+    </section>
   );
 }
 

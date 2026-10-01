@@ -25,6 +25,7 @@ import {
 import OfflineBanner from '@/components/layout/OfflineBanner';
 import InstallPrompt from '@/components/layout/InstallPrompt';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
+import { NotificationBell } from '@/components/layout/NotificationBell';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -90,6 +91,7 @@ export default function AppLayout() {
               >
                 {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>
+              <NotificationBell />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button

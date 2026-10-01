@@ -23,6 +23,8 @@ import { toIsoDate } from './bird-days';
 import { listDueHealthTasks } from './batch-health';
 import { expiringLots } from './stock';
 import { receivablesAgeing, upcomingBookings } from './sales-ops';
+import { managementPnl, payablesAgeing } from './finance-reports';
+import { pendingApprovalCount } from './approvals';
 
 export type TodoTone = 'warning' | 'danger' | 'info';
 
@@ -59,6 +61,17 @@ export interface HomeDashboard {
     spendByGroup: Array<{ group: string; amount: number }>;
   };
   liveBirds: number | null;
+  /** Owner view: this month's result and who owes whom (financial-report users only) */
+  business: null | {
+    monthProfit: number;
+    monthIncome: number;
+    monthExpenses: number;
+    owedToYou: number;
+    owedToYouOverdue: number;
+    youOwe: number;
+    youOweOverdue: number;
+    approvalsWaiting: number;
+  };
   batches: HomeBatchCard[] | null;
   todos: HomeTodo[];
 }
@@ -368,8 +381,33 @@ export async function buildHomeDashboard(params: {
     }
   }
 
+  let business: HomeDashboard['business'] = null;
+  if (params.can('reports:financial:read')) {
+    const today = toIsoDate(new Date());
+    const [pnl, receivables, payables, approvals] = await Promise.all([
+      managementPnl({ from: `${today.slice(0, 7)}-01`, to: today }),
+      receivablesAgeing(today),
+      payablesAgeing(today),
+      pendingApprovalCount(),
+    ]);
+    business = {
+      monthProfit: pnl.netProfit.total,
+      monthIncome: pnl.totalIncome.total,
+      monthExpenses: pnl.totalExpenses.total,
+      owedToYou: receivables.totalOwed,
+      owedToYouOverdue: receivables.overdue,
+      youOwe: payables.totalOwed,
+      youOweOverdue: payables.overdue,
+      approvalsWaiting: approvals,
+    };
+    if (approvals > 0 && params.can('approvals:decide')) {
+      todos.unshift({ key: 'approvals', title: `${approvals} waiting for your approval`, detail: 'Purchase orders and payments over the limit', href: '/approvals', tone: 'warning' });
+    }
+  }
+
   return {
     money,
+    business,
     liveBirds: batchData ? batchData.liveBirds : null,
     batches: batchData ? batchData.cards : null,
     todos,

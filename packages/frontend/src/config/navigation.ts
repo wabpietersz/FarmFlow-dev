@@ -14,8 +14,7 @@ import {
   Wheat,
   HeartPulse,
   Settings,
-  type LucideIcon,
-} from 'lucide-react';
+  type LucideIcon, ClipboardCheck } from 'lucide-react';
 
 export interface NavItem {
   type: 'link';
@@ -111,6 +110,7 @@ export const mainNavigationItems: MainNavigationItem[] = [
 
 /** Administration lives in the profile menu, not the main bar. */
 export const adminNavigationItems: NavItem[] = [
+  { type: 'link', key: 'approvals', label: 'Approvals', href: '/approvals', icon: ClipboardCheck },
   { type: 'link', key: 'settings', label: 'Settings', href: '/settings', icon: Settings, requiredPermission: 'system:read' },
   { type: 'link', key: 'users', label: 'Users & access', href: '/settings?section=users', icon: UserPlus, requiredPermission: 'users:read' },
 ];

@@ -773,7 +773,7 @@ function SupplierContractDetailDialogContent({
                   <TableRow key={po.id}>
                     <TableCell className="font-medium">{po.orderCode}</TableCell>
                     <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                    <TableCell><Badge variant="outline">{po.status}</Badge></TableCell>
+                    <TableCell><Badge variant={po.status === 'pending_approval' ? 'warning' : 'outline'} className="capitalize">{po.status.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell className="text-right">Rs. {Number(po.totalCost).toFixed(2)}</TableCell>
                   </TableRow>
                 ))}
@@ -1450,7 +1450,7 @@ export default function InventoryManagementPage() {
                       <TableCell className="font-medium">{po.orderCode}</TableCell>
                       <TableCell>{po.supplierName}</TableCell>
                       <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                      <TableCell><Badge variant="outline">{po.status}</Badge></TableCell>
+                      <TableCell><Badge variant={po.status === 'pending_approval' ? 'warning' : 'outline'} className="capitalize">{po.status.replace(/_/g, ' ')}</Badge></TableCell>
                       <TableCell>Rs. {Number(po.totalCost).toFixed(2)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">

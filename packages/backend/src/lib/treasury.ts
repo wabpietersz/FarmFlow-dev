@@ -35,6 +35,7 @@ import {
   inventoryItemTypes,
 } from '../db/schema';
 import { assertPeriodOpen } from './period-locks';
+import { requestApproval } from './approvals';
 import {
   type EntryTagInput,
   FinanceTagError,
@@ -999,6 +1000,8 @@ export async function createManualTreasuryTransaction(params: {
   categoryId?: number | null;
   costCentreId?: number | null;
   batchId?: number | null;
+  /** Money out over the approval limit: saved as pending_approval (not in balances) with an approval request */
+  approval?: { requestedBy: number; summary: string } | null;
 }) {
   return db.transaction(async (tx) => {
     await assertPeriodOpen(params.transactionDate, 'financial');
@@ -1067,8 +1070,10 @@ export async function createManualTreasuryTransaction(params: {
 
     const direction = params.transactionType === 'manual_inflow' ? 'inflow' : 'outflow';
     await assertCategoryFitsDirection(params.categoryId ?? null, direction, tx);
+    const waitsForApproval = direction === 'outflow' && !!params.approval;
     const transaction = await createTreasuryTransactionRecord({
       transactionType: params.transactionType,
+      status: waitsForApproval ? 'pending_approval' : 'posted',
       transactionDate: params.transactionDate,
       referenceNumber: params.referenceNumber,
       counterpartyNameSnapshot: params.counterpartyName ?? null,
@@ -1102,6 +1107,10 @@ export async function createManualTreasuryTransaction(params: {
           amount: params.amount,
         }),
       );
+    }
+
+    if (waitsForApproval) {
+      await requestApproval(tx, { entityType: 'money_out', entityId: transaction.id, amount: params.amount, summary: params.approval!.summary, requestedBy: params.approval!.requestedBy });
     }
 
     return transaction;

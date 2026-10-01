@@ -78,6 +78,20 @@
       "when": 1790874778213,
       "tag": "0010_business_loans",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790875504123,
+      "tag": "0011_approval_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790875659752,
+      "tag": "0012_notifications_feed",
+      "breakpoints": true
     }
   ]
 }
