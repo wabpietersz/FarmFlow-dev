@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { createSupplierSchema, updateSupplierSchema } from '../validators/feed';
@@ -22,6 +24,13 @@ import {
   updateInventoryItemTypeSchema,
   updateInventoryPurchaseOrderSchema,
   updateInventoryPurchaseOrderStatusSchema,
+  stockLocationSchema,
+  updateStockLocationSchema,
+  stockTransferSchema,
+  writeOffLotSchema,
+  createRequisitionSchema,
+  reviewRequisitionSchema,
+  convertRequisitionSchema,
 } from '../validators/inventory';
 import { db } from '../db';
 import {
@@ -45,10 +54,21 @@ import {
   supplierPayments,
   suppliers,
   treasuryTransactionLinks,
+  stockLocations,
+  stockTransfers,
 } from '../db/schema';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import { createSupplierPayment } from '../lib/treasury';
+import { defaultPurchaseCostCentreId, resolveEntryTags } from '../lib/finance-tags';
+import { StockError, ensureFarmStore, expiringLots, farmStoreForBatch, planLotConsumptionOrLegacy, stockBalances, transferStock, writeOffLot } from '../lib/stock';
+import { computeInvoiceMatch, convertRequisitionToOrder, createRequisition, listRequisitions, receivePurchaseOrder, reviewRequisition } from '../lib/procurement';
+
+function serviceTypeCategoryCode(serviceType: string) {
+  if (serviceType === 'utility') return 'electricity';
+  if (serviceType === 'fuel') return 'fuel_gas';
+  return 'repairs_maintenance';
+}
 import { assertPeriodOpen } from '../lib/period-locks';
 import { getProductionBatchAvailableQuantity, postInventoryMovement } from '../lib/inventory-movements';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
@@ -142,49 +162,13 @@ async function recalculateWeightedAverageCost(inventoryItemId: number): Promise<
 async function consumeInventoryFIFO(
   inventoryItemId: number,
   requiredQuantity: number,
+  preferredLocationId?: number | null,
 ): Promise<{ lotConsumptions: LotConsumption[]; totalCost: number }> {
-  const availableLots = await db
-    .select()
-    .from(inventoryLots)
-    .where(and(
-      eq(inventoryLots.inventoryItemId, inventoryItemId),
-      sql`${inventoryLots.remainingQuantity}::numeric > 0`,
-    ))
-    .orderBy(asc(inventoryLots.receivedDate), asc(inventoryLots.id));
+  return planLotConsumptionOrLegacy({ inventoryItemId, quantity: requiredQuantity, preferredLocationId });
+}
 
-  const totalAvailable = availableLots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
-  if (totalAvailable < requiredQuantity) {
-    throw new Error(`Insufficient lot quantity for inventory item ${inventoryItemId}: available ${totalAvailable}, needed ${requiredQuantity}`);
-  }
-
-  const lotConsumptions: LotConsumption[] = [];
-  let remaining = requiredQuantity;
-  let totalCost = 0;
-
-  for (const lot of availableLots) {
-    if (remaining <= 0) break;
-
-    const lotRemaining = Number(lot.remainingQuantity);
-    const consume = Math.min(remaining, lotRemaining);
-    const cost = Number(lot.costPerUnit);
-    const lineCost = Math.round(consume * cost * 100) / 100;
-
-    lotConsumptions.push({
-      lotId: lot.id,
-      purchaseOrderItemId: lot.purchaseOrderItemId,
-      lotCode: lot.lotCode,
-      quantityUsed: consume,
-      costPerUnit: cost,
-      lineCost,
-      previousRemaining: lotRemaining,
-      newRemaining: Math.round((lotRemaining - consume) * 100) / 100,
-    });
-
-    totalCost += lineCost;
-    remaining = Math.round((remaining - consume) * 100) / 100;
-  }
-
-  return { lotConsumptions, totalCost: Math.round(totalCost * 100) / 100 };
+function sendStockError(res: Response, error: StockError) {
+  res.status(error.statusCode).json({ success: false, error: error.message, code: error.code, statusCode: error.statusCode, timestamp: new Date().toISOString() });
 }
 
 async function getInventoryItemWithType(itemId: number) {
@@ -243,6 +227,7 @@ router.get('/item-types', authenticate, requirePermission('inventory:read'), asy
 
     res.json({ success: true, data: types, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory item types', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch inventory item types', code: 'ITEM_TYPES_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -273,6 +258,7 @@ router.post('/item-types', authenticate, requirePermission('inventory:create'), 
         defaultUnit,
         allowsBatchAllocation,
         isFeed,
+        financeCategoryId: req.body.financeCategoryId ?? null,
         status,
         description: description || null,
       })
@@ -288,6 +274,7 @@ router.post('/item-types', authenticate, requirePermission('inventory:create'), 
 
     res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create inventory item type', { error });
     res.status(500).json({ success: false, error: 'Failed to create inventory item type', code: 'CREATE_ITEM_TYPE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -324,6 +311,7 @@ router.put('/item-types/:id', authenticate, requirePermission('inventory:update'
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update inventory item type', { error });
     res.status(500).json({ success: false, error: 'Failed to update inventory item type', code: 'UPDATE_ITEM_TYPE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -351,6 +339,7 @@ router.get('/suppliers', authenticate, requirePermission('inventory:read'), asyn
 
     res.json({ success: true, data, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory suppliers', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch suppliers', code: 'SUPPLIERS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -401,6 +390,7 @@ router.get('/suppliers/:id/payments', authenticate, requirePermission('inventory
 
     res.json({ success: true, data: paymentsList, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -426,6 +416,9 @@ router.post('/suppliers/:id/payments', authenticate, requirePermission('inventor
       chequeLeafId: req.body.chequeLeafId ?? null,
       notes: req.body.notes ?? null,
       recordedBy: req.user!.id,
+      tags: req.body.categoryId || req.body.costCentreId || req.body.batchId
+        ? { categoryId: req.body.categoryId ?? null, costCentreId: req.body.costCentreId ?? null, batchId: req.body.batchId ?? null }
+        : null,
     });
 
     createAuditLog({
@@ -444,6 +437,7 @@ router.post('/suppliers/:id/payments', authenticate, requirePermission('inventor
 
     res.status(201).json({ success: true, data: payment, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -508,6 +502,7 @@ router.get('/contracts', authenticate, requirePermission('inventory:read'), asyn
 
     res.json({ success: true, data: contracts, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch supplier contracts', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch supplier contracts', code: 'SUPPLIER_CONTRACTS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -570,6 +565,7 @@ router.post('/contracts', authenticate, requirePermission('inventory:create'), v
 
     res.status(201).json({ success: true, data: contract, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create supplier contract', { error });
     res.status(500).json({ success: false, error: 'Failed to create supplier contract', code: 'SUPPLIER_CONTRACT_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -635,6 +631,7 @@ router.get('/contracts/:id', authenticate, requirePermission('inventory:read'), 
 
     res.json({ success: true, data: { ...contract, terms, linkedPurchaseOrders, linkedInvoices }, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch supplier contract detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch supplier contract detail', code: 'SUPPLIER_CONTRACT_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -675,6 +672,7 @@ router.put('/contracts/:id/review', authenticate, requirePermission('inventory:u
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to review supplier contract', { error });
     res.status(500).json({ success: false, error: 'Failed to review supplier contract', code: 'SUPPLIER_CONTRACT_REVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -711,6 +709,10 @@ router.get('/supplier-invoices', authenticate, requirePermission('inventory:read
         invoiceAmount: supplierInvoices.invoiceAmount,
         currencyCode: supplierInvoices.currencyCode,
         status: supplierInvoices.status,
+        matchStatus: supplierInvoices.matchStatus,
+        receivedValue: supplierInvoices.receivedValue,
+        matchVariance: supplierInvoices.matchVariance,
+        overrideNote: supplierInvoices.overrideNote,
         approvedBy: supplierInvoices.approvedBy,
         approvedAt: supplierInvoices.approvedAt,
         approvalNotes: supplierInvoices.approvalNotes,
@@ -747,6 +749,7 @@ router.get('/supplier-invoices', authenticate, requirePermission('inventory:read
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch supplier invoices', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch supplier invoices', code: 'SUPPLIER_INVOICES_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -806,6 +809,14 @@ router.post('/supplier-invoices', authenticate, requirePermission('inventory:cre
         invoiceDate: req.body.invoiceDate,
         dueDate: req.body.dueDate,
         invoiceAmount: req.body.invoiceAmount.toFixed(2),
+        ...(await (async () => {
+          const match = await computeInvoiceMatch({ purchaseOrderId: req.body.purchaseOrderId ?? null, invoiceAmount: req.body.invoiceAmount });
+          return {
+            matchStatus: match.matchStatus,
+            receivedValue: match.receivedValue != null ? String(match.receivedValue) : null,
+            matchVariance: match.matchVariance != null ? String(match.matchVariance) : null,
+          };
+        })()),
         currencyCode: req.body.currencyCode,
         status: req.body.status,
         notes: req.body.notes ?? null,
@@ -823,6 +834,7 @@ router.post('/supplier-invoices', authenticate, requirePermission('inventory:cre
 
     res.status(201).json({ success: true, data: invoice, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create supplier invoice', { error });
     res.status(500).json({ success: false, error: 'Failed to create supplier invoice', code: 'SUPPLIER_INVOICE_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -847,6 +859,10 @@ router.get('/supplier-invoices/:id', authenticate, requirePermission('inventory:
         invoiceAmount: supplierInvoices.invoiceAmount,
         currencyCode: supplierInvoices.currencyCode,
         status: supplierInvoices.status,
+        matchStatus: supplierInvoices.matchStatus,
+        receivedValue: supplierInvoices.receivedValue,
+        matchVariance: supplierInvoices.matchVariance,
+        overrideNote: supplierInvoices.overrideNote,
         approvedBy: supplierInvoices.approvedBy,
         approvedAt: supplierInvoices.approvedAt,
         approvalNotes: supplierInvoices.approvalNotes,
@@ -898,6 +914,7 @@ router.get('/supplier-invoices/:id', authenticate, requirePermission('inventory:
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch supplier invoice detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch supplier invoice detail', code: 'SUPPLIER_INVOICE_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -918,9 +935,25 @@ router.put('/supplier-invoices/:id/review', authenticate, requirePermission('inv
       return;
     }
 
+    const match = await computeInvoiceMatch({ purchaseOrderId: existing.purchaseOrderId, invoiceAmount: Number(existing.invoiceAmount), excludeInvoiceId: existing.id });
+    if (req.body.status === 'approved' && match.matchStatus === 'over_billed' && !req.body.overrideNote?.trim()) {
+      res.status(400).json({
+        success: false,
+        error: `This invoice is ${Math.abs(match.matchVariance ?? 0).toLocaleString('en-US')} more than the goods received on its order (Rs ${(match.receivedValue ?? 0).toLocaleString('en-US')}). Receive the rest of the goods first, or give a reason to approve anyway.`,
+        code: 'INVOICE_OVER_BILLED',
+        statusCode: 400,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
     const [updated] = await db
       .update(supplierInvoices)
       .set({
+        matchStatus: match.matchStatus,
+        receivedValue: match.receivedValue != null ? String(match.receivedValue) : null,
+        matchVariance: match.matchVariance != null ? String(match.matchVariance) : null,
+        overrideNote: req.body.overrideNote?.trim() || existing.overrideNote || null,
         status: req.body.status,
         approvedBy: req.body.status === 'approved' ? req.user!.id : null,
         approvedAt: req.body.status === 'approved' ? new Date() : null,
@@ -943,6 +976,7 @@ router.put('/supplier-invoices/:id/review', authenticate, requirePermission('inv
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to review supplier invoice', { error });
     res.status(500).json({ success: false, error: 'Failed to review supplier invoice', code: 'SUPPLIER_INVOICE_REVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1005,6 +1039,7 @@ router.get('/payables/summary', authenticate, requirePermission('inventory:read'
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch payables summary', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch payables summary', code: 'PAYABLES_SUMMARY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1068,6 +1103,7 @@ router.get('/service-work-orders', authenticate, requirePermission('inventory:re
 
     res.json({ success: true, data: workOrders, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch service work orders', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch service work orders', code: 'SERVICE_WORK_ORDERS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1107,6 +1143,17 @@ router.post('/service-work-orders', authenticate, requirePermission('inventory:c
       }
     }
 
+    const workOrderTags = await resolveEntryTags({
+      categoryId: req.body.categoryId ?? null,
+      categoryCode: req.body.categoryId ? null : serviceTypeCategoryCode(req.body.serviceType),
+      costCentreId: req.body.costCentreId ?? null,
+      batchId: req.body.allocationType === 'batch' ? req.body.batchId ?? null : null,
+      siteId: req.body.allocationType === 'site' ? req.body.siteId ?? null : null,
+      costCentreCode: req.body.costCentreId
+        ? null
+        : req.body.allocationType === 'mill' ? 'MILL' : req.body.allocationType === 'shared_overhead' ? 'ADMIN' : null,
+    });
+
     const workOrderCode = await generateServiceWorkOrderCode(req.body.serviceDate);
     const [created] = await db
       .insert(serviceWorkOrders)
@@ -1116,6 +1163,8 @@ router.post('/service-work-orders', authenticate, requirePermission('inventory:c
         title: req.body.title,
         supplierId: req.body.supplierId,
         contractId: req.body.contractId ?? null,
+        categoryId: workOrderTags.categoryId,
+        costCentreId: workOrderTags.costCentreId,
         allocationType: req.body.allocationType,
         siteId: req.body.siteId ?? null,
         batchId: req.body.batchId ?? null,
@@ -1141,6 +1190,7 @@ router.post('/service-work-orders', authenticate, requirePermission('inventory:c
 
     res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create service work order', { error });
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to create service work order', code: 'SERVICE_WORK_ORDER_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1183,6 +1233,7 @@ router.put('/service-work-orders/:id/review', authenticate, requirePermission('i
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to review service work order', { error });
     res.status(500).json({ success: false, error: 'Failed to review service work order', code: 'SERVICE_WORK_ORDER_REVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1216,6 +1267,14 @@ router.put('/service-work-orders/:id/settle', authenticate, requirePermission('i
       chequeLeafId: req.body.chequeLeafId ?? null,
       notes: workOrder.notes ?? workOrder.title,
       recordedBy: req.user!.id,
+      tags: {
+        categoryId: workOrder.categoryId,
+        costCentreId: workOrder.costCentreId,
+        batchId: workOrder.batchId,
+        siteId: workOrder.siteId,
+        categoryCode: workOrder.categoryId ? null : serviceTypeCategoryCode(workOrder.serviceType),
+        costCentreCode: workOrder.costCentreId || workOrder.batchId || workOrder.siteId ? null : 'ADMIN',
+      },
     });
 
     if (payment.treasuryTransactionId) {
@@ -1255,6 +1314,7 @@ router.put('/service-work-orders/:id/settle', authenticate, requirePermission('i
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to settle service work order', { error });
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to settle service work order', code: 'SERVICE_WORK_ORDER_SETTLE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1278,6 +1338,7 @@ router.post('/suppliers', authenticate, requirePermission('inventory:create'), v
         phoneNumber: phoneNumber || null,
         email: email || null,
         address: address || null,
+        defaultCategoryId: req.body.defaultCategoryId ?? null,
         status: 'active',
       })
       .returning();
@@ -1292,6 +1353,7 @@ router.post('/suppliers', authenticate, requirePermission('inventory:create'), v
 
     res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create inventory supplier', { error });
     res.status(500).json({ success: false, error: 'Failed to create supplier', code: 'CREATE_SUPPLIER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1323,6 +1385,7 @@ router.put('/suppliers/:id', authenticate, requirePermission('inventory:update')
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update inventory supplier', { error });
     res.status(500).json({ success: false, error: 'Failed to update supplier', code: 'UPDATE_SUPPLIER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1427,6 +1490,7 @@ router.get('/items', authenticate, requirePermission('inventory:read'), async (r
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory items', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch inventory items', code: 'INVENTORY_ITEMS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1497,6 +1561,7 @@ router.get('/items/:id', authenticate, requirePermission('inventory:read'), asyn
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory item detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch inventory item detail', code: 'INVENTORY_ITEM_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1544,6 +1609,7 @@ router.post('/items', authenticate, requirePermission('inventory:create'), valid
 
     res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create inventory item', { error });
     res.status(500).json({ success: false, error: 'Failed to create inventory item', code: 'CREATE_INVENTORY_ITEM_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1592,6 +1658,7 @@ router.put('/items/:id', authenticate, requirePermission('inventory:update'), va
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update inventory item', { error });
     res.status(500).json({ success: false, error: 'Failed to update inventory item', code: 'UPDATE_INVENTORY_ITEM_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1619,7 +1686,11 @@ router.post('/items/:id/consume', authenticate, requirePermission('inventory:upd
       return;
     }
 
-    const [batch] = await db.select({ id: batches.id, batchCode: batches.batchCode }).from(batches).where(eq(batches.id, batchId)).limit(1);
+    const [batch] = await db.select({ id: batches.id, batchCode: batches.batchCode, status: batches.status }).from(batches).where(eq(batches.id, batchId)).limit(1);
+    if (batch?.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
     if (!batch) {
       res.status(404).json({ success: false, error: 'Batch not found', code: 'BATCH_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
@@ -1633,10 +1704,13 @@ router.post('/items/:id/consume', authenticate, requirePermission('inventory:upd
     let lotConsumptions: LotConsumption[] = [];
     let totalCost = 0;
     try {
-      const result = await consumeInventoryFIFO(itemId, quantity);
+      const store = await farmStoreForBatch(batchId);
+      const result = await consumeInventoryFIFO(itemId, quantity, store?.id);
       lotConsumptions = result.lotConsumptions;
       totalCost = result.totalCost;
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
+      if (error instanceof StockError) { sendStockError(res, error); return; }
       logger.warn('Falling back to weighted cost for batch consumption', { itemId, error: (error as Error).message });
       totalCost = Math.round(quantity * Number(item.costPerUnit) * 100) / 100;
     }
@@ -1779,6 +1853,7 @@ router.post('/items/:id/consume', authenticate, requirePermission('inventory:upd
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to consume inventory to batch', { error });
     res.status(500).json({ success: false, error: 'Failed to consume inventory to batch', code: 'BATCH_CONSUMPTION_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -1815,10 +1890,13 @@ router.post('/items/:id/consume-site', authenticate, requirePermission('inventor
     let lotConsumptions: LotConsumption[] = [];
     let totalCost = 0;
     try {
-      const result = await consumeInventoryFIFO(itemId, quantity);
+      const store = await ensureFarmStore(siteId);
+      const result = await consumeInventoryFIFO(itemId, quantity, store.id);
       lotConsumptions = result.lotConsumptions;
       totalCost = result.totalCost;
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
+      if (error instanceof StockError) { sendStockError(res, error); return; }
       logger.warn('Falling back to weighted cost for site consumption', { itemId, error: (error as Error).message });
       totalCost = Math.round(quantity * Number(item.costPerUnit) * 100) / 100;
     }
@@ -1959,6 +2037,7 @@ router.post('/items/:id/consume-site', authenticate, requirePermission('inventor
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to consume inventory to site', { error });
     res.status(500).json({ success: false, error: 'Failed to consume inventory to site', code: 'SITE_CONSUMPTION_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2026,6 +2105,7 @@ router.get('/purchase-orders', authenticate, requirePermission('inventory:read')
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory purchase orders', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch purchase orders', code: 'PO_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2162,6 +2242,7 @@ router.get('/purchase-orders/:id', authenticate, requirePermission('inventory:re
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory purchase order detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch purchase order detail', code: 'PO_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2203,6 +2284,9 @@ router.post('/purchase-orders', authenticate, requirePermission('inventory:creat
       orderCode,
       supplierId,
       contractId: contractId ?? null,
+      costCentreId: req.body.costCentreId
+        ?? await defaultPurchaseCostCentreId((items as Array<{ inventoryItemId: number }>).map((item) => item.inventoryItemId)),
+      deliveryLocationId: req.body.deliveryLocationId ?? null,
       orderDate,
       expectedDeliveryDate: expectedDeliveryDate || null,
       status: 'draft',
@@ -2232,6 +2316,7 @@ router.post('/purchase-orders', authenticate, requirePermission('inventory:creat
 
     res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create inventory purchase order', { error });
     res.status(500).json({ success: false, error: 'Failed to create purchase order', code: 'CREATE_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2297,6 +2382,7 @@ router.put('/purchase-orders/:id', authenticate, requirePermission('inventory:up
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update inventory purchase order', { error });
     res.status(500).json({ success: false, error: 'Failed to update purchase order', code: 'UPDATE_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2335,6 +2421,7 @@ router.put('/purchase-orders/:id/status', authenticate, requirePermission('inven
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update inventory purchase order status', { error });
     res.status(500).json({ success: false, error: 'Failed to update purchase order status', code: 'UPDATE_PO_STATUS_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2343,218 +2430,21 @@ router.put('/purchase-orders/:id/status', authenticate, requirePermission('inven
 router.post('/purchase-orders/:id/receive', authenticate, requirePermission('inventory:update'), validate(receiveInventoryPurchaseOrderSchema), async (req: Request, res: Response) => {
   try {
     const poId = Number(req.params.id as string);
-    const { items: receiveItems } = req.body;
-
-    const [purchaseOrder] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-    if (!purchaseOrder) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    if (!['submitted', 'partially_received'].includes(purchaseOrder.status)) {
-      res.status(400).json({ success: false, error: 'Purchase order must be submitted or partially received to receive items', code: 'INVALID_PO_STATUS', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    await assertPeriodOpen(today, 'inventory');
-    const lotsCreated: Array<{ lotCode: string; inventoryItemId: number; quantityReceived: number; quantityAllocatedToBatches: number }> = [];
-
-    for (const receiveItem of receiveItems as Array<{ itemId: number; receivedQuantity: number; batchAllocations?: Array<{ batchId: number; quantity: number; notes?: string | null }> }>) {
-      const [poItem] = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.id, receiveItem.itemId)).limit(1);
-      if (!poItem || poItem.purchaseOrderId !== poId) {
-        res.status(400).json({ success: false, error: `Purchase order item ${receiveItem.itemId} is invalid`, code: 'PO_ITEM_INVALID', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      const item = await getInventoryItemWithType(poItem.inventoryItemId);
-      if (!item) {
-        res.status(404).json({ success: false, error: 'Inventory item not found', code: 'INVENTORY_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      const allocations = receiveItem.batchAllocations ?? [];
-      const allocatedTotal = allocations.reduce((sum, allocation) => sum + allocation.quantity, 0);
-      if (allocatedTotal > receiveItem.receivedQuantity) {
-        res.status(400).json({ success: false, error: 'Batch allocation cannot exceed the received quantity', code: 'ALLOCATION_EXCEEDS_RECEIPT', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      if (allocatedTotal > 0 && (item.isFeed || !item.allowsBatchAllocation)) {
-        res.status(400).json({ success: false, error: 'This inventory item cannot be allocated directly to batches during receipt', code: 'INVALID_BATCH_ALLOCATION', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      for (const allocation of allocations) {
-        const [batch] = await db.select({ id: batches.id }).from(batches).where(eq(batches.id, allocation.batchId)).limit(1);
-        if (!batch) {
-          res.status(404).json({ success: false, error: `Batch ${allocation.batchId} not found`, code: 'BATCH_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-          return;
-        }
-      }
-
-      const newReceivedQty = Number(poItem.receivedQuantity) + receiveItem.receivedQuantity;
-      if (newReceivedQty > Number(poItem.orderedQuantity)) {
-        res.status(400).json({ success: false, error: 'Received quantity would exceed ordered quantity', code: 'EXCEEDS_ORDERED_QTY', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      await db.update(purchaseOrderItems).set({ receivedQuantity: String(newReceivedQty) }).where(eq(purchaseOrderItems.id, receiveItem.itemId));
-
-      const lotCode = await generateLotCode(today);
-      const lotRemainingAfterAllocations = Math.round((receiveItem.receivedQuantity - allocatedTotal) * 100) / 100;
-
-      const [newLot] = await db.insert(inventoryLots).values({
-        inventoryItemId: poItem.inventoryItemId,
-        purchaseOrderItemId: poItem.id,
-        lotCode,
-        receivedQuantity: String(receiveItem.receivedQuantity),
-        remainingQuantity: String(lotRemainingAfterAllocations),
-        costPerUnit: poItem.unitPrice,
-        receivedDate: today,
-        notes: allocatedTotal > 0 ? 'Received with direct batch allocation' : null,
-      }).returning();
-
-      const stockAfterReceipt = Math.round((Number(item.quantity) + receiveItem.receivedQuantity) * 100) / 100;
-      await db.update(feedInventory).set({
-        quantity: String(stockAfterReceipt),
-        lastRestockDate: today,
-        updatedAt: new Date(),
-      }).where(eq(feedInventory.id, item.id));
-
-      await db.insert(inventoryAuditTrail).values({
-        inventoryItemId: item.id,
-        changeType: 'purchase_receive',
-        previousQuantity: String(item.quantity),
-        changeQuantity: String(receiveItem.receivedQuantity),
-        newQuantity: String(stockAfterReceipt),
-        referenceId: poId,
-        referenceType: 'purchase_order',
-        notes: `PO ${purchaseOrder.orderCode} - ${lotCode} received`,
-        lotId: newLot.id,
-        costAtTime: poItem.unitPrice,
-        performedBy: req.user!.id,
-      });
-
-      await postInventoryMovement({
-        movementType: 'purchase_receive',
-        movementDate: today,
-        sourceModule: 'inventory',
-        sourceEntityType: 'purchase_order',
-        sourceEntityId: poId,
-        sourceCodeSnapshot: purchaseOrder.orderCode,
-        inventoryItemId: item.id,
-        inventoryLotId: newLot.id,
-        purchaseOrderId: poId,
-        purchaseOrderItemId: poItem.id,
-        quantity: receiveItem.receivedQuantity,
-        unit: poItem.unit,
-        unitCost: Number(poItem.unitPrice),
-        lineCost: Math.round(receiveItem.receivedQuantity * Number(poItem.unitPrice) * 100) / 100,
-        balanceAfterQuantity: receiveItem.receivedQuantity,
-        balanceScope: 'inventory_lot',
-        notes: newLot.notes,
-        createdBy: req.user!.id,
-      });
-
-      let runningStock = stockAfterReceipt;
-      let runningLotBalance = receiveItem.receivedQuantity;
-
-      for (const allocation of allocations) {
-        const lineCost = Math.round(allocation.quantity * Number(poItem.unitPrice) * 100) / 100;
-        runningStock = Math.round((runningStock - allocation.quantity) * 100) / 100;
-        runningLotBalance = Math.round((runningLotBalance - allocation.quantity) * 100) / 100;
-
-        await db.insert(batchInventoryConsumptions).values({
-          batchId: allocation.batchId,
-          inventoryItemId: item.id,
-          inventoryLotId: newLot.id,
-          purchaseOrderItemId: poItem.id,
-          quantity: String(allocation.quantity),
-          unit: poItem.unit,
-          unitCost: poItem.unitPrice,
-          lineCost: String(lineCost),
-          consumptionDate: today,
-          referenceType: 'purchase_order',
-          referenceId: poId,
-          notes: allocation.notes || null,
-          createdBy: req.user!.id,
-        });
-
-        await db.insert(inventoryAuditTrail).values({
-          inventoryItemId: item.id,
-          changeType: 'batch_consumption',
-          previousQuantity: String(runningStock + allocation.quantity),
-          changeQuantity: String(-allocation.quantity),
-          newQuantity: String(runningStock),
-          referenceId: allocation.batchId,
-          referenceType: 'batch',
-          notes: `Allocated from PO ${purchaseOrder.orderCode}${allocation.notes ? ` - ${allocation.notes}` : ''}`,
-          lotId: newLot.id,
-          costAtTime: poItem.unitPrice,
-          performedBy: req.user!.id,
-        });
-
-        await postInventoryMovement({
-          movementType: 'batch_consume',
-          movementDate: today,
-          sourceModule: 'inventory',
-          sourceEntityType: 'purchase_order',
-          sourceEntityId: poId,
-          sourceCodeSnapshot: purchaseOrder.orderCode,
-          inventoryItemId: item.id,
-          inventoryLotId: newLot.id,
-          purchaseOrderId: poId,
-          purchaseOrderItemId: poItem.id,
-          batchId: allocation.batchId,
-          quantity: -allocation.quantity,
-          unit: poItem.unit,
-          unitCost: Number(poItem.unitPrice),
-          lineCost,
-          balanceAfterQuantity: runningLotBalance,
-          balanceScope: 'inventory_lot',
-          notes: allocation.notes || null,
-          createdBy: req.user!.id,
-        });
-      }
-
-      const weightedAvgCost = await recalculateWeightedAverageCost(item.id);
-      await db.update(feedInventory).set({
-        quantity: String(runningStock),
-        costPerUnit: String(weightedAvgCost || Number(item.costPerUnit)),
-        lastRestockDate: today,
-        updatedAt: new Date(),
-      }).where(eq(feedInventory.id, item.id));
-
-      lotsCreated.push({
-        lotCode,
-        inventoryItemId: item.id,
-        quantityReceived: receiveItem.receivedQuantity,
-        quantityAllocatedToBatches: allocatedTotal,
-      });
-    }
-
-    const allItems = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, poId));
-    const allFullyReceived = allItems.every((item) => Number(item.receivedQuantity) >= Number(item.orderedQuantity));
-    const anyReceived = allItems.some((item) => Number(item.receivedQuantity) > 0);
-    const newStatus = allFullyReceived ? 'received' : (anyReceived ? 'partially_received' : purchaseOrder.status);
-
-    const [updatedPO] = await db.update(purchaseOrders).set({
-      status: newStatus,
-      actualDeliveryDate: purchaseOrder.actualDeliveryDate || today,
-      updatedAt: new Date(),
-    }).where(eq(purchaseOrders.id, poId)).returning();
-
+    const result = await receivePurchaseOrder({ purchaseOrderId: poId, lines: req.body.items, locationId: req.body.locationId ?? null, userId: req.user!.id });
     createAuditLog({
       userId: req.user!.id,
       action: 'inventory_purchase_order_received',
       entityType: 'purchase_order',
       entityId: poId,
-      changes: { newStatus, lotsCreated },
+      changes: { newStatus: result.status, lotsCreated: result.lotsCreated },
     });
-
-    res.json({ success: true, data: { ...updatedPO, lotsCreated }, timestamp: new Date().toISOString() });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    if (error instanceof Error && /closed period/i.test(error.message)) {
+      res.status(400).json({ success: false, error: error.message, code: 'PERIOD_LOCKED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
     logger.error('Failed to receive inventory purchase order', { error });
     res.status(500).json({ success: false, error: 'Failed to receive purchase order items', code: 'PO_RECEIVE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2594,6 +2484,7 @@ router.get('/site-consumptions', authenticate, requirePermission('inventory:read
 
     res.json({ success: true, data: consumptions, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch site inventory consumptions', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch site inventory consumptions', code: 'SITE_CONSUMPTIONS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2648,6 +2539,7 @@ router.get('/movements', authenticate, requirePermission('inventory:read'), asyn
 
     res.json({ success: true, data: movements, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch inventory movements', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch inventory movements', code: 'INVENTORY_MOVEMENTS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2723,6 +2615,7 @@ router.get('/lots/:id/trace', authenticate, requirePermission('inventory:read'),
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch lot trace', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch lot trace', code: 'LOT_TRACE_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -2763,8 +2656,186 @@ router.get('/batch-allocations', authenticate, requirePermission('inventory:read
 
     res.json({ success: true, data: allocations, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch batch allocations', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch batch allocations', code: 'BATCH_ALLOCATIONS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// ─── Stores, balances, transfers, expiry ─────────────────────────────────────
+
+router.get('/locations', authenticate, requirePermission('inventory:read'), async (_req: Request, res: Response) => {
+  try {
+    const rows = await db.select().from(stockLocations).orderBy(asc(stockLocations.name));
+    res.json({ success: true, data: rows, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch stores', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch stores', code: 'LOCATIONS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/locations', authenticate, requirePermission('inventory:create'), validate(stockLocationSchema), async (req: Request, res: Response) => {
+  try {
+    const [created] = await db.insert(stockLocations).values({ ...req.body, siteId: req.body.siteId ?? null }).returning();
+    createAuditLog({ userId: req.user!.id, action: 'stock_location_created', entityType: 'stock_location', entityId: created.id, changes: req.body });
+    res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(409).json({ success: false, error: 'A store with this code already exists', code: 'DUPLICATE', statusCode: 409, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to create store', { error });
+    res.status(500).json({ success: false, error: 'Failed to create store', code: 'LOCATION_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.put('/locations/:id', authenticate, requirePermission('inventory:update'), validate(updateStockLocationSchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id as string);
+    const [location] = await db.select().from(stockLocations).where(eq(stockLocations.id, id)).limit(1);
+    if (!location) {
+      res.status(404).json({ success: false, error: 'Store not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (location.code === 'MAIN' && req.body.status === 'inactive') {
+      res.status(400).json({ success: false, error: 'The Main store cannot be deactivated', code: 'SYSTEM_LOCATION', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    const [updated] = await db.update(stockLocations).set({ ...req.body, updatedAt: new Date() }).where(eq(stockLocations.id, id)).returning();
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to update store', { error });
+    res.status(500).json({ success: false, error: 'Failed to update store', code: 'LOCATION_UPDATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/stock-balances', authenticate, requirePermission('inventory:read'), async (req: Request, res: Response) => {
+  try {
+    const data = await stockBalances({
+      locationId: req.query.locationId ? Number(req.query.locationId) : null,
+      inventoryItemId: req.query.itemId ? Number(req.query.itemId) : null,
+    });
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch stock balances', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch stock balances', code: 'STOCK_BALANCES_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/transfers', authenticate, requirePermission('inventory:read'), async (_req: Request, res: Response) => {
+  try {
+    const fromLocation = alias(stockLocations, 'from_location');
+    const toLocation = alias(stockLocations, 'to_location');
+    const rows = await db
+      .select({
+        id: stockTransfers.id,
+        transferCode: stockTransfers.transferCode,
+        transferDate: stockTransfers.transferDate,
+        fromName: fromLocation.name,
+        toName: toLocation.name,
+        notes: stockTransfers.notes,
+        lineCount: sql<number>`(SELECT count(*)::int FROM stock_transfer_lines l WHERE l.transfer_id = ${stockTransfers.id})`,
+        value: sql<number>`(SELECT COALESCE(SUM(l.quantity::numeric * lot.cost_per_unit::numeric), 0)::float FROM stock_transfer_lines l JOIN inventory_lots lot ON lot.id = l.source_lot_id WHERE l.transfer_id = ${stockTransfers.id})`,
+        items: sql<string>`(SELECT string_agg(DISTINCT fi.ingredient_name, ', ') FROM stock_transfer_lines l JOIN feed_inventory fi ON fi.id = l.inventory_item_id WHERE l.transfer_id = ${stockTransfers.id})`,
+      })
+      .from(stockTransfers)
+      .innerJoin(fromLocation, eq(stockTransfers.fromLocationId, fromLocation.id))
+      .innerJoin(toLocation, eq(stockTransfers.toLocationId, toLocation.id))
+      .orderBy(desc(stockTransfers.transferDate), desc(stockTransfers.id))
+      .limit(100);
+    res.json({ success: true, data: rows, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch transfers', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch transfers', code: 'TRANSFERS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/transfers', authenticate, requirePermission('inventory:update'), validate(stockTransferSchema), async (req: Request, res: Response) => {
+  try {
+    const transfer = await transferStock({ ...req.body, userId: req.user!.id });
+    createAuditLog({ userId: req.user!.id, action: 'stock_transferred', entityType: 'stock_transfer', entityId: transfer.id, changes: req.body });
+    res.status(201).json({ success: true, data: transfer, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    if (error instanceof Error && /closed period/i.test(error.message)) {
+      res.status(400).json({ success: false, error: error.message, code: 'PERIOD_LOCKED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to transfer stock', { error });
+    res.status(500).json({ success: false, error: 'Failed to transfer stock', code: 'TRANSFER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/expiring', authenticate, requirePermission('inventory:read'), async (req: Request, res: Response) => {
+  try {
+    const withinDays = Math.min(Math.max(Number(req.query.days) || 30, 0), 365);
+    res.json({ success: true, data: await expiringLots({ withinDays }), timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch expiring stock', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch expiring stock', code: 'EXPIRING_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/lots/:id/write-off', authenticate, requirePermission('inventory:update'), validate(writeOffLotSchema), async (req: Request, res: Response) => {
+  try {
+    const result = await writeOffLot({ lotId: Number(req.params.id as string), quantity: req.body.quantity ?? null, reason: req.body.reason, date: req.body.date, userId: req.user!.id });
+    createAuditLog({ userId: req.user!.id, action: 'stock_written_off', entityType: 'inventory_lot', entityId: result.lotId, changes: { ...result, reason: req.body.reason } });
+    res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    logger.error('Failed to write off stock', { error });
+    res.status(500).json({ success: false, error: 'Failed to write off stock', code: 'WRITE_OFF_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// ─── Requisitions ────────────────────────────────────────────────────────────
+
+router.get('/requisitions', authenticate, requirePermission('inventory:read'), async (req: Request, res: Response) => {
+  try {
+    const data = await listRequisitions({
+      status: typeof req.query.status === 'string' ? req.query.status : null,
+      costCentreId: req.query.costCentreId ? Number(req.query.costCentreId) : null,
+    });
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch requisitions', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch requisitions', code: 'REQUISITIONS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/requisitions', authenticate, requirePermission('inventory:read'), validate(createRequisitionSchema), async (req: Request, res: Response) => {
+  try {
+    const requisition = await createRequisition({ ...req.body, userId: req.user!.id });
+    createAuditLog({ userId: req.user!.id, action: 'requisition_created', entityType: 'purchase_requisition', entityId: requisition.id, changes: req.body });
+    res.status(201).json({ success: true, data: requisition, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    logger.error('Failed to create requisition', { error });
+    res.status(500).json({ success: false, error: 'Failed to create requisition', code: 'REQUISITION_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.put('/requisitions/:id/review', authenticate, requirePermission('inventory:update'), validate(reviewRequisitionSchema), async (req: Request, res: Response) => {
+  try {
+    const requisition = await reviewRequisition({ requisitionId: Number(req.params.id as string), ...req.body, userId: req.user!.id });
+    createAuditLog({ userId: req.user!.id, action: 'requisition_reviewed', entityType: 'purchase_requisition', entityId: requisition.id, changes: req.body });
+    res.json({ success: true, data: requisition, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    logger.error('Failed to review requisition', { error });
+    res.status(500).json({ success: false, error: 'Failed to review requisition', code: 'REQUISITION_REVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/requisitions/:id/order', authenticate, requirePermission('inventory:create'), validate(convertRequisitionSchema), async (req: Request, res: Response) => {
+  try {
+    const order = await convertRequisitionToOrder({ requisitionId: Number(req.params.id as string), ...req.body, userId: req.user!.id });
+    createAuditLog({ userId: req.user!.id, action: 'requisition_ordered', entityType: 'purchase_order', entityId: order.id, changes: { requisitionId: Number(req.params.id as string) } });
+    res.status(201).json({ success: true, data: order, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof StockError) { sendStockError(res, error); return; }
+    logger.error('Failed to create order from requisition', { error });
+    res.status(500).json({ success: false, error: 'Failed to create the purchase order', code: 'REQUISITION_ORDER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 

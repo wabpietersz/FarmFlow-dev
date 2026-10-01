@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { UserRole } from '@farmflow/shared';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -17,6 +18,11 @@ import {
   reviewPettyCashExpenseSchema,
   settleOperationalExpenseSchema,
   updateChequeLeafStatusSchema,
+  createFinanceCategorySchema,
+  updateFinanceCategorySchema,
+  createCostCentreSchema,
+  updateCostCentreSchema,
+  retagLedgerEntrySchema,
 } from '../validators/treasury';
 import { db } from '../db';
 import {
@@ -33,7 +39,13 @@ import {
   treasuryTransactions,
   users,
   sites,
+  batches,
+  costCentres,
+  financeCategories,
 } from '../db/schema';
+import { createAuditLog } from '../lib/audit';
+import { assertPeriodOpen } from '../lib/period-locks';
+import { resolveEntryTags } from '../lib/finance-tags';
 import logger from '../lib/logger';
 import { hasPermission } from '../lib/permissions';
 import { getNextPeriodLockCode } from '../lib/period-locks';
@@ -62,6 +74,7 @@ router.get('/accounts', authenticate, requirePermission('treasury:read'), async 
     const accounts = await listFinanceAccountsWithBalances();
     res.json({ success: true, data: accounts, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -111,6 +124,7 @@ router.post('/accounts', authenticate, requirePermission('treasury:accounts:mana
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -157,6 +171,7 @@ router.get('/cheque-books', authenticate, requirePermission('treasury:read'), as
 
     res.json({ success: true, data: books, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -179,6 +194,7 @@ router.post('/cheque-books', authenticate, requirePermission('treasury:accounts:
 
     res.status(201).json({ success: true, data: book, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -238,6 +254,7 @@ router.get('/cheque-leaves', authenticate, requirePermission('treasury:read'), a
     const leaves = await query.orderBy(desc(chequeLeaves.updatedAt), desc(chequeLeaves.id));
     res.json({ success: true, data: leaves, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -259,6 +276,7 @@ router.put('/cheque-leaves/:id/status', authenticate, requirePermission('treasur
 
     res.json({ success: true, data: leaf, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -311,6 +329,7 @@ router.get('/cheques/overview', authenticate, requirePermission('treasury:read')
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -320,9 +339,309 @@ router.get('/cheques/overview', authenticate, requirePermission('treasury:read')
   }
 });
 
+// ─── Finance master data: categories & cost centres ─────────────────────────
+
+router.get('/categories', authenticate, async (req: Request, res: Response) => {
+  try {
+    const conditions = [];
+    if (req.query.status) conditions.push(eq(financeCategories.status, String(req.query.status)));
+    if (req.query.categoryType) conditions.push(eq(financeCategories.categoryType, String(req.query.categoryType)));
+    const rows = await db
+      .select()
+      .from(financeCategories)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(asc(financeCategories.sortOrder), asc(financeCategories.name));
+    res.json({ success: true, data: rows, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch finance categories', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch finance categories', code: 'FINANCE_CATEGORIES_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/categories', authenticate, requirePermission('treasury:accounts:manage'), validate(createFinanceCategorySchema), async (req: Request, res: Response) => {
+  try {
+    const [created] = await db
+      .insert(financeCategories)
+      .values({
+        code: req.body.code,
+        name: req.body.name,
+        categoryType: req.body.categoryType,
+        reportGroup: req.body.reportGroup,
+        description: req.body.description || null,
+        sortOrder: req.body.sortOrder ?? 800,
+        isSystem: false,
+      })
+      .returning();
+    createAuditLog({ userId: req.user!.id, action: 'finance_category_created', entityType: 'finance_category', entityId: created.id, changes: req.body });
+    res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(409).json({ success: false, error: 'A category with this code or name already exists', code: 'DUPLICATE', statusCode: 409, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to create finance category', { error });
+    res.status(500).json({ success: false, error: 'Failed to create finance category', code: 'FINANCE_CATEGORY_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.put('/categories/:id', authenticate, requirePermission('treasury:accounts:manage'), validate(updateFinanceCategorySchema), async (req: Request, res: Response) => {
+  try {
+    const categoryId = Number(req.params.id as string);
+    const [existing] = await db.select().from(financeCategories).where(eq(financeCategories.id, categoryId)).limit(1);
+    if (!existing) {
+      res.status(404).json({ success: false, error: 'Finance category not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (existing.isSystem && req.body.status === 'inactive') {
+      res.status(400).json({ success: false, error: 'System categories cannot be deactivated', code: 'SYSTEM_CATEGORY', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    const [updated] = await db
+      .update(financeCategories)
+      .set({
+        ...(req.body.name !== undefined ? { name: req.body.name } : {}),
+        ...(req.body.reportGroup !== undefined ? { reportGroup: req.body.reportGroup } : {}),
+        ...(req.body.description !== undefined ? { description: req.body.description || null } : {}),
+        ...(req.body.sortOrder !== undefined ? { sortOrder: req.body.sortOrder } : {}),
+        ...(req.body.status !== undefined ? { status: req.body.status } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(financeCategories.id, categoryId))
+      .returning();
+    createAuditLog({ userId: req.user!.id, action: 'finance_category_updated', entityType: 'finance_category', entityId: categoryId, changes: { before: existing, after: updated } });
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(409).json({ success: false, error: 'A category with this name already exists', code: 'DUPLICATE', statusCode: 409, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to update finance category', { error });
+    res.status(500).json({ success: false, error: 'Failed to update finance category', code: 'FINANCE_CATEGORY_UPDATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.get('/cost-centres', authenticate, async (req: Request, res: Response) => {
+  try {
+    const rows = await db
+      .select()
+      .from(costCentres)
+      .where(req.query.status ? eq(costCentres.status, String(req.query.status)) : undefined)
+      .orderBy(asc(costCentres.centreType), asc(costCentres.name));
+    res.json({ success: true, data: rows, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch cost centres', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch cost centres', code: 'COST_CENTRES_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.post('/cost-centres', authenticate, requirePermission('treasury:accounts:manage'), validate(createCostCentreSchema), async (req: Request, res: Response) => {
+  try {
+    const [created] = await db
+      .insert(costCentres)
+      .values({ code: req.body.code, name: req.body.name, centreType: req.body.centreType })
+      .returning();
+    createAuditLog({ userId: req.user!.id, action: 'cost_centre_created', entityType: 'cost_centre', entityId: created.id, changes: req.body });
+    res.status(201).json({ success: true, data: created, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(409).json({ success: false, error: 'A cost centre with this code already exists', code: 'DUPLICATE', statusCode: 409, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to create cost centre', { error });
+    res.status(500).json({ success: false, error: 'Failed to create cost centre', code: 'COST_CENTRE_CREATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+router.put('/cost-centres/:id', authenticate, requirePermission('treasury:accounts:manage'), validate(updateCostCentreSchema), async (req: Request, res: Response) => {
+  try {
+    const centreId = Number(req.params.id as string);
+    const [existing] = await db.select().from(costCentres).where(eq(costCentres.id, centreId)).limit(1);
+    if (!existing) {
+      res.status(404).json({ success: false, error: 'Cost centre not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (existing.siteId && req.body.name !== undefined) {
+      res.status(400).json({ success: false, error: 'Site cost centres take their name from the site — rename the site instead', code: 'SITE_COST_CENTRE', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (existing.code === 'ADMIN' && req.body.status === 'inactive') {
+      res.status(400).json({ success: false, error: 'The Admin cost centre cannot be deactivated', code: 'SYSTEM_COST_CENTRE', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    const [updated] = await db
+      .update(costCentres)
+      .set({
+        ...(req.body.name !== undefined ? { name: req.body.name } : {}),
+        ...(req.body.status !== undefined ? { status: req.body.status } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(costCentres.id, centreId))
+      .returning();
+    createAuditLog({ userId: req.user!.id, action: 'cost_centre_updated', entityType: 'cost_centre', entityId: centreId, changes: { before: existing, after: updated } });
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to update cost centre', { error });
+    res.status(500).json({ success: false, error: 'Failed to update cost centre', code: 'COST_CENTRE_UPDATE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// ─── Money ledger (line level) ─────────────────────────────────────────────
+
+router.get('/ledger', authenticate, requirePermission('treasury:read'), async (req: Request, res: Response) => {
+  try {
+    const { accountId, categoryId, costCentreId, batchId, categoryType, from, to } = req.query;
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+
+    const conditions = [sql`${treasuryTransactions.status} NOT IN ('voided', 'bounced')`];
+    if (accountId) conditions.push(eq(treasuryTransactionEntries.financeAccountId, Number(accountId)));
+    if (categoryId) conditions.push(eq(treasuryTransactionEntries.categoryId, Number(categoryId)));
+    if (costCentreId) conditions.push(eq(treasuryTransactionEntries.costCentreId, Number(costCentreId)));
+    if (batchId) conditions.push(eq(treasuryTransactionEntries.batchId, Number(batchId)));
+    if (categoryType) conditions.push(eq(financeCategories.categoryType, String(categoryType)));
+    if (from) conditions.push(sql`${treasuryTransactionEntries.valueDate} >= ${String(from)}`);
+    if (to) conditions.push(sql`${treasuryTransactionEntries.valueDate} <= ${String(to)}`);
+    const where = and(...conditions);
+
+    const baseQuery = () => db
+      .select({
+        id: treasuryTransactionEntries.id,
+        valueDate: treasuryTransactionEntries.valueDate,
+        entryDirection: treasuryTransactionEntries.entryDirection,
+        amount: treasuryTransactionEntries.amount,
+        notes: treasuryTransactionEntries.notes,
+        financeAccountId: treasuryTransactionEntries.financeAccountId,
+        financeAccountName: financeAccounts.accountName,
+        categoryId: treasuryTransactionEntries.categoryId,
+        categoryCode: financeCategories.code,
+        categoryName: financeCategories.name,
+        categoryType: financeCategories.categoryType,
+        reportGroup: financeCategories.reportGroup,
+        costCentreId: treasuryTransactionEntries.costCentreId,
+        costCentreName: costCentres.name,
+        batchId: treasuryTransactionEntries.batchId,
+        batchCode: batches.batchCode,
+        treasuryTransactionId: treasuryTransactions.id,
+        transactionCode: treasuryTransactions.transactionCode,
+        transactionType: treasuryTransactions.transactionType,
+        transactionStatus: treasuryTransactions.status,
+        counterpartyNameSnapshot: treasuryTransactions.counterpartyNameSnapshot,
+        referenceNumber: treasuryTransactions.referenceNumber,
+        narrative: treasuryTransactions.narrative,
+      })
+      .from(treasuryTransactionEntries)
+      .innerJoin(treasuryTransactions, eq(treasuryTransactionEntries.treasuryTransactionId, treasuryTransactions.id))
+      .innerJoin(financeCategories, eq(treasuryTransactionEntries.categoryId, financeCategories.id))
+      .innerJoin(financeAccounts, eq(treasuryTransactionEntries.financeAccountId, financeAccounts.id))
+      .leftJoin(costCentres, eq(treasuryTransactionEntries.costCentreId, costCentres.id))
+      .leftJoin(batches, eq(treasuryTransactionEntries.batchId, batches.id));
+
+    const [rows, [totals]] = await Promise.all([
+      baseQuery()
+        .where(where)
+        .orderBy(desc(treasuryTransactionEntries.valueDate), desc(treasuryTransactionEntries.id))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      db
+        .select({
+          count: sql<number>`count(*)::int`,
+          totalInflow: sql<number>`COALESCE(SUM(CASE WHEN ${treasuryTransactionEntries.entryDirection} = 'inflow' THEN ${treasuryTransactionEntries.amount}::numeric ELSE 0 END), 0)::float`,
+          totalOutflow: sql<number>`COALESCE(SUM(CASE WHEN ${treasuryTransactionEntries.entryDirection} = 'outflow' THEN ${treasuryTransactionEntries.amount}::numeric ELSE 0 END), 0)::float`,
+        })
+        .from(treasuryTransactionEntries)
+        .innerJoin(treasuryTransactions, eq(treasuryTransactionEntries.treasuryTransactionId, treasuryTransactions.id))
+        .innerJoin(financeCategories, eq(treasuryTransactionEntries.categoryId, financeCategories.id))
+        .where(where),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        entries: rows,
+        totals: {
+          inflow: totals?.totalInflow ?? 0,
+          outflow: totals?.totalOutflow ?? 0,
+          net: Math.round(((totals?.totalInflow ?? 0) - (totals?.totalOutflow ?? 0)) * 100) / 100,
+        },
+        pagination: { page, limit, total: totals?.count ?? 0 },
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch money ledger', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch money ledger', code: 'MONEY_LEDGER_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+/** Re-tag a ledger line (e.g. to clear "uncategorized" items). Amount, account and date never change. */
+router.put('/ledger/:entryId/tags', authenticate, requirePermission('treasury:transactions:manage'), validate(retagLedgerEntrySchema), async (req: Request, res: Response) => {
+  try {
+    const entryId = Number(req.params.entryId as string);
+    const [entry] = await db
+      .select({
+        id: treasuryTransactionEntries.id,
+        valueDate: treasuryTransactionEntries.valueDate,
+        entryDirection: treasuryTransactionEntries.entryDirection,
+        categoryId: treasuryTransactionEntries.categoryId,
+        costCentreId: treasuryTransactionEntries.costCentreId,
+        batchId: treasuryTransactionEntries.batchId,
+        currentCategoryType: financeCategories.categoryType,
+      })
+      .from(treasuryTransactionEntries)
+      .innerJoin(financeCategories, eq(treasuryTransactionEntries.categoryId, financeCategories.id))
+      .where(eq(treasuryTransactionEntries.id, entryId))
+      .limit(1);
+    if (!entry) {
+      res.status(404).json({ success: false, error: 'Ledger entry not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (entry.currentCategoryType === 'transfer') {
+      res.status(400).json({ success: false, error: 'Transfer lines cannot be re-tagged', code: 'TRANSFER_ENTRY', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    await assertPeriodOpen(String(entry.valueDate), 'financial');
+    const tags = await resolveEntryTags({
+      categoryId: req.body.categoryId,
+      costCentreId: req.body.costCentreId ?? null,
+      batchId: req.body.batchId ?? null,
+    });
+    const [category] = await db.select().from(financeCategories).where(eq(financeCategories.id, tags.categoryId)).limit(1);
+    if (category.categoryType === 'transfer'
+      || (category.categoryType === 'income' && entry.entryDirection === 'outflow')
+      || (category.categoryType === 'expense' && entry.entryDirection === 'inflow')) {
+      res.status(400).json({ success: false, error: `"${category.name}" cannot be used for money ${entry.entryDirection === 'inflow' ? 'coming in' : 'going out'}`, code: 'FINANCE_TAG_INVALID', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    const [updated] = await db
+      .update(treasuryTransactionEntries)
+      .set({ categoryId: tags.categoryId, costCentreId: tags.costCentreId, batchId: tags.batchId })
+      .where(eq(treasuryTransactionEntries.id, entryId))
+      .returning();
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'ledger_entry_retagged',
+      entityType: 'treasury_transaction_entry',
+      entityId: entryId,
+      changes: {
+        before: { categoryId: entry.categoryId, costCentreId: entry.costCentreId, batchId: entry.batchId },
+        after: tags,
+      },
+    });
+    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
+    if (error instanceof Error && /closed period/i.test(error.message)) {
+      res.status(400).json({ success: false, error: error.message, code: 'PERIOD_LOCKED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to re-tag ledger entry', { error });
+    res.status(500).json({ success: false, error: 'Failed to re-tag ledger entry', code: 'LEDGER_RETAG_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
 router.get('/transactions', authenticate, requirePermission('treasury:read'), async (req: Request, res: Response) => {
   try {
-    const { accountId, transactionType, status } = req.query;
+    const { accountId, transactionType, status, categoryId, costCentreId, batchId, from, to } = req.query;
 
     let query = db
       .select({
@@ -365,6 +684,29 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
         `,
         narrative: treasuryTransactions.narrative,
         createdAt: treasuryTransactions.createdAt,
+        categoryNames: sql<string | null>`
+          (
+            SELECT string_agg(DISTINCT fc.name, ', ')
+            FROM ${treasuryTransactionEntries} e
+            JOIN ${financeCategories} fc ON fc.id = e.category_id
+            WHERE e.treasury_transaction_id = ${treasuryTransactions.id}
+          )
+        `,
+        costCentreNames: sql<string | null>`
+          (
+            SELECT string_agg(DISTINCT cc.name, ', ')
+            FROM ${treasuryTransactionEntries} e
+            JOIN ${costCentres} cc ON cc.id = e.cost_centre_id
+            WHERE e.treasury_transaction_id = ${treasuryTransactions.id}
+          )
+        `,
+        hasUncategorized: sql<boolean>`
+          EXISTS (
+            SELECT 1 FROM ${treasuryTransactionEntries} e
+            JOIN ${financeCategories} fc ON fc.id = e.category_id
+            WHERE e.treasury_transaction_id = ${treasuryTransactions.id} AND fc.category_type = 'suspense'
+          )
+        `,
       })
       .from(treasuryTransactions)
       .$dynamic();
@@ -376,13 +718,21 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
     if (status) {
       conditions.push(eq(treasuryTransactions.status, String(status)));
     }
-    if (accountId) {
-      query = query
-        .leftJoin(
-          treasuryTransactionEntries,
-          eq(treasuryTransactions.id, treasuryTransactionEntries.treasuryTransactionId),
-        );
-      conditions.push(eq(treasuryTransactionEntries.financeAccountId, Number(accountId)));
+    // Entry-level filters use EXISTS so a transaction with several matching lines is listed once.
+    const entryFilters = [
+      accountId ? sql`e.finance_account_id = ${Number(accountId)}` : null,
+      categoryId ? sql`e.category_id = ${Number(categoryId)}` : null,
+      costCentreId ? sql`e.cost_centre_id = ${Number(costCentreId)}` : null,
+      batchId ? sql`e.batch_id = ${Number(batchId)}` : null,
+    ].filter(Boolean);
+    for (const filter of entryFilters) {
+      conditions.push(sql`EXISTS (SELECT 1 FROM ${treasuryTransactionEntries} e WHERE e.treasury_transaction_id = ${treasuryTransactions.id} AND ${filter})`);
+    }
+    if (from) {
+      conditions.push(sql`${treasuryTransactions.transactionDate} >= ${String(from)}`);
+    }
+    if (to) {
+      conditions.push(sql`${treasuryTransactions.transactionDate} <= ${String(to)}`);
     }
     if (conditions.length > 0) {
       query = query.where(and(...conditions));
@@ -391,6 +741,7 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
     const transactions = await query.orderBy(desc(treasuryTransactions.transactionDate), desc(treasuryTransactions.id));
     res.json({ success: true, data: transactions, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -425,9 +776,19 @@ router.get('/transactions/:id', authenticate, requirePermission('treasury:read')
           amount: treasuryTransactionEntries.amount,
           valueDate: treasuryTransactionEntries.valueDate,
           notes: treasuryTransactionEntries.notes,
+          categoryId: treasuryTransactionEntries.categoryId,
+          categoryName: financeCategories.name,
+          categoryType: financeCategories.categoryType,
+          costCentreId: treasuryTransactionEntries.costCentreId,
+          costCentreName: costCentres.name,
+          batchId: treasuryTransactionEntries.batchId,
+          batchCode: batches.batchCode,
         })
         .from(treasuryTransactionEntries)
         .leftJoin(financeAccounts, eq(treasuryTransactionEntries.financeAccountId, financeAccounts.id))
+        .leftJoin(financeCategories, eq(treasuryTransactionEntries.categoryId, financeCategories.id))
+        .leftJoin(costCentres, eq(treasuryTransactionEntries.costCentreId, costCentres.id))
+        .leftJoin(batches, eq(treasuryTransactionEntries.batchId, batches.id))
         .where(eq(treasuryTransactionEntries.treasuryTransactionId, transactionId))
         .orderBy(asc(treasuryTransactionEntries.id)),
       db
@@ -447,6 +808,7 @@ router.get('/transactions/:id', authenticate, requirePermission('treasury:read')
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -474,6 +836,9 @@ router.post(
         counterpartyName: req.body.counterpartyName || null,
         narrative: req.body.narrative,
         postedBy: req.user!.id,
+        categoryId: req.body.categoryId ?? null,
+        costCentreId: req.body.costCentreId ?? null,
+        batchId: req.body.batchId ?? null,
         sourceLink:
           req.body.sourceEntityType && req.body.sourceEntityId
             ? {
@@ -491,6 +856,7 @@ router.post(
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
       if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
         sendTreasurySchemaNotReady(res);
         return;
@@ -549,6 +915,7 @@ router.get('/expenses/operational', authenticate, requirePermission('treasury:re
 
     res.json({ success: true, data: expenses, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -562,9 +929,9 @@ router.post('/expenses/operational', authenticate, requirePermission('treasury:t
   try {
     const expense = await createOperationalExpense({
       expenseDate: req.body.expenseDate,
-      expenseCategory: req.body.expenseCategory,
+      categoryId: req.body.categoryId,
       counterpartyName: req.body.counterpartyName || null,
-      allocationType: req.body.allocationType,
+      costCentreId: req.body.costCentreId ?? null,
       siteId: req.body.siteId ?? null,
       batchId: req.body.batchId ?? null,
       amount: req.body.amount,
@@ -574,6 +941,7 @@ router.post('/expenses/operational', authenticate, requirePermission('treasury:t
 
     res.status(201).json({ success: true, data: expense, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -594,6 +962,7 @@ router.put('/expenses/operational/:id/review', authenticate, requirePermission('
 
     res.json({ success: true, data: expense, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -617,6 +986,7 @@ router.put('/expenses/operational/:id/settle', authenticate, requirePermission('
 
     res.json({ success: true, data: expense, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -661,6 +1031,7 @@ router.get('/reconciliations', authenticate, requirePermission('treasury:read'),
 
     res.json({ success: true, data: reconciliations, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -685,6 +1056,7 @@ router.post('/reconciliations', authenticate, requirePermission('treasury:transa
 
     res.status(201).json({ success: true, data: reconciliation, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -711,6 +1083,7 @@ router.get('/managers', authenticate, requirePermission('treasury:read'), async 
 
     res.json({ success: true, data: managers, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -785,6 +1158,7 @@ router.get('/petty-cash/allocations', authenticate, requirePermission('treasury:
     const allocations = await query.orderBy(desc(pettyCashAllocations.allocationDate), desc(pettyCashAllocations.id));
     res.json({ success: true, data: allocations, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -881,6 +1255,7 @@ router.get('/petty-cash/allocations/:id', authenticate, requirePermission('treas
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -919,6 +1294,7 @@ router.post(
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
       if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
         sendTreasurySchemaNotReady(res);
         return;
@@ -978,7 +1354,8 @@ router.post(
       const expense = await submitPettyCashExpense({
         allocationId,
         expenseDate: req.body.expenseDate,
-        expenseCategory: req.body.expenseCategory,
+        categoryId: req.body.categoryId,
+        costCentreId: req.body.costCentreId ?? null,
         amount: req.body.amount,
         justification: req.body.justification,
         createdBy: req.user!.id,
@@ -990,6 +1367,7 @@ router.post(
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
       if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
         sendTreasurySchemaNotReady(res);
         return;
@@ -1027,6 +1405,7 @@ router.put(
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
+      if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
       if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
         sendTreasurySchemaNotReady(res);
         return;
@@ -1048,6 +1427,7 @@ router.get('/period-locks', authenticate, requirePermission('treasury:read'), as
     const locks = await db.select().from(periodLocks).orderBy(desc(periodLocks.periodStart), desc(periodLocks.id));
     res.json({ success: true, data: locks, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch period locks', { error });
     res.status(500).json({
       success: false,
@@ -1077,6 +1457,7 @@ router.post('/period-locks', authenticate, requirePermission('treasury:transacti
 
     res.status(201).json({ success: true, data: lock, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create period lock', { error });
     res.status(500).json({
       success: false,
@@ -1116,6 +1497,7 @@ router.put('/period-locks/:id/release', authenticate, requirePermission('treasur
 
     res.json({ success: true, data: released, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to release period lock', { error });
     res.status(500).json({
       success: false,

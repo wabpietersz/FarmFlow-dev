@@ -1,372 +1,116 @@
-import { useState, useEffect } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
+import { ArrowRight, Bell, Boxes, HeartPulse, KeyRound, ListChecks, Settings, Store, Users, Wallet, type LucideIcon } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { useSystemConfig, useUpdateSystemConfig } from '@/hooks/useFeed';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Settings, Save, Plus, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { AccessSettings } from '@/components/settings/AccessSettings';
+import { AlertSettings, ListsSettings } from '@/components/settings/ListsSettings';
+import { ItemTypesSettings, StoresSettings } from '@/components/settings/StockSetupSettings';
+import { FinanceSetupTab } from '@/components/finance/FinanceSetupTab';
+import UserManagementPage from '@/pages/UserManagementPage';
 
-// ---------------------------------------------------------------------------
-// Reusable sub-component: editable string-list card
-// ---------------------------------------------------------------------------
-
-interface StringListCardProps {
-  title: string;
+type Section = {
+  key: string;
+  label: string;
   description: string;
-  configKey: string;
-  items: string[];
-  setItems: React.Dispatch<React.SetStateAction<string[]>>;
-  canEdit: boolean;
-  onSave: (key: string, value: unknown) => Promise<void>;
-  isSaving: boolean;
-  placeholder?: string;
-}
-
-function StringListCard({
-  title,
-  description,
-  configKey,
-  items,
-  setItems,
-  canEdit,
-  onSave,
-  isSaving,
-  placeholder = 'Add new item...',
-}: StringListCardProps) {
-  const [newItem, setNewItem] = useState('');
-
-  const handleAdd = () => {
-    const trimmed = newItem.trim();
-    if (!trimmed) return;
-    if (items.some((i) => i.toLowerCase() === trimmed.toLowerCase())) {
-      toast.error('This item already exists');
-      return;
-    }
-    setItems((prev) => [...prev, trimmed]);
-    setNewItem('');
-  };
-
-  const handleRemove = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleAdd();
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {items.length === 0 && (
-            <p className="text-sm text-muted-foreground">No items configured.</p>
-          )}
-          {items.map((item, idx) => (
-            <Badge key={idx} variant="secondary" className="gap-1 pr-1">
-              {item}
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={() => handleRemove(idx)}
-                  className="ml-1 rounded-full p-0.5 hover:bg-muted"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </Badge>
-          ))}
-        </div>
-
-        {canEdit && (
-          <>
-            <div className="flex gap-2">
-              <Input
-                value={newItem}
-                onChange={(e) => setNewItem(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={placeholder}
-                className="max-w-xs"
-              />
-              <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add
-              </Button>
-            </div>
-            <div>
-              <Button
-                type="button"
-                size="sm"
-                disabled={isSaving}
-                onClick={() => onSave(configKey, items)}
-              >
-                <Save className="h-4 w-4 mr-1" />
-                {isSaving ? 'Saving...' : 'Save'}
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Alert thresholds type
-// ---------------------------------------------------------------------------
-
-interface AlertThresholds {
-  mortalityRateWarning: number;
-  fcrWarning: number;
-  fcrCritical: number;
-}
-
-const DEFAULT_THRESHOLDS: AlertThresholds = {
-  mortalityRateWarning: 5,
-  fcrWarning: 1.8,
-  fcrCritical: 2.2,
+  icon: LucideIcon;
+  /** Permission needed to see the section */
+  view: string;
+  /** Permission needed to change things in it */
+  edit: string;
 };
 
-// ---------------------------------------------------------------------------
-// Main page component
-// ---------------------------------------------------------------------------
+const SECTIONS: Section[] = [
+  { key: 'access', label: 'Access & roles', description: 'What each role can see and do in every part of FarmFlow.', icon: KeyRound, view: 'system:read', edit: 'users:update' },
+  { key: 'users', label: 'Users', description: 'Who can sign in, their role and farm.', icon: Users, view: 'users:read', edit: 'users:update' },
+  { key: 'lists', label: 'Lists & options', description: 'The choices offered in dropdowns and quick buttons.', icon: ListChecks, view: 'system:read', edit: 'system:update' },
+  { key: 'item-types', label: 'Stock item types', description: 'The kinds of stock you keep and how each behaves.', icon: Boxes, view: 'inventory:read', edit: 'inventory:create' },
+  { key: 'stores', label: 'Stores', description: 'Where stock is kept. Each farm has its own store.', icon: Store, view: 'inventory:read', edit: 'inventory:create' },
+  { key: 'money', label: 'Money setup', description: 'Money categories and cost centres used to tag every rupee.', icon: Wallet, view: 'treasury:read', edit: 'treasury:accounts:manage' },
+  { key: 'health', label: 'Health & growth', description: 'Vaccination programmes and target growth curves.', icon: HeartPulse, view: 'batches:read', edit: 'batches:update' },
+  { key: 'alerts', label: 'Alerts', description: 'When FarmFlow warns you about a batch.', icon: Bell, view: 'system:read', edit: 'system:update' },
+];
 
+/** One place for everything that configures FarmFlow. */
 export default function SettingsPage() {
   const { hasPermission } = useAuthStore();
-  const { data: configData, isLoading } = useSystemConfig();
-  const updateConfig = useUpdateSystemConfig();
+  const [params, setParams] = useSearchParams();
+  const visible = SECTIONS.filter((section) => hasPermission(section.view));
+  const active = visible.find((section) => section.key === params.get('section')) ?? visible[0];
 
-  const canEdit = hasPermission('system:update');
-
-  // -- Local state for each config section --
-  const [feedTypes, setFeedTypes] = useState<string[]>([]);
-  const [mortalityCauses, setMortalityCauses] = useState<string[]>([]);
-  const [designations, setDesignations] = useState<string[]>([]);
-  const [leaveTypes, setLeaveTypes] = useState<string[]>([]);
-  const [thresholds, setThresholds] = useState<AlertThresholds>(DEFAULT_THRESHOLDS);
-
-  // -- Hydrate local state from API data --
-  useEffect(() => {
-    if (!configData?.data) return;
-    const configs = configData.data;
-
-    const findValue = (key: string) => configs.find((c) => c.configKey === key)?.configValue;
-
-    const ft = findValue('feed_types');
-    if (Array.isArray(ft)) setFeedTypes(ft as string[]);
-
-    const mc = findValue('mortality_causes');
-    if (Array.isArray(mc)) setMortalityCauses(mc as string[]);
-
-    const dg = findValue('designations');
-    if (Array.isArray(dg)) setDesignations(dg as string[]);
-
-    const lt = findValue('leave_types');
-    if (Array.isArray(lt)) setLeaveTypes(lt as string[]);
-
-    const at = findValue('alert_thresholds');
-    if (at && typeof at === 'object') {
-      setThresholds({ ...DEFAULT_THRESHOLDS, ...(at as Partial<AlertThresholds>) });
-    }
-  }, [configData]);
-
-  // -- Save handler --
-  const handleSave = async (key: string, value: unknown) => {
-    try {
-      await updateConfig.mutateAsync({ key, data: { configValue: value } });
-      toast.success('Configuration updated');
-    } catch {
-      toast.error('Failed to update configuration');
-    }
-  };
-
-  // -- Access guard --
-  if (!hasPermission('system:read')) {
+  if (!active) {
     return (
-      <div className="text-center py-12">
-        <Settings className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-        <h3 className="text-lg font-medium">Access Restricted</h3>
-        <p className="text-sm text-muted-foreground">
-          You do not have permission to view system settings.
-        </p>
+      <div className="py-16 text-center">
+        <Settings className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+        <h1 className="text-xl font-bold">No settings available</h1>
+        <p className="text-muted-foreground">Your role doesn't include any settings.</p>
       </div>
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-foreground">System Settings</h1>
-        <div className="grid gap-6 md:grid-cols-2">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Card key={i}>
-              <CardHeader>
-                <Skeleton className="h-5 w-40" />
-                <Skeleton className="h-4 w-64" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-20 w-full" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const canEdit = hasPermission(active.edit);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Settings className="h-6 w-6 text-muted-foreground" />
-        <h1 className="text-2xl font-bold text-foreground">System Settings</h1>
+      <header>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Settings</h1>
+        <p className="mt-1 text-muted-foreground">Access, users, lists and the setup behind every module.</p>
+      </header>
+
+      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 scrollbar-none lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
+          {visible.map((section) => {
+            const selected = section.key === active.key;
+            return (
+              <button
+                key={section.key}
+                type="button"
+                aria-current={selected ? 'page' : undefined}
+                onClick={() => setParams({ section: section.key }, { replace: true })}
+                className={cn(
+                  'flex min-h-11 shrink-0 items-center gap-2.5 rounded-full px-4 text-sm font-semibold transition-colors lg:w-full',
+                  selected ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+              >
+                <section.icon className="h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap">{section.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <section aria-labelledby="settings-section-title" className="min-w-0 space-y-5">
+          <div>
+            <h2 id="settings-section-title" className="text-xl font-bold">{active.label}</h2>
+            <p className="text-sm text-muted-foreground">{active.description}{!canEdit ? ' You can view this section but not change it.' : ''}</p>
+          </div>
+          {active.key === 'access' ? <AccessSettings canEdit={canEdit} /> : null}
+          {active.key === 'users' ? <UserManagementPage embedded /> : null}
+          {active.key === 'lists' ? <ListsSettings canEdit={canEdit} /> : null}
+          {active.key === 'item-types' ? <ItemTypesSettings canEdit={canEdit} /> : null}
+          {active.key === 'stores' ? <StoresSettings canEdit={canEdit} /> : null}
+          {active.key === 'money' ? <FinanceSetupTab canManage={canEdit} /> : null}
+          {active.key === 'health' ? <HealthLinks /> : null}
+          {active.key === 'alerts' ? <AlertSettings canEdit={canEdit} /> : null}
+        </section>
       </div>
+    </div>
+  );
+}
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Feed Types */}
-        <StringListCard
-          title="Feed Types"
-          description="Manage the available feed types used across the system."
-          configKey="feed_types"
-          items={feedTypes}
-          setItems={setFeedTypes}
-          canEdit={canEdit}
-          onSave={handleSave}
-          isSaving={updateConfig.isPending}
-          placeholder="e.g. Starter, Grower, Finisher..."
-        />
-
-        {/* Mortality Causes */}
-        <StringListCard
-          title="Mortality Causes"
-          description="Define the list of mortality causes for daily record entries."
-          configKey="mortality_causes"
-          items={mortalityCauses}
-          setItems={setMortalityCauses}
-          canEdit={canEdit}
-          onSave={handleSave}
-          isSaving={updateConfig.isPending}
-          placeholder="e.g. Disease, Heat Stress..."
-        />
-
-        {/* Designations */}
-        <StringListCard
-          title="Designations"
-          description="Job designations available for employee records."
-          configKey="designations"
-          items={designations}
-          setItems={setDesignations}
-          canEdit={canEdit}
-          onSave={handleSave}
-          isSaving={updateConfig.isPending}
-          placeholder="e.g. Farm Worker, Supervisor..."
-        />
-
-        {/* Leave Types */}
-        <StringListCard
-          title="Leave Types"
-          description="Types of leave available to employees."
-          configKey="leave_types"
-          items={leaveTypes}
-          setItems={setLeaveTypes}
-          canEdit={canEdit}
-          onSave={handleSave}
-          isSaving={updateConfig.isPending}
-          placeholder="e.g. Annual, Sick, Maternity..."
-        />
-
-        {/* Alert Thresholds */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Alert Thresholds</CardTitle>
-            <CardDescription>
-              Configure warning and critical thresholds for production alerts.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="mortalityRateWarning">Mortality Rate Warning (%)</Label>
-              <Input
-                id="mortalityRateWarning"
-                type="number"
-                step="0.1"
-                min="0"
-                max="100"
-                value={thresholds.mortalityRateWarning}
-                onChange={(e) =>
-                  setThresholds((prev) => ({
-                    ...prev,
-                    mortalityRateWarning: parseFloat(e.target.value) || 0,
-                  }))
-                }
-                disabled={!canEdit}
-                className="max-w-xs"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="fcrWarning">FCR Warning</Label>
-              <Input
-                id="fcrWarning"
-                type="number"
-                step="0.01"
-                min="0"
-                value={thresholds.fcrWarning}
-                onChange={(e) =>
-                  setThresholds((prev) => ({
-                    ...prev,
-                    fcrWarning: parseFloat(e.target.value) || 0,
-                  }))
-                }
-                disabled={!canEdit}
-                className="max-w-xs"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="fcrCritical">FCR Critical</Label>
-              <Input
-                id="fcrCritical"
-                type="number"
-                step="0.01"
-                min="0"
-                value={thresholds.fcrCritical}
-                onChange={(e) =>
-                  setThresholds((prev) => ({
-                    ...prev,
-                    fcrCritical: parseFloat(e.target.value) || 0,
-                  }))
-                }
-                disabled={!canEdit}
-                className="max-w-xs"
-              />
-            </div>
-
-            {canEdit && (
-              <div>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={updateConfig.isPending}
-                  onClick={() => handleSave('alert_thresholds', thresholds)}
-                >
-                  <Save className="h-4 w-4 mr-1" />
-                  {updateConfig.isPending ? 'Saving...' : 'Save'}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+function HealthLinks() {
+  const links = [
+    { to: '/farm-care?tab=programmes', title: 'Vaccination & medication programmes', text: 'The day-by-day health plan every new batch gets.' },
+    { to: '/farm-care?tab=curves', title: 'Growth curves', text: 'Target weight, feed and mortality by day, from your breed guide.' },
+    { to: '/farm-care?tab=houses', title: 'House turnaround', text: 'Cleaning checklist between batches.' },
+  ];
+  return (
+    <div className="grid gap-3 md:grid-cols-3">
+      {links.map((link) => (
+        <Link key={link.to} to={link.to} className="group flex flex-col gap-1 rounded-3xl bg-panel p-5 transition-colors hover:bg-panel/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="flex items-center justify-between font-bold">{link.title}<ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
+          <span className="text-sm text-muted-foreground">{link.text}</span>
+        </Link>
+      ))}
     </div>
   );
 }

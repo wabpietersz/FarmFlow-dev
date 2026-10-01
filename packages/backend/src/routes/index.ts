@@ -1,3 +1,4 @@
+import farmOpsRoutes from './farm-ops';
 import { Router } from 'express';
 import authRoutes from './auth';
 import dashboardRoutes from './dashboard';
@@ -43,6 +44,7 @@ router.use('/sites', siteRoutes);
 
 // Batches, Daily Records, Vaccinations
 router.use('/batches', batchRoutes);
+router.use('/farm', farmOpsRoutes);
 
 // Documents (file upload/download)
 router.use('/documents', documentRoutes);

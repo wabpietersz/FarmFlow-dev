@@ -65,7 +65,7 @@ export default function SitesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Sites</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Sites</h1>
         {hasPermission('sites:read') && (
           <Button onClick={() => setShowCreateDialog(true)}>
             <Plus className="h-4 w-4 mr-2" />

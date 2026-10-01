@@ -13,6 +13,7 @@ import {
 import { users } from './users';
 import { sites } from './sites';
 import { batches } from './batches';
+import { costCentres, financeCategories } from './finance';
 
 export const financeAccounts = pgTable(
   'finance_accounts',
@@ -78,6 +79,11 @@ export const treasuryTransactionEntries = pgTable(
       .notNull(),
     entryDirection: varchar('entry_direction', { length: 20 }).notNull(),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+    categoryId: integer('category_id')
+      .references(() => financeCategories.id)
+      .notNull(),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
+    batchId: integer('batch_id').references(() => batches.id),
     valueDate: date('value_date').notNull(),
     clearedAt: date('cleared_at'),
     reconciliationId: integer('reconciliation_id').references(() => financeReconciliations.id),
@@ -90,6 +96,9 @@ export const treasuryTransactionEntries = pgTable(
     index('idx_treasury_entries_value_date').on(table.valueDate),
     index('idx_treasury_entries_cleared_at').on(table.clearedAt),
     index('idx_treasury_entries_reconciliation').on(table.reconciliationId),
+    index('idx_treasury_entries_category').on(table.categoryId),
+    index('idx_treasury_entries_cost_centre').on(table.costCentreId),
+    index('idx_treasury_entries_batch').on(table.batchId),
   ],
 );
 
@@ -243,6 +252,8 @@ export const pettyCashExpenses = pgTable(
       .notNull(),
     expenseDate: date('expense_date').notNull(),
     expenseCategory: varchar('expense_category', { length: 100 }).notNull(),
+    categoryId: integer('category_id').references(() => financeCategories.id),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
     amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
     justification: text('justification').notNull(),
     status: varchar('status', { length: 50 }).default('submitted').notNull(),
@@ -269,6 +280,8 @@ export const operationalExpenses = pgTable(
     expenseCode: varchar('expense_code', { length: 50 }).unique().notNull(),
     expenseDate: date('expense_date').notNull(),
     expenseCategory: varchar('expense_category', { length: 100 }).notNull(),
+    categoryId: integer('category_id').references(() => financeCategories.id),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
     counterpartyName: varchar('counterparty_name', { length: 200 }),
     allocationType: varchar('allocation_type', { length: 50 }).default('shared_overhead').notNull(),
     siteId: integer('site_id').references(() => sites.id),

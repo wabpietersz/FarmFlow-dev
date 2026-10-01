@@ -43,10 +43,10 @@ import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
 
 const PAYROLL_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-800',
-  reviewed: 'bg-blue-100 text-blue-800',
-  approved: 'bg-yellow-100 text-yellow-800',
-  paid: 'bg-green-100 text-green-800',
+  draft: 'bg-muted text-foreground',
+  reviewed: 'bg-info-soft text-info',
+  approved: 'bg-warning-soft text-warning',
+  paid: 'bg-success-soft text-success',
 };
 
 const NEXT_STATUS_LABELS: Record<string, { label: string; action: string }> = {
@@ -317,7 +317,7 @@ export default function PayrollDetailPage() {
           <Link to="/payroll"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
             {payroll.employeeName ?? 'Employee'}
           </h1>
           <p className="text-muted-foreground">
@@ -392,7 +392,7 @@ export default function PayrollDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-600">
+            <p className="text-2xl font-bold text-success">
               {formatCurrency(Number(payroll.grossSalary))}
             </p>
           </CardContent>
@@ -497,7 +497,7 @@ export default function PayrollDetailPage() {
                     {canEdit && hasPermission('payroll:update') && (
                       <TableCell>
                         <Button variant="ghost" size="icon" onClick={() => handleRemoveAllowance(a.id)}>
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4 text-danger" />
                         </Button>
                       </TableCell>
                     )}
@@ -542,7 +542,7 @@ export default function PayrollDetailPage() {
                     {canEdit && hasPermission('payroll:update') && (
                       <TableCell>
                         <Button variant="ghost" size="icon" onClick={() => handleRemoveDeduction(d.id)}>
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4 text-danger" />
                         </Button>
                       </TableCell>
                     )}
@@ -833,7 +833,7 @@ export default function PayrollDetailPage() {
                             onClick={() => handleDeactivateTemplate(template.id)}
                             disabled={deleteTemplateMutation.isPending}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="h-4 w-4 text-danger" />
                           </Button>
                         )}
                       </TableCell>

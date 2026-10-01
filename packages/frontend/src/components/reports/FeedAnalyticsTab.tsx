@@ -28,7 +28,7 @@ import { Download, Activity, DollarSign, Wheat, Factory } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
 
-const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#ca8a04'];
+const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)'];
 
 function getDefaultDateRange() {
   const end = new Date();
@@ -215,8 +215,8 @@ export default function FeedAnalyticsTab() {
                       <TableCell className="text-right">
                         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                           item.daysUntilReorder === 0
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-green-100 text-green-800'
+                            ? 'bg-danger-soft text-danger'
+                            : 'bg-success-soft text-success'
                         }`}>
                           {item.daysUntilReorder === 0 ? 'Low Stock' : 'OK'}
                         </span>
@@ -261,7 +261,7 @@ export default function FeedAnalyticsTab() {
                       <TableCell className="text-right">{prod.plannedQty.toLocaleString()}</TableCell>
                       <TableCell className="text-right">{prod.actualQty.toLocaleString()}</TableCell>
                       <TableCell className={`text-right font-medium ${
-                        prod.efficiency >= 95 ? 'text-green-600' : prod.efficiency >= 80 ? 'text-yellow-600' : 'text-red-600'
+                        prod.efficiency >= 95 ? 'text-success' : prod.efficiency >= 80 ? 'text-warning' : 'text-danger'
                       }`}>
                         {prod.efficiency.toFixed(1)}%
                       </TableCell>

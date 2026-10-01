@@ -40,6 +40,8 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { BatchHistory } from '@/components/batches/BatchHistory';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -59,11 +61,12 @@ const createBatchFormSchema = z.object({
 type CreateBatchFormValues = z.infer<typeof createBatchFormSchema>;
 
 const BATCH_STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-blue-100 text-blue-800',
-  growing: 'bg-green-100 text-green-800',
-  ready_for_sale: 'bg-yellow-100 text-yellow-800',
-  sold: 'bg-gray-100 text-gray-800',
-  culled: 'bg-red-100 text-red-800',
+  placement: 'bg-info-soft text-info',
+  growing: 'bg-success-soft text-success',
+  ready_for_sale: 'bg-warning-soft text-warning',
+  sold: 'bg-muted text-foreground',
+  culled: 'bg-danger-soft text-danger',
+  closed: 'bg-foreground text-background',
 };
 
 export default function BatchesPage() {
@@ -121,7 +124,7 @@ export default function BatchesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Batches</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Batches</h1>
         {hasPermission('batches:create') && (
           <Button onClick={() => setShowCreateDialog(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -130,6 +133,13 @@ export default function BatchesPage() {
         )}
       </div>
 
+      <Tabs defaultValue="current">
+        <TabsList>
+          <TabsTrigger value="current">All batches</TabsTrigger>
+          <TabsTrigger value="history">Compare closed batches</TabsTrigger>
+        </TabsList>
+        <TabsContent value="history" className="pt-4"><BatchHistory /></TabsContent>
+        <TabsContent value="current" className="pt-4">
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -144,6 +154,7 @@ export default function BatchesPage() {
                 <SelectItem value="ready_for_sale">Ready for Sale</SelectItem>
                 <SelectItem value="sold">Sold</SelectItem>
                 <SelectItem value="culled">Culled</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -233,6 +244,8 @@ export default function BatchesPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Create Batch Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

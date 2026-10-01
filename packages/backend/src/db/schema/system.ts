@@ -8,6 +8,7 @@ import {
   timestamp,
   jsonb,
   index,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
@@ -62,4 +63,18 @@ export const periodLocks = pgTable(
     index('idx_period_locks_scope').on(table.scope),
     index('idx_period_locks_status').on(table.status),
   ],
+);
+
+// What each role may do in each module: none, user (day-to-day) or admin (full control).
+export const roleModuleAccess = pgTable(
+  'role_module_access',
+  {
+    id: serial('id').primaryKey(),
+    role: varchar('role', { length: 50 }).notNull(),
+    moduleKey: varchar('module_key', { length: 50 }).notNull(),
+    level: varchar('level', { length: 10 }).notNull(),
+    updatedBy: integer('updated_by').references(() => users.id),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [unique('uq_role_module').on(table.role, table.moduleKey)],
 );

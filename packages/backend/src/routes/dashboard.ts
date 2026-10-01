@@ -1,4 +1,6 @@
 import { Router, type Request, type Response } from 'express';
+import { hasPermission } from '../lib/permissions';
+import { buildHomeDashboard } from '../lib/home-dashboard';
 import { authenticate } from '../middleware/auth';
 import { db } from '../db';
 import { batches, buyerReceiptAllocations, buyerReceiptLines, buyerReceipts, buyers, chickPlacements, dailyRecords, employees, feedInventory, financeAccounts, financeReconciliations, inventoryLots, operationalExpenses, payments, payroll, sales, serviceWorkOrders, supplierContracts, supplierInvoices, supplierPaymentAllocations, supplierPayments, treasuryTransactionEntries, treasuryTransactions, attendance, auditLogs } from '../db/schema';
@@ -8,6 +10,20 @@ import type { DashboardPeriod } from '@farmflow/shared';
 import { buildBatchCostSummaries } from '../lib/batch-costs';
 
 const router = Router();
+
+// GET /api/dashboard/home — the Home screen: cash, this month's money, live batches, things to do today
+router.get('/home', authenticate, async (req: Request, res: Response) => {
+  try {
+    const data = await buildHomeDashboard({
+      can: (permission: string) => hasPermission(req.user!.userRole, permission),
+      siteScope: req.user!.siteId ?? null,
+    });
+    res.json({ success: true, data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to build home dashboard', { error });
+    res.status(500).json({ success: false, error: 'Failed to load the home screen', code: 'HOME_DASHBOARD_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
 
 router.get('/summary', authenticate, async (req: Request, res: Response) => {
   try {

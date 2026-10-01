@@ -58,6 +58,8 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       id: user.id,
       firebaseUid: user.firebaseUid,
       email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
       fullName: user.fullName,
       userRole: user.userRole as UserRole,
       siteId: user.siteId,

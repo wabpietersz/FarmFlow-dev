@@ -222,12 +222,12 @@ describe('Sales Module Routes', () => {
       expect(res.status).toBe(403);
     });
 
-    it('GET /api/buyers should return 200 for viewer (has sales:read)', async () => {
+    it('GET /api/buyers should return 403 for viewer (reports only by default)', async () => {
       setupAuth(viewer);
-      setChains([viewer], [], [{ total: 0 }]);
+      setChains([viewer]);
 
       const res = await authedRequest('get', '/api/buyers');
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
     });
 
     it('POST /api/sales should return 403 for viewer', async () => {

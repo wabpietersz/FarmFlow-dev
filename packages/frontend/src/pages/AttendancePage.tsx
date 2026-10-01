@@ -37,10 +37,10 @@ import type { LeaveType } from '@farmflow/shared';
 import { parseApiError } from '@/lib/api';
 
 const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
-  present: 'bg-green-100 text-green-800',
-  absent: 'bg-red-100 text-red-800',
-  on_leave: 'bg-yellow-100 text-yellow-800',
-  half_day: 'bg-blue-100 text-blue-800',
+  present: 'bg-success-soft text-success',
+  absent: 'bg-danger-soft text-danger',
+  on_leave: 'bg-warning-soft text-warning',
+  half_day: 'bg-info-soft text-info',
 };
 
 const LEAVE_TYPE_LABELS: Record<string, string> = {
@@ -321,7 +321,7 @@ export default function AttendancePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Attendance & Leave</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Attendance & Leave</h1>
       </div>
 
       {/* Summary cards */}
@@ -329,25 +329,25 @@ export default function AttendancePage() {
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground">Present</p>
-            <p className="text-2xl font-bold text-green-600">{summary.totalPresent}</p>
+            <p className="text-2xl font-bold text-success">{summary.totalPresent}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground">Absent</p>
-            <p className="text-2xl font-bold text-red-600">{summary.totalAbsent}</p>
+            <p className="text-2xl font-bold text-danger">{summary.totalAbsent}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground">On Leave</p>
-            <p className="text-2xl font-bold text-yellow-600">{summary.totalOnLeave}</p>
+            <p className="text-2xl font-bold text-warning">{summary.totalOnLeave}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground">Half Day</p>
-            <p className="text-2xl font-bold text-blue-600">{summary.totalHalfDay}</p>
+            <p className="text-2xl font-bold text-info">{summary.totalHalfDay}</p>
           </CardContent>
         </Card>
         <Card>
@@ -436,7 +436,7 @@ export default function AttendancePage() {
                 </div>
               ) : attendanceError ? (
                 <div className="text-center py-12 space-y-3">
-                  <CalendarDays className="h-12 w-12 text-red-400 mx-auto" />
+                  <CalendarDays className="h-12 w-12 text-danger mx-auto" />
                   <h3 className="text-lg font-medium text-foreground">Failed to load attendance records</h3>
                   <p className="text-sm text-muted-foreground">Please retry. If this persists, check API permissions and server logs.</p>
                   <Button variant="outline" onClick={() => { void refetchAttendance(); }}>
@@ -489,7 +489,7 @@ export default function AttendancePage() {
                           {hasPermission('attendance:delete') && (
                             <TableCell>
                               <Button variant="ghost" size="icon" onClick={() => handleDeleteAttendance(record.id)}>
-                                <Trash2 className="h-4 w-4 text-red-500" />
+                                <Trash2 className="h-4 w-4 text-danger" />
                               </Button>
                             </TableCell>
                           )}
@@ -596,7 +596,7 @@ export default function AttendancePage() {
                             <TableCell>{balance.totalDays}</TableCell>
                             <TableCell>{balance.usedDays}</TableCell>
                             <TableCell>
-                              <span className={`font-medium ${balance.balanceDays <= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              <span className={`font-medium ${balance.balanceDays <= 0 ? 'text-danger' : 'text-success'}`}>
                                 {balance.balanceDays}
                               </span>
                             </TableCell>
@@ -657,14 +657,14 @@ export default function AttendancePage() {
                         <TableCell>{shift.startTime}</TableCell>
                         <TableCell>{shift.endTime}</TableCell>
                         <TableCell>
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${shift.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${shift.status === 'active' ? 'bg-success-soft text-success' : 'bg-muted text-foreground'}`}>
                             {shift.status}
                           </span>
                         </TableCell>
                         {hasPermission('attendance:delete') && (
                           <TableCell>
                             {shift.status === 'active' && (
-                              <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeactivateShift(shift.id)}>
+                              <Button variant="ghost" size="sm" className="text-danger" onClick={() => handleDeactivateShift(shift.id)}>
                                 Deactivate
                               </Button>
                             )}

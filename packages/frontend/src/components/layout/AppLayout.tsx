@@ -1,17 +1,19 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { Check, ChevronDown, LogOut, Monitor, Moon, Sun } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import {
+  adminNavigationItems,
+  canAccessItem,
   filterVisibleMainNavigation,
   isHrefActive,
   isMainNavigationItemActive,
   mainNavigationItems,
   type MainNavigationItem,
-  type NavItem,
 } from '@/config/navigation';
 import { cn } from '@/lib/utils';
+import { useTheme, type ThemePreference } from '@/lib/theme';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,203 +22,167 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, ChevronRight, LogOut, User } from 'lucide-react';
 import OfflineBanner from '@/components/layout/OfflineBanner';
 import InstallPrompt from '@/components/layout/InstallPrompt';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
 
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'Match device', icon: Monitor },
+];
+
+const pillClass = (active: boolean) =>
+  cn(
+    'inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full px-4 text-[15px] font-semibold transition-colors',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+    active ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+  );
+
 export default function AppLayout() {
   const { currentUser, logout, hasPermission } = useAuthStore();
   const location = useLocation();
+  const { preference, setPreference } = useTheme();
 
   const visibleMainItems = useMemo(
     () => filterVisibleMainNavigation(mainNavigationItems, hasPermission),
     [hasPermission],
   );
-  const [expandedGroupState, setExpandedGroupState] = useState<Record<string, boolean>>({});
-
-  const groupKeys = useMemo(
-    () => visibleMainItems
-      .filter((item): item is Extract<MainNavigationItem, { type: 'group' }> => item.type === 'group')
-      .map((item) => item.key),
-    [visibleMainItems],
+  const visibleAdminItems = useMemo(
+    () => adminNavigationItems.filter((item) => canAccessItem(item, hasPermission)),
+    [hasPermission],
   );
 
-  useEffect(() => {
-    setExpandedGroupState((previous) => {
-      const next: Record<string, boolean> = {};
-      groupKeys.forEach((key) => {
-        next[key] = previous[key] ?? true;
-      });
-      return next;
-    });
-  }, [groupKeys]);
-
-  useEffect(() => {
-    const activeGroup = visibleMainItems.find(
-      (item): item is Extract<MainNavigationItem, { type: 'group' }> =>
-        item.type === 'group' && isMainNavigationItemActive(location.pathname, item),
-    );
-    if (!activeGroup) return;
-    setExpandedGroupState((previous) =>
-      previous[activeGroup.key] === false
-        ? { ...previous, [activeGroup.key]: true }
-        : previous,
-    );
-  }, [location.pathname, visibleMainItems]);
-
-  const roleName = currentUser?.userRole
-    ? currentUser.userRole.replace(/_/g, ' ')
-    : '';
-
-  const handleLogout = async () => {
-    await logout();
-  };
+  const roleName = currentUser?.userRole ? currentUser.userRole.replace(/_/g, ' ') : '';
+  const initials = (currentUser?.fullName || 'U')
+    .split(/\s+/)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  const isDark = preference === 'dark'
+    || (preference === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   return (
     <div className="min-h-screen bg-transparent">
       <InstallPrompt />
       <OfflineBanner />
-      <header className="sticky top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur safe-area-top">
-        <div className="app-shell-padding">
-          <div className="flex h-14 items-center justify-between">
-            <Link to="/dashboard" className="text-lg font-bold text-foreground">
-              FarmFlow
+      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/90 backdrop-blur-md safe-area-top">
+        <div className="app-shell-padding mx-auto max-w-[88rem]">
+          <div className="flex h-16 items-center gap-4 lg:gap-6">
+            <Link to="/dashboard" className="shrink-0 text-xl font-extrabold tracking-tight text-primary">
+              farmflow
             </Link>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="gap-2">
-                  <User className="h-4 w-4" />
-                  <span className="hidden sm:inline text-sm">
-                    {currentUser?.fullName || 'User'}
-                  </span>
-                  <ChevronDown className="h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>
-                  <p className="text-sm font-medium">{currentUser?.fullName}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{roleName}</p>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout} className="text-destructive">
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Logout
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <nav aria-label="Main" className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none md:flex">
+              {visibleMainItems.map((item) => (
+                <TopNavItem key={item.key} item={item} pathname={location.pathname} />
+              ))}
+            </nav>
+
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-11 rounded-full"
+                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                onClick={() => setPreference(isDark ? 'light' : 'dark')}
+              >
+                {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-11 items-center gap-2 rounded-full pl-1 pr-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="Account menu"
+                  >
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-sm font-bold text-secondary-foreground">
+                      {initials}
+                    </span>
+                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:block" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 rounded-2xl p-1.5">
+                  <DropdownMenuLabel className="px-3 py-2">
+                    <p className="text-sm font-bold">{currentUser?.fullName}</p>
+                    <p className="text-xs capitalize text-muted-foreground">{roleName}</p>
+                  </DropdownMenuLabel>
+                  {visibleAdminItems.length > 0 ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      {visibleAdminItems.map((item) => (
+                        <DropdownMenuItem key={item.key} asChild className="rounded-xl">
+                          <Link to={item.href}>
+                            <item.icon className="mr-2 h-4 w-4" />
+                            {item.label}
+                          </Link>
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="px-3 text-xs font-medium text-muted-foreground">Appearance</DropdownMenuLabel>
+                  {THEME_OPTIONS.map((option) => (
+                    <DropdownMenuItem key={option.value} onClick={() => setPreference(option.value)} className="rounded-xl">
+                      <option.icon className="mr-2 h-4 w-4" />
+                      <span className="flex-1">{option.label}</span>
+                      {preference === option.value ? <Check className="h-4 w-4 text-primary" /> : null}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => logout()} className="rounded-xl text-destructive focus:text-destructive">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="flex min-w-0">
-        <aside className="hidden min-h-[calc(100vh-3.5rem)] w-64 border-r border-border/80 bg-card/80 md:flex md:flex-col">
-          <nav className="flex-1 space-y-1 p-4" aria-label="Main Navigator">
-            {visibleMainItems.map((item) => (
-              <MainNavItemView
-                key={item.key}
-                item={item}
-                pathname={location.pathname}
-                expanded={item.type === 'group' ? expandedGroupState[item.key] !== false : undefined}
-                onToggleGroup={(groupKey) => {
-                  setExpandedGroupState((previous) => ({
-                    ...previous,
-                    [groupKey]: previous[groupKey] === false,
-                  }));
-                }}
-              />
-            ))}
-          </nav>
-          <div className="border-t border-border/80 px-4 pb-4 pt-3">
-            <p className="text-xs text-muted-foreground truncate">{currentUser?.fullName}</p>
-            <Badge variant="secondary" className="mt-1 text-xs capitalize">
-              {roleName}
-            </Badge>
-          </div>
-        </aside>
-
-        <main className="min-w-0 w-full flex-1 px-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-4 sm:px-6 sm:pt-6 md:pb-10 lg:px-8 lg:pt-8">
-          <div className="app-content-width">
-            <Outlet />
-          </div>
-        </main>
-      </div>
+      <main className="app-shell-padding mx-auto max-w-[88rem] pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-5 sm:pt-7 md:pb-12">
+        <Outlet />
+      </main>
 
       <MobileBottomNav />
     </div>
   );
 }
 
-function MainNavItemView({
-  item,
-  pathname,
-  expanded,
-  onToggleGroup,
-}: {
-  item: MainNavigationItem;
-  pathname: string;
-  expanded?: boolean;
-  onToggleGroup?: (groupKey: string) => void;
-}) {
-  if (item.type === 'group') {
-    const Icon = item.icon;
-    const active = isMainNavigationItemActive(pathname, item);
-    const isExpanded = expanded ?? true;
+function TopNavItem({ item, pathname }: { item: MainNavigationItem; pathname: string }) {
+  const active = isMainNavigationItemActive(pathname, item);
+
+  if (item.type === 'link') {
     return (
-      <div className="space-y-1">
-        <button
-          type="button"
-          aria-expanded={isExpanded}
-          onClick={() => onToggleGroup?.(item.key)}
-          className={cn(
-            'flex w-full items-center gap-3 min-h-11 px-3 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-            active ? 'bg-muted text-foreground' : 'text-muted-foreground',
-          )}
-        >
-          <Icon className="h-4 w-4" />
-          <span className="flex-1 text-left">{item.label}</span>
-          <ChevronRight className={cn('h-4 w-4 transition-transform', isExpanded && 'rotate-90')} />
-        </button>
-        {isExpanded && (
-          <div className="ml-6 space-y-1">
-            {item.children.map((child) => (
-              <MainNavLink
-                key={child.key}
-                item={child}
-                active={isHrefActive(pathname, child.href)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      <Link to={item.href} aria-current={active ? 'page' : undefined} className={pillClass(active)}>
+        {item.label}
+      </Link>
     );
   }
 
-  return <MainNavLink item={item} active={isHrefActive(pathname, item.href)} />;
-}
-
-function MainNavLink({
-  item,
-  active,
-}: {
-  item: NavItem;
-  active: boolean;
-}) {
-  const Icon = item.icon;
   return (
-    <Link
-      to={item.href}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        'flex items-center gap-3 min-h-11 px-3 py-2 rounded-md text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-        active
-          ? 'bg-primary text-primary-foreground font-medium'
-          : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      {item.label}
-    </Link>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={pillClass(active)}>
+          {item.label}
+          <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56 rounded-2xl p-1.5">
+        {item.children.map((child) => {
+          const childActive = isHrefActive(pathname, child.href);
+          return (
+            <DropdownMenuItem key={child.key} asChild className={cn('rounded-xl py-2.5', childActive && 'bg-secondary text-secondary-foreground')}>
+              <Link to={child.href} aria-current={childActive ? 'page' : undefined}>
+                <child.icon className="mr-2 h-4 w-4" />
+                {child.label}
+              </Link>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

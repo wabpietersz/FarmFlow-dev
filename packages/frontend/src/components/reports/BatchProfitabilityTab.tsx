@@ -180,7 +180,7 @@ export default function BatchProfitabilityTab() {
                 <Legend />
                 <Bar dataKey="margin" name="Profit Margin %" radius={[0, 4, 4, 0]}>
                   {chartData.map((entry, idx) => (
-                    <Cell key={idx} fill={entry.margin >= 0 ? '#16a34a' : '#dc2626'} />
+                    <Cell key={idx} fill={entry.margin >= 0 ? 'var(--success)' : 'var(--danger)'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -210,9 +210,11 @@ export default function BatchProfitabilityTab() {
                     <TableHead>Site</TableHead>
                     <TableHead className="text-right">Birds Sold</TableHead>
                     <TableHead className="text-right">Revenue</TableHead>
+                    <TableHead className="text-right">Chicks</TableHead>
                     <TableHead className="text-right">Feed Cost</TableHead>
                     <TableHead className="text-right">Inventory Cost</TableHead>
                     <TableHead className="text-right">Labor Cost</TableHead>
+                    <TableHead className="text-right">Farm &amp; Overheads</TableHead>
                     <TableHead className="text-right">Gross Margin</TableHead>
                     <TableHead className="text-right">Margin %</TableHead>
                     <TableHead className="text-right">Cost/Bird</TableHead>
@@ -225,13 +227,15 @@ export default function BatchProfitabilityTab() {
                       <TableCell className="text-muted-foreground">{batch.siteName}</TableCell>
                       <TableCell className="text-right">{batch.birdsSold.toLocaleString()}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.revenue)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(batch.chickCost ?? 0)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.feedCost)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.inventoryCost)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.laborCost)}</TableCell>
-                      <TableCell className={`text-right font-medium ${batch.grossMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <TableCell className="text-right">{formatCurrency(batch.operationalExpenseCost)}</TableCell>
+                      <TableCell className={`text-right font-medium ${batch.grossMargin >= 0 ? 'text-success' : 'text-danger'}`}>
                         {formatCurrency(batch.grossMargin)}
                       </TableCell>
-                      <TableCell className={`text-right ${batch.profitMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <TableCell className={`text-right ${batch.profitMargin >= 0 ? 'text-success' : 'text-danger'}`}>
                         {batch.profitMargin.toFixed(1)}%
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(batch.costPerBird)}</TableCell>

@@ -7,3 +7,4 @@ export * from './feed';
 export * from './hr';
 export * from './system';
 export * from './api';
+export * from './access';

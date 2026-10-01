@@ -21,22 +21,22 @@ import { buyerFormSchema, saleFormSchema, type BuyerFormValues, type SaleFormVal
 import { formatCurrency } from '@/lib/utils';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-800',
-  reviewed: 'bg-blue-100 text-blue-800',
-  pending: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
+  draft: 'bg-muted text-foreground',
+  reviewed: 'bg-info-soft text-info',
+  pending: 'bg-info-soft text-info',
+  completed: 'bg-success-soft text-success',
+  cancelled: 'bg-danger-soft text-danger',
 };
 
 const SETTLEMENT_STATUS_COLORS: Record<string, string> = {
-  unpaid: 'bg-red-100 text-red-800',
-  partially_paid: 'bg-amber-100 text-amber-800',
-  paid: 'bg-green-100 text-green-800',
+  unpaid: 'bg-danger-soft text-danger',
+  partially_paid: 'bg-warning-soft text-warning',
+  paid: 'bg-success-soft text-success',
 };
 
 const BUYER_STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-800',
-  inactive: 'bg-gray-100 text-gray-800',
+  active: 'bg-success-soft text-success',
+  inactive: 'bg-muted text-foreground',
 };
 
 function displaySaleStatus(status: string) {
@@ -215,7 +215,7 @@ export default function SalesPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Sales & Buyers</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Sales & Buyers</h1>
         {hasPermission('sales:create') && (
           <Button onClick={() => setShowCreateSale(true)} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
@@ -322,7 +322,7 @@ export default function SalesPage() {
                           <TableCell className="font-medium">{formatCurrency(Number(sale.totalAmount))}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(sale.outstandingBalance ?? 0)}</TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SETTLEMENT_STATUS_COLORS[sale.settlementStatus ?? 'unpaid'] ?? 'bg-slate-100 text-slate-800'}`}>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SETTLEMENT_STATUS_COLORS[sale.settlementStatus ?? 'unpaid'] ?? 'bg-muted text-foreground'}`}>
                               {(sale.settlementStatus ?? 'unpaid').replace('_', ' ')}
                             </span>
                           </TableCell>
@@ -419,7 +419,7 @@ export default function SalesPage() {
                           <TableCell className="hidden md:table-cell text-muted-foreground">{buyer.email ?? '--'}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(buyer.outstandingBalance ?? 0)}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(buyer.advanceCredit ?? 0)}</TableCell>
-                          <TableCell className={`font-medium ${(buyer.netBalance ?? 0) > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                          <TableCell className={`font-medium ${(buyer.netBalance ?? 0) > 0 ? 'text-danger' : 'text-success'}`}>
                             {formatCurrency(Math.abs(buyer.netBalance ?? 0))} {(buyer.netBalance ?? 0) > 0 ? 'due' : 'credit'}
                           </TableCell>
                           <TableCell>{buyer.creditTerms}</TableCell>
@@ -433,7 +433,7 @@ export default function SalesPage() {
                               <div className="flex gap-1">
                                 <Button variant="ghost" size="sm" onClick={() => handleEditBuyer(buyer)}>Edit</Button>
                                 {buyer.status === 'active' && (
-                                  <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeactivateBuyer(buyer.id)}>
+                                  <Button variant="ghost" size="sm" className="text-danger" onClick={() => handleDeactivateBuyer(buyer.id)}>
                                     Deactivate
                                   </Button>
                                 )}

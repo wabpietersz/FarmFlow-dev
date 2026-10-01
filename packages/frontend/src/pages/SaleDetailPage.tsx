@@ -22,17 +22,17 @@ import { formatCurrency } from '@/lib/utils';
 import { generateInvoicePDF } from '@/lib/generateInvoice';
 
 const SALE_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-800',
-  reviewed: 'bg-blue-100 text-blue-800',
-  pending: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
+  draft: 'bg-muted text-foreground',
+  reviewed: 'bg-info-soft text-info',
+  pending: 'bg-info-soft text-info',
+  completed: 'bg-success-soft text-success',
+  cancelled: 'bg-danger-soft text-danger',
 };
 
 const PAYMENT_STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-yellow-100 text-yellow-800',
-  completed: 'bg-green-100 text-green-800',
-  bounced: 'bg-red-100 text-red-800',
+  pending: 'bg-warning-soft text-warning',
+  completed: 'bg-success-soft text-success',
+  bounced: 'bg-danger-soft text-danger',
 };
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -323,7 +323,7 @@ export default function SaleDetailPage() {
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost" size="icon"><Link to="/sales"><ArrowLeft className="h-4 w-4" /></Link></Button>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{sale.saleCode}</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">{sale.saleCode}</h1>
             <p className="text-sm text-muted-foreground">
               <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">{sale.buyerName}</Link> | {sale.batchCode}
             </p>
@@ -368,8 +368,8 @@ export default function SaleDetailPage() {
       </div>
 
       {isDraft && (
-        <Card className="border-amber-200 bg-amber-50/60">
-          <CardContent className="pt-6 text-sm text-amber-900">
+        <Card className="border-warning/30 bg-warning-soft">
+          <CardContent className="pt-6 text-sm text-warning">
             This sale is still in draft. Add the lorries and confirm the compiled totals before marking it reviewed. Receipts are disabled until review.
           </CardContent>
         </Card>
@@ -379,7 +379,7 @@ export default function SaleDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-blue-600" />
+              <DollarSign className="h-5 w-5 text-info" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(Number(sale.totalAmount))}</p>
                 <p className="text-xs text-muted-foreground">Total Amount</p>
@@ -390,7 +390,7 @@ export default function SaleDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-green-600" />
+              <CreditCard className="h-5 w-5 text-success" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(totalPaid)}</p>
                 <p className="text-xs text-muted-foreground">Applied Receipts</p>
@@ -401,9 +401,9 @@ export default function SaleDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Banknote className={`h-5 w-5 ${outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`} />
+              <Banknote className={`h-5 w-5 ${outstandingBalance > 0 ? 'text-danger' : 'text-success'}`} />
               <div>
-                <p className={`text-2xl font-bold ${outstandingBalance > 0 ? 'text-red-600' : ''}`}>
+                <p className={`text-2xl font-bold ${outstandingBalance > 0 ? 'text-danger' : ''}`}>
                   {formatCurrency(outstandingBalance)}
                 </p>
                 <p className="text-xs text-muted-foreground">Outstanding</p>
@@ -414,7 +414,7 @@ export default function SaleDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-violet-600" />
+              <Receipt className="h-5 w-5 text-primary" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(availableBuyerCredit)}</p>
                 <p className="text-xs text-muted-foreground">Available Credit</p>
@@ -725,12 +725,12 @@ export default function SaleDetailPage() {
                               || (payment.financeAccountId ? treasuryAccountLookup.get(payment.financeAccountId)?.accountName ?? `Account #${payment.financeAccountId}` : '--')}
                           </p>
                           {payment.treasuryTransactionId ? (
-                            <div className="mt-1 text-[11px] text-emerald-700">Txn #{payment.treasuryTransactionId}</div>
+                            <div className="mt-1 text-[11px] text-success">Txn #{payment.treasuryTransactionId}</div>
                           ) : payment.source === 'receipt_line' ? (
-                            <div className="mt-1 text-[11px] text-amber-700">Not posted</div>
+                            <div className="mt-1 text-[11px] text-warning">Not posted</div>
                           ) : null}
                           {payment.treasuryReversalTransactionId ? (
-                            <div className="text-[11px] text-rose-700">Reversal #{payment.treasuryReversalTransactionId}</div>
+                            <div className="text-[11px] text-danger">Reversal #{payment.treasuryReversalTransactionId}</div>
                           ) : null}
                         </div>
                       </TableCell>
@@ -747,7 +747,7 @@ export default function SaleDetailPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="text-green-600"
+                                className="text-success"
                                 onClick={() => handleUpdatePaymentStatus(payment.id, 'completed')}
                                 disabled={updatePaymentMutation.isPending}
                               >
@@ -756,7 +756,7 @@ export default function SaleDetailPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="text-red-600"
+                                className="text-danger"
                                 onClick={() => handleUpdatePaymentStatus(payment.id, 'bounced')}
                                 disabled={updatePaymentMutation.isPending}
                               >

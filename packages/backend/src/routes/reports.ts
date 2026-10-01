@@ -1143,12 +1143,13 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
             birdsSold: sql<number>`COALESCE(sum(${sales.totalBirds}), 0)::int`,
           })
           .from(sales)
-          .where(eq(sales.batchId, batch.id));
+          .where(and(eq(sales.batchId, batch.id), sql`${sales.status} <> 'cancelled'`));
 
         const costSummary = costSummaries.get(batch.id);
 
         const revenue = saleAgg?.revenue ?? 0;
         const birdsSold = saleAgg?.birdsSold ?? 0;
+        const chickCost = costSummary?.chickCost ?? 0;
         const feedCost = costSummary?.feedCost ?? 0;
         const inventoryCost = costSummary?.inventoryCost ?? 0;
         const laborCost = costSummary?.laborCost ?? 0;
@@ -1165,6 +1166,7 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
           chicksPlaced: batch.chicksPlaced,
           birdsSold,
           revenue,
+          chickCost,
           feedCost,
           inventoryCost,
           laborCost,
@@ -1179,6 +1181,7 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
 
     const totals = {
       totalRevenue: Number(batchResults.reduce((s, b) => s + b.revenue, 0).toFixed(2)),
+      totalChickCost: Number(batchResults.reduce((s, b) => s + b.chickCost, 0).toFixed(2)),
       totalFeedCost: Number(batchResults.reduce((s, b) => s + b.feedCost, 0).toFixed(2)),
       totalInventoryCost: Number(batchResults.reduce((s, b) => s + b.inventoryCost, 0).toFixed(2)),
       totalLaborCost: Number(batchResults.reduce((s, b) => s + b.laborCost, 0).toFixed(2)),

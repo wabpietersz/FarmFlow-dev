@@ -7,89 +7,15 @@ import { batches, cages, sites, dailyRecords, vaccinations, batchInventoryConsum
 import { eq, sql, and, desc, asc } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
-import { buildSingleBatchCostSummary } from '../lib/batch-costs';
+import { BatchCloseError, buildSingleBatchCostSummary, closeBatch, getBatchPerformance, reopenBatch } from '../lib/batch-costs';
+import { buildCostingModel } from '../lib/costing';
+import { FarmOpsError, applyHealthTemplate, recordVaccination } from '../lib/batch-health';
+import { setUpNewBatch, startTurnaroundForBatch } from '../lib/farm-ops';
+import { closeBatchSchema } from '../validators/batch';
 import { postInventoryMovement } from '../lib/inventory-movements';
 import { assertPeriodOpen } from '../lib/period-locks';
 
 const router = Router();
-
-interface LotConsumption {
-  lotId: number;
-  purchaseOrderItemId?: number | null;
-  quantityUsed: number;
-  costPerUnit: number;
-  lineCost: number;
-  previousRemaining: number;
-  newRemaining: number;
-}
-
-async function getInventoryItemForBatch(itemId: number) {
-  const [item] = await db
-    .select({
-      id: feedInventory.id,
-      ingredientName: feedInventory.ingredientName,
-      quantity: feedInventory.quantity,
-      unit: feedInventory.unit,
-      costPerUnit: feedInventory.costPerUnit,
-      allowsBatchAllocation: inventoryItemTypes.allowsBatchAllocation,
-      isFeed: inventoryItemTypes.isFeed,
-      typeCode: inventoryItemTypes.typeCode,
-      typeName: inventoryItemTypes.typeName,
-    })
-    .from(feedInventory)
-    .innerJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
-    .where(eq(feedInventory.id, itemId))
-    .limit(1);
-
-  return item;
-}
-
-async function consumeInventoryFIFOForBatch(
-  inventoryItemId: number,
-  requiredQuantity: number,
-): Promise<{ lotConsumptions: LotConsumption[]; totalCost: number }> {
-  const availableLots = await db
-    .select()
-    .from(inventoryLots)
-    .where(and(
-      eq(inventoryLots.inventoryItemId, inventoryItemId),
-      sql`${inventoryLots.remainingQuantity}::numeric > 0`,
-    ))
-    .orderBy(asc(inventoryLots.receivedDate), asc(inventoryLots.id));
-
-  const totalAvailable = availableLots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
-  if (totalAvailable < requiredQuantity) {
-    throw new Error(`Insufficient lot quantity for inventory item ${inventoryItemId}`);
-  }
-
-  const lotConsumptions: LotConsumption[] = [];
-  let remaining = requiredQuantity;
-  let totalCost = 0;
-
-  for (const lot of availableLots) {
-    if (remaining <= 0) break;
-
-    const lotRemaining = Number(lot.remainingQuantity);
-    const consume = Math.min(remaining, lotRemaining);
-    const cost = Number(lot.costPerUnit);
-    const lineCost = Math.round(consume * cost * 100) / 100;
-
-    lotConsumptions.push({
-      lotId: lot.id,
-      purchaseOrderItemId: lot.purchaseOrderItemId,
-      quantityUsed: consume,
-      costPerUnit: cost,
-      lineCost,
-      previousRemaining: lotRemaining,
-      newRemaining: Math.round((lotRemaining - consume) * 100) / 100,
-    });
-
-    totalCost += lineCost;
-    remaining = Math.round((remaining - consume) * 100) / 100;
-  }
-
-  return { lotConsumptions, totalCost: Math.round(totalCost * 100) / 100 };
-}
 
 // GET /api/batches — list all batches
 router.get('/', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
@@ -166,6 +92,32 @@ router.get('/', authenticate, requirePermission('batches:read'), async (req: Req
 });
 
 // GET /api/batches/:id — batch detail with recent records
+// GET /api/batches/costing/overview — how each month's farm, admin and mill costs were absorbed into batches
+router.get('/costing/overview', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from.slice(0, 7) : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to.slice(0, 7) : undefined;
+    const model = await buildCostingModel();
+    const inRange = (month: string) => (!from || month >= from) && (!to || month <= to);
+    const siteRows = await db.select({ id: sites.id, siteName: sites.siteName }).from(sites);
+    const siteNames = new Map(siteRows.map((site) => [site.id, site.siteName]));
+    res.json({
+      success: true,
+      data: {
+        pools: model.pools.filter((pool) => inRange(pool.month)).map((pool) => ({
+          ...pool,
+          label: pool.kind === 'site' ? siteNames.get(pool.siteId ?? 0) ?? `Site ${pool.siteId}` : pool.kind === 'mill' ? 'Feed Mill' : 'Admin / shared',
+        })),
+        mill: [...model.mill.values()].filter((month) => inRange(month.month)).sort((a, b) => a.month.localeCompare(b.month)),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Failed to build costing overview', { error });
+    res.status(500).json({ success: false, error: 'Failed to build costing overview', code: 'COSTING_OVERVIEW_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
 router.get('/:id', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
@@ -326,6 +278,7 @@ router.get('/:id/costs', authenticate, requirePermission('batches:read'), async 
     res.json({ success: true, data: {
       batchId: costSummary.batchId,
       batchCode: costSummary.batchCode,
+      chickCost: costSummary.chickCost ?? 0,
       feedCost: costSummary.feedCost,
       inventoryCost: costSummary.inventoryCost,
       laborCost: costSummary.laborCost,
@@ -355,6 +308,7 @@ router.get('/:id/cost-ledger', authenticate, requirePermission('batches:read'), 
         batchId: costSummary.batchId,
         batchCode: costSummary.batchCode,
         totals: {
+          chickCost: costSummary.chickCost ?? 0,
           feedCost: costSummary.feedCost,
           inventoryCost: costSummary.inventoryCost,
           laborCost: costSummary.laborCost,
@@ -369,6 +323,72 @@ router.get('/:id/cost-ledger', authenticate, requirePermission('batches:read'), 
   } catch (error) {
     logger.error('Failed to fetch batch cost ledger', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch batch cost ledger', code: 'BATCH_COST_LEDGER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// GET /api/batches/:id/performance — KPIs, full cost build-up and P&L (frozen once closed)
+router.get('/:id/performance', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+  try {
+    const performance = await getBatchPerformance(Number(req.params.id as string));
+    if (!performance) {
+      res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    res.json({ success: true, data: performance, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Failed to fetch batch performance', { error });
+    res.status(500).json({ success: false, error: 'Failed to fetch batch performance', code: 'BATCH_PERFORMANCE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// POST /api/batches/:id/close — freeze the batch's final costs, revenue and KPIs
+router.post('/:id/close', authenticate, requirePermission('batches:update'), validate(closeBatchSchema), async (req: Request, res: Response) => {
+  try {
+    const batchId = Number(req.params.id as string);
+    const snapshot = await closeBatch({
+      batchId,
+      closedBy: req.user!.id,
+      notes: req.body.notes || null,
+      acceptVariance: req.body.acceptVariance ?? false,
+    });
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'batch_closed',
+      entityType: 'batch',
+      entityId: batchId,
+      changes: { revenue: snapshot.revenue, totalCost: snapshot.totalCost, profit: snapshot.profit },
+    });
+    res.json({ success: true, data: snapshot, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof BatchCloseError) {
+      res.status(400).json({ success: false, error: error.message, code: 'BATCH_CLOSE_REJECTED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to close batch', { error });
+    res.status(500).json({ success: false, error: 'Failed to close batch', code: 'BATCH_CLOSE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
+  }
+});
+
+// POST /api/batches/:id/reopen — discard the frozen close-out so the batch can be corrected
+router.post('/:id/reopen', authenticate, requirePermission('batches:update'), async (req: Request, res: Response) => {
+  try {
+    const batchId = Number(req.params.id as string);
+    const snapshot = await reopenBatch(batchId);
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'batch_reopened',
+      entityType: 'batch',
+      entityId: batchId,
+      changes: { discardedSnapshot: { revenue: snapshot.revenue, totalCost: snapshot.totalCost, profit: snapshot.profit, closedAt: snapshot.closedAt } },
+    });
+    res.json({ success: true, data: { batchId }, timestamp: new Date().toISOString() });
+  } catch (error) {
+    if (error instanceof BatchCloseError) {
+      res.status(400).json({ success: false, error: error.message, code: 'BATCH_REOPEN_REJECTED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
+    logger.error('Failed to reopen batch', { error });
+    res.status(500).json({ success: false, error: 'Failed to reopen batch', code: 'BATCH_REOPEN_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
 });
 
@@ -402,22 +422,25 @@ router.post('/', authenticate, requirePermission('batches:create'), validate(cre
       return;
     }
 
-    const [newBatch] = await db
-      .insert(batches)
-      .values({
-        batchCode,
-        siteId,
-        cageId,
-        chicksPlaced,
-        placementDate,
-        expectedDeliveryDate: expectedDeliveryDate || null,
-        notes: notes || null,
-        status: 'placement',
-      })
-      .returning();
-
-    // Mark cage as occupied
-    await db.update(cages).set({ status: 'occupied', updatedAt: new Date() }).where(eq(cages.id, cageId));
+    const newBatch = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(batches)
+        .values({
+          batchCode,
+          siteId,
+          cageId,
+          chicksPlaced,
+          placementDate,
+          expectedDeliveryDate: expectedDeliveryDate || null,
+          notes: notes || null,
+          status: 'placement',
+        })
+        .returning();
+      await tx.update(cages).set({ status: 'occupied', updatedAt: new Date() }).where(eq(cages.id, cageId));
+      // Default growth curve + health programme; ends any cleaning turnaround on this house.
+      await setUpNewBatch({ batchId: created.id, placementDate }, tx);
+      return created;
+    });
 
     createAuditLog({
       userId: req.user!.id,
@@ -443,16 +466,25 @@ router.put('/:id', authenticate, requirePermission('batches:update'), validate(u
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
     }
+    if (existing.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
 
+    const finishing = (req.body.status === 'sold' || req.body.status === 'culled') && !existing.actualDeliveryDate && !req.body.actualDeliveryDate;
     const [updated] = await db
       .update(batches)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set({
+        ...req.body,
+        ...(finishing ? { actualDeliveryDate: new Date().toISOString().slice(0, 10) } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(batches.id, batchId))
       .returning();
 
-    // If batch is sold or culled, free up the cage
-    if (req.body.status === 'sold' || req.body.status === 'culled') {
-      await db.update(cages).set({ status: 'empty', updatedAt: new Date() }).where(eq(cages.id, existing.cageId));
+    // Batch leaves the house: the house goes into turnaround (cleaning) until it is marked ready.
+    if ((req.body.status === 'sold' || req.body.status === 'culled') && existing.status !== req.body.status) {
+      await startTurnaroundForBatch({ batchId, startedDate: updated.actualDeliveryDate ? String(updated.actualDeliveryDate) : undefined, userId: req.user!.id });
     }
 
     createAuditLog({
@@ -478,6 +510,10 @@ router.post('/:id/chick-placement', authenticate, requirePermission('batches:upd
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
     if (!batch) {
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (batch.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
@@ -530,6 +566,9 @@ router.post('/:id/chick-placement', authenticate, requirePermission('batches:upd
       })
       .where(eq(batches.id, batchId));
 
+    // Placement date or bird numbers changed: re-date pending health tasks and resize doses.
+    await applyHealthTemplate({ batchId, templateId: batch.healthTemplateId ?? null });
+
     createAuditLog({
       userId: req.user!.id,
       action: existing ? 'chick_placement_updated' : 'chick_placement_recorded',
@@ -552,6 +591,10 @@ router.post('/:id/daily-records', authenticate, requirePermission('daily_records
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
     if (!batch) {
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (batch.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
@@ -614,6 +657,10 @@ router.put('/:id/daily-records/:recordId', authenticate, requirePermission('dail
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
     }
+    if (batch.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
 
     // Verify record exists and belongs to batch
     const [existingRecord] = await db
@@ -669,6 +716,10 @@ router.post('/:id/mortality', authenticate, requirePermission('daily_records:cre
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
     if (!batch) {
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
+      return;
+    }
+    if (batch.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
       return;
     }
 
@@ -755,130 +806,22 @@ router.post('/:id/vaccinations', authenticate, requirePermission('vaccinations:c
       res.status(404).json({ success: false, error: 'Batch not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
     }
-
-    const { vaccineType, vaccinationDate, inventoryItemId, quantityUsed, notes } = req.body;
-    await assertPeriodOpen(vaccinationDate, quantityUsed ? 'inventory' : 'costing');
-
-    let inventoryCost = 0;
-    let inventoryUnit: string | null = null;
-
-    if (inventoryItemId && quantityUsed) {
-      const item = await getInventoryItemForBatch(inventoryItemId);
-      if (!item) {
-        res.status(404).json({ success: false, error: 'Inventory item not found', code: 'INVENTORY_ITEM_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-        return;
-      }
-      if (item.isFeed || !item.allowsBatchAllocation) {
-        res.status(400).json({ success: false, error: 'Selected inventory item cannot be allocated to the batch', code: 'INVALID_VACCINE_INVENTORY', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-      if (Number(item.quantity) < quantityUsed) {
-        res.status(400).json({ success: false, error: 'Insufficient inventory quantity', code: 'INSUFFICIENT_INVENTORY', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      inventoryUnit = item.unit;
-      try {
-        const result = await consumeInventoryFIFOForBatch(inventoryItemId, quantityUsed);
-        inventoryCost = result.totalCost;
-
-        for (const consumption of result.lotConsumptions) {
-          await db.update(inventoryLots).set({
-            remainingQuantity: String(consumption.newRemaining),
-          }).where(eq(inventoryLots.id, consumption.lotId));
-
-          await db.insert(batchInventoryConsumptions).values({
-            batchId,
-            inventoryItemId,
-            inventoryLotId: consumption.lotId,
-            purchaseOrderItemId: consumption.purchaseOrderItemId ?? null,
-            quantity: String(consumption.quantityUsed),
-            unit: item.unit,
-            unitCost: String(consumption.costPerUnit),
-            lineCost: String(consumption.lineCost),
-            consumptionDate: vaccinationDate,
-            referenceType: 'vaccination',
-            referenceId: batchId,
-            notes: notes || null,
-            createdBy: req.user!.id,
-          });
-
-          await db.insert(inventoryAuditTrail).values({
-            inventoryItemId,
-            changeType: 'vaccination_consumption',
-            previousQuantity: String(consumption.previousRemaining),
-            changeQuantity: String(-consumption.quantityUsed),
-            newQuantity: String(consumption.newRemaining),
-            referenceId: batchId,
-            referenceType: 'batch',
-            notes: `Vaccination ${vaccineType}${notes ? ` - ${notes}` : ''}`,
-            lotId: consumption.lotId,
-            costAtTime: String(consumption.costPerUnit),
-            performedBy: req.user!.id,
-          });
-
-          await postInventoryMovement({
-            movementType: 'batch_consume',
-            movementDate: vaccinationDate,
-            sourceModule: 'batches',
-            sourceEntityType: 'vaccination',
-            sourceEntityId: batchId,
-            sourceCodeSnapshot: batch.batchCode,
-            inventoryItemId,
-            inventoryLotId: consumption.lotId,
-            purchaseOrderItemId: consumption.purchaseOrderItemId ?? null,
-            batchId,
-            quantity: -consumption.quantityUsed,
-            unit: item.unit,
-            unitCost: consumption.costPerUnit,
-            lineCost: consumption.lineCost,
-            balanceAfterQuantity: consumption.newRemaining,
-            balanceScope: 'inventory_lot',
-            notes: notes || null,
-            createdBy: req.user!.id,
-          });
-        }
-      } catch (error) {
-        inventoryCost = Math.round(quantityUsed * Number(item.costPerUnit) * 100) / 100;
-        await db.insert(batchInventoryConsumptions).values({
-          batchId,
-          inventoryItemId,
-          quantity: String(quantityUsed),
-          unit: item.unit,
-          unitCost: String(item.costPerUnit),
-          lineCost: String(inventoryCost),
-          consumptionDate: vaccinationDate,
-          referenceType: 'vaccination',
-          referenceId: batchId,
-          notes: notes || null,
-          createdBy: req.user!.id,
-        });
-      }
-
-      const newQuantity = Math.round((Number(item.quantity) - quantityUsed) * 100) / 100;
-      await db
-        .update(feedInventory)
-        .set({
-          quantity: String(newQuantity),
-          updatedAt: new Date(),
-        })
-        .where(eq(feedInventory.id, inventoryItemId));
+    if (batch.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
     }
 
-    const [record] = await db
-      .insert(vaccinations)
-      .values({
-        batchId,
-        vaccineType,
-        vaccinationDate,
-        inventoryItemId: inventoryItemId ?? null,
-        quantityUsed: quantityUsed != null ? String(quantityUsed) : null,
-        unit: inventoryUnit,
-        inventoryCost: inventoryCost > 0 ? String(inventoryCost) : null,
-        notes: notes || null,
-        recordedBy: req.user!.id,
-      })
-      .returning();
+    const { vaccineType, vaccinationDate, inventoryItemId, quantityUsed, notes } = req.body;
+    const record = await recordVaccination({
+      batchId,
+      vaccineType,
+      vaccinationDate,
+      inventoryItemId: inventoryItemId ?? null,
+      quantityUsed: quantityUsed ?? null,
+      notes: notes || null,
+      userId: req.user!.id,
+    });
+    const inventoryCost = Number(record.inventoryCost ?? 0);
 
     createAuditLog({
       userId: req.user!.id,
@@ -890,6 +833,10 @@ router.post('/:id/vaccinations', authenticate, requirePermission('vaccinations:c
 
     res.status(201).json({ success: true, data: record, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (error instanceof FarmOpsError) {
+      res.status(error.statusCode).json({ success: false, error: error.message, code: error.code, statusCode: error.statusCode, timestamp: new Date().toISOString() });
+      return;
+    }
     logger.error('Failed to create vaccination record', { error });
     res.status(500).json({ success: false, error: 'Failed to create vaccination record', code: 'CREATE_VACCINATION_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }

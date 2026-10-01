@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   serial,
@@ -15,6 +16,7 @@ import { batches } from './batches';
 import { users } from './users';
 import { sites } from './sites';
 import { chequeLeaves, financeAccounts, treasuryTransactions } from './treasury';
+import { costCentres, financeCategories } from './finance';
 
 export const suppliers = pgTable('suppliers', {
   id: serial('id').primaryKey(),
@@ -23,6 +25,7 @@ export const suppliers = pgTable('suppliers', {
   phoneNumber: varchar('phone_number', { length: 20 }),
   email: varchar('email', { length: 100 }),
   address: text('address'),
+  defaultCategoryId: integer('default_category_id').references(() => financeCategories.id),
   status: varchar('status', { length: 50 }).default('active'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -38,6 +41,7 @@ export const inventoryItemTypes = pgTable(
     defaultUnit: varchar('default_unit', { length: 20 }).notNull(),
     allowsBatchAllocation: boolean('allows_batch_allocation').default(false).notNull(),
     isFeed: boolean('is_feed').default(false).notNull(),
+    financeCategoryId: integer('finance_category_id').references(() => financeCategories.id),
     status: varchar('status', { length: 50 }).default('active').notNull(),
     description: text('description'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -240,6 +244,10 @@ export const purchaseOrders = pgTable(
       .references(() => suppliers.id)
       .notNull(),
     contractId: integer('contract_id').references(() => supplierContracts.id),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
+    /** Store the goods are delivered into */
+    deliveryLocationId: integer('delivery_location_id').references(() => stockLocations.id),
+    requisitionId: integer('requisition_id'),
     orderDate: date('order_date').notNull(),
     expectedDeliveryDate: date('expected_delivery_date'),
     actualDeliveryDate: date('actual_delivery_date'),
@@ -347,6 +355,11 @@ export const supplierInvoices = pgTable(
     dueDate: date('due_date').notNull(),
     invoiceAmount: decimal('invoice_amount', { precision: 12, scale: 2 }).notNull(),
     currencyCode: varchar('currency_code', { length: 10 }).default('LKR').notNull(),
+    /** Invoice vs goods received on its PO: matched | over_billed | under_billed | no_po */
+    matchStatus: varchar('match_status', { length: 20 }),
+    receivedValue: decimal('received_value', { precision: 12, scale: 2 }),
+    matchVariance: decimal('match_variance', { precision: 12, scale: 2 }),
+    overrideNote: text('override_note'),
     status: varchar('status', { length: 50 }).default('recorded').notNull(),
     approvedBy: integer('approved_by').references(() => users.id),
     approvedAt: timestamp('approved_at'),
@@ -491,6 +504,8 @@ export const serviceWorkOrders = pgTable(
     supplierId: integer('supplier_id').references(() => suppliers.id),
     contractId: integer('contract_id').references(() => supplierContracts.id),
     allocationType: varchar('allocation_type', { length: 50 }).default('shared_overhead').notNull(),
+    categoryId: integer('category_id').references(() => financeCategories.id),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
     siteId: integer('site_id').references(() => sites.id),
     batchId: integer('batch_id').references(() => batches.id),
     serviceDate: date('service_date').notNull(),
@@ -543,11 +558,19 @@ export const inventoryLots = pgTable(
     costPerUnit: decimal('cost_per_unit', { precision: 10, scale: 2 }).notNull(),
     receivedDate: date('received_date').notNull(),
     expiryDate: date('expiry_date'),
+    /** Where this lot is kept. Defaults (in the database) to the Main store so every stock path sets it. */
+    locationId: integer('location_id')
+      .references(() => stockLocations.id)
+      .default(sql`default_stock_location()`)
+      .notNull(),
+    /** Set when this lot was split off another by a transfer between stores */
+    parentLotId: integer('parent_lot_id'),
     notes: text('notes'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
     index('idx_lots_inventory_item').on(table.inventoryItemId),
+    index('idx_lots_location').on(table.locationId, table.inventoryItemId),
     index('idx_lots_remaining').on(table.remainingQuantity),
     index('idx_lots_received_date').on(table.receivedDate),
   ],
@@ -668,4 +691,82 @@ export const reportSchedules = pgTable(
     index('idx_report_sched_type').on(table.reportType),
     index('idx_report_sched_active').on(table.isActive),
   ],
+);
+
+// ─── Stores, transfers and requisitions ──────────────────────────────────────
+
+export const stockLocations = pgTable(
+  'stock_locations',
+  {
+    id: serial('id').primaryKey(),
+    code: varchar('code', { length: 50 }).unique().notNull(),
+    name: varchar('name', { length: 100 }).notNull(),
+    locationType: varchar('location_type', { length: 20 }).notNull(),
+    siteId: integer('site_id').references(() => sites.id),
+    status: varchar('status', { length: 20 }).default('active').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [index('idx_stock_locations_site').on(table.siteId)],
+);
+
+export const stockTransfers = pgTable(
+  'stock_transfers',
+  {
+    id: serial('id').primaryKey(),
+    transferCode: varchar('transfer_code', { length: 50 }).unique().notNull(),
+    fromLocationId: integer('from_location_id').references(() => stockLocations.id).notNull(),
+    toLocationId: integer('to_location_id').references(() => stockLocations.id).notNull(),
+    transferDate: date('transfer_date').notNull(),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [index('idx_stock_transfers_date').on(table.transferDate)],
+);
+
+export const stockTransferLines = pgTable(
+  'stock_transfer_lines',
+  {
+    id: serial('id').primaryKey(),
+    transferId: integer('transfer_id').references(() => stockTransfers.id, { onDelete: 'cascade' }).notNull(),
+    inventoryItemId: integer('inventory_item_id').references(() => feedInventory.id).notNull(),
+    sourceLotId: integer('source_lot_id').references(() => inventoryLots.id).notNull(),
+    destinationLotId: integer('destination_lot_id').references(() => inventoryLots.id).notNull(),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+  },
+  (table) => [index('idx_stock_transfer_lines_transfer').on(table.transferId)],
+);
+
+export const purchaseRequisitions = pgTable(
+  'purchase_requisitions',
+  {
+    id: serial('id').primaryKey(),
+    requisitionCode: varchar('requisition_code', { length: 50 }).unique().notNull(),
+    requestedBy: integer('requested_by').references(() => users.id).notNull(),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id).notNull(),
+    deliveryLocationId: integer('delivery_location_id').references(() => stockLocations.id),
+    neededBy: date('needed_by'),
+    status: varchar('status', { length: 20 }).default('submitted').notNull(),
+    notes: text('notes'),
+    reviewedBy: integer('reviewed_by').references(() => users.id),
+    reviewedAt: timestamp('reviewed_at'),
+    reviewNotes: text('review_notes'),
+    purchaseOrderId: integer('purchase_order_id').references(() => purchaseOrders.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [index('idx_purchase_requisitions_status').on(table.status)],
+);
+
+export const purchaseRequisitionItems = pgTable(
+  'purchase_requisition_items',
+  {
+    id: serial('id').primaryKey(),
+    requisitionId: integer('requisition_id').references(() => purchaseRequisitions.id, { onDelete: 'cascade' }).notNull(),
+    inventoryItemId: integer('inventory_item_id').references(() => feedInventory.id).notNull(),
+    quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
+    notes: text('notes'),
+  },
+  (table) => [index('idx_purchase_requisition_items_req').on(table.requisitionId)],
 );

@@ -69,7 +69,8 @@ import { sendPasswordResetEmailToUser } from '@/lib/firebase';
 
 const createUserSchema = z.object({
   email: z.string().email('Valid email is required'),
-  fullName: z.string().min(1, 'Full name is required').max(255),
+  firstName: z.string().trim().min(1, 'First name is required').max(120),
+  lastName: z.string().trim().min(1, 'Last name is required').max(120),
   userRole: z.nativeEnum(UserRole, { errorMap: () => ({ message: 'Select a role' }) }),
   siteId: z.coerce.number().int().positive().optional(),
 });
@@ -77,7 +78,8 @@ const createUserSchema = z.object({
 type CreateUserFormValues = z.infer<typeof createUserSchema>;
 
 const editUserSchema = z.object({
-  fullName: z.string().min(1, 'Full name is required').max(255),
+  firstName: z.string().trim().min(1, 'First name is required').max(120),
+  lastName: z.string().trim().min(1, 'Last name is required').max(120),
   userRole: z.nativeEnum(UserRole, { errorMap: () => ({ message: 'Select a role' }) }),
   siteId: z.coerce.number().int().positive().optional(),
 });
@@ -95,20 +97,42 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  system_admin: 'bg-red-100 text-red-800',
-  farm_manager: 'bg-blue-100 text-blue-800',
-  accountant: 'bg-green-100 text-green-800',
-  supervisor: 'bg-yellow-100 text-yellow-800',
-  feed_mill_operator: 'bg-purple-100 text-purple-800',
-  farm_worker: 'bg-gray-100 text-gray-800',
-  viewer: 'bg-slate-100 text-slate-800',
+  system_admin: 'bg-danger-soft text-danger',
+  farm_manager: 'bg-info-soft text-info',
+  accountant: 'bg-success-soft text-success',
+  supervisor: 'bg-warning-soft text-warning',
+  feed_mill_operator: 'bg-secondary text-secondary-foreground',
+  farm_worker: 'bg-muted text-foreground',
+  viewer: 'bg-muted text-foreground',
 };
 
-export default function UserManagementPage() {
+/**
+ * Make sure a set-password / reset email actually goes out: the server sends it if it has a mail server;
+ * otherwise Firebase sends it. Either way the admin is told the truth and gets a link to share.
+ */
+/**
+ * Every new Firebase reset request cancels the previous link. So when Firebase sends its own
+ * email we must NOT also show the server-made link — it is already dead by then.
+ */
+async function deliverResetEmail(email: string, serverSent?: boolean): Promise<{ sent: boolean; message: string; showLink: boolean }> {
+  if (serverSent) {
+    return { sent: true, showLink: true, message: `An email with a link to set the password was sent to ${email}. Ask them to check spam if it doesn't arrive. You can also share the link below; it works for 1 hour.` };
+  }
+  try {
+    await sendPasswordResetEmailToUser(email);
+    return { sent: true, showLink: false, message: `Firebase sent a password email to ${email}, from noreply@farmflow-dev.firebaseapp.com. It can take a few minutes and often lands in spam. Only the newest link works — pressing reset again cancels this one.` };
+  } catch (error) {
+    const code = (error as { code?: string })?.code ?? 'unknown error';
+    return { sent: false, showLink: true, message: `No email could be sent (${code}). Copy this link and send it to ${email} yourself (e.g. WhatsApp). It works for 1 hour.` };
+  }
+}
+
+export default function UserManagementPage({ embedded = false }: { embedded?: boolean }) {
   const { hasPermission, currentUser } = useAuthStore();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [search, setSearch] = useState('');
   const [resetLink, setResetLink] = useState<string | null>(null);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetLinkDialogTitle, setResetLinkDialogTitle] = useState('User Created Successfully');
   const [resetLinkDialogDesc, setResetLinkDialogDesc] = useState(
     'Share this password reset link with the new user so they can set their password and log in.',
@@ -137,7 +161,8 @@ export default function UserManagementPage() {
     resolver: zodResolver(createUserSchema),
     defaultValues: {
       email: '',
-      fullName: '',
+      firstName: '',
+      lastName: '',
       userRole: undefined,
       siteId: undefined,
     },
@@ -147,7 +172,8 @@ export default function UserManagementPage() {
   const editForm = useForm<EditUserFormValues>({
     resolver: zodResolver(editUserSchema),
     defaultValues: {
-      fullName: '',
+      firstName: '',
+      lastName: '',
       userRole: undefined,
       siteId: undefined,
     },
@@ -156,8 +182,11 @@ export default function UserManagementPage() {
   // Reset edit form when editingUser changes
   useEffect(() => {
     if (editingUser) {
+      // Older accounts may only have a full name: first word is the first name
+      const [first = '', ...rest] = editingUser.fullName.trim().split(/\s+/);
       editForm.reset({
-        fullName: editingUser.fullName,
+        firstName: editingUser.firstName || first,
+        lastName: editingUser.lastName || rest.join(' '),
         userRole: editingUser.userRole as UserRole,
         siteId: editingUser.siteId ?? undefined,
       });
@@ -167,21 +196,13 @@ export default function UserManagementPage() {
   const handleCreate = async (values: CreateUserFormValues) => {
     try {
       const result = await createUserMutation.mutateAsync(values);
-      const data = result.data as { user: unknown; passwordResetLink: string };
-
-      // Send password reset email via Firebase (uses Firebase's own email infrastructure)
-      try {
-        await sendPasswordResetEmailToUser(values.email);
-        toast.success('User created! Password reset email sent.');
-      } catch {
-        toast.success('User created! Email sending failed — share the link manually.');
-      }
-
-      setResetLinkDialogTitle('User Created Successfully');
-      setResetLinkDialogDesc(
-        'A password reset email has been sent to the user via Firebase. You can also share this link manually.',
-      );
-      setResetLink(data.passwordResetLink);
+      const data = result.data as { user: unknown; passwordResetLink: string; emailSent?: boolean };
+      const delivery = await deliverResetEmail(values.email, data.emailSent);
+      toast[delivery.sent ? 'success' : 'warning'](delivery.sent ? `User created. Set-password email sent to ${values.email}.` : 'User created, but the email could not be sent. Share the link below.');
+      setResetLinkDialogTitle('User created');
+      setResetLinkDialogDesc(delivery.message);
+      setResetLink(delivery.showLink ? data.passwordResetLink : null);
+      setResetDialogOpen(true);
       createForm.reset();
       setShowCreateDialog(false);
     } catch (error: unknown) {
@@ -197,7 +218,8 @@ export default function UserManagementPage() {
     if (!editingUser) return;
     try {
       const data: UpdateUserRequest = {
-        fullName: values.fullName,
+        firstName: values.firstName,
+        lastName: values.lastName,
         userRole: values.userRole,
         siteId: values.siteId ?? null,
       };
@@ -232,21 +254,13 @@ export default function UserManagementPage() {
   const handleResendResetLink = async (user: UserListItem) => {
     try {
       const result = await resendResetMutation.mutateAsync(user.id);
-      const data = result.data as { passwordResetLink: string };
-
-      // Send password reset email via Firebase
-      try {
-        await sendPasswordResetEmailToUser(user.email);
-        toast.success(`Password reset email sent to ${user.email}`);
-      } catch {
-        toast.success('Reset link generated — email sending failed. Share the link manually.');
-      }
-
-      setResetLinkDialogTitle('Password Reset Link Sent');
-      setResetLinkDialogDesc(
-        `A password reset email has been sent to ${user.email}. You can also share this link manually.`,
-      );
-      setResetLink(data.passwordResetLink);
+      const data = result.data as { passwordResetLink: string; emailSent?: boolean };
+      const delivery = await deliverResetEmail(user.email, data.emailSent);
+      toast[delivery.sent ? 'success' : 'warning'](delivery.sent ? `Reset email sent to ${user.email}` : 'The email could not be sent. Share the link below.');
+      setResetLinkDialogTitle(delivery.sent ? 'Reset email sent' : 'Send this link to the user');
+      setResetLinkDialogDesc(delivery.message);
+      setResetLink(delivery.showLink ? data.passwordResetLink : null);
+      setResetDialogOpen(true);
     } catch (error: unknown) {
       const axiosErr = error as { response?: { data?: { error?: string } } };
       const message =
@@ -278,8 +292,8 @@ export default function UserManagementPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">User Management</h1>
+      <div className={embedded ? 'flex justify-end' : 'flex items-center justify-between'}>
+        {embedded ? null : <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Users</h1>}
         <Button onClick={() => setShowCreateDialog(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Register User
@@ -377,7 +391,7 @@ export default function UserManagementPage() {
                               className={
                                 user.isActive
                                   ? 'text-destructive focus:text-destructive'
-                                  : 'text-green-600 focus:text-green-600'
+                                  : 'text-success focus:text-success'
                               }
                             >
                               {user.isActive ? (
@@ -416,19 +430,34 @@ export default function UserManagementPage() {
           </DialogHeader>
           <Form {...createForm}>
             <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
-              <FormField
-                control={createForm.control}
-                name="fullName"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Enter full name" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={createForm.control}
+                  name="firstName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>First name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Nimal" autoComplete="given-name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
+                  name="lastName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Last name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Perera" autoComplete="family-name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               <FormField
                 control={createForm.control}
                 name="email"
@@ -496,7 +525,7 @@ export default function UserManagementPage() {
                   </FormItem>
                 )}
               />
-              <div className="flex items-center gap-2 rounded-md bg-blue-50 p-3 text-sm text-blue-800">
+              <div className="flex items-center gap-2 rounded-md bg-info-soft p-3 text-sm text-info">
                 <Mail className="h-4 w-4 shrink-0" />
                 <span>A welcome email with password setup link will be sent automatically.</span>
               </div>
@@ -528,19 +557,34 @@ export default function UserManagementPage() {
           </DialogHeader>
           <Form {...editForm}>
             <form onSubmit={editForm.handleSubmit(handleEdit)} className="space-y-4">
-              <FormField
-                control={editForm.control}
-                name="fullName"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Enter full name" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={editForm.control}
+                  name="firstName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>First name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Nimal" autoComplete="given-name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editForm.control}
+                  name="lastName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Last name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Perera" autoComplete="family-name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               <FormField
                 control={editForm.control}
                 name="userRole"
@@ -613,23 +657,25 @@ export default function UserManagementPage() {
       </Dialog>
 
       {/* Password Reset Link Dialog */}
-      <Dialog open={!!resetLink} onOpenChange={(open) => !open && setResetLink(null)}>
+      <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>{resetLinkDialogTitle}</DialogTitle>
             <DialogDescription>{resetLinkDialogDesc}</DialogDescription>
           </DialogHeader>
-          <div className="bg-muted p-3 rounded-md">
-            <p className="text-xs text-muted-foreground mb-1 font-medium">
-              Password Reset Link:
-            </p>
-            <p className="text-sm break-all font-mono">{resetLink}</p>
-          </div>
+          {resetLink ? (
+            <div className="bg-muted p-3 rounded-md">
+              <p className="text-xs text-muted-foreground mb-1 font-medium">
+                Password Reset Link:
+              </p>
+              <p className="text-sm break-all font-mono">{resetLink}</p>
+            </div>
+          ) : null}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setResetLink(null)}>
+            <Button variant="outline" onClick={() => setResetDialogOpen(false)}>
               Close
             </Button>
-            <Button onClick={handleCopyLink}>
+            {resetLink ? <Button onClick={handleCopyLink}>
               {copiedLink ? (
                 <>
                   <Check className="h-4 w-4 mr-2" />
@@ -641,7 +687,7 @@ export default function UserManagementPage() {
                   Copy Link
                 </>
               )}
-            </Button>
+            </Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

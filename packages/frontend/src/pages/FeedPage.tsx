@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import {
-  useSuppliers,
-  useCreateSupplier,
-  useUpdateSupplier,
-  useDeleteSupplier,
   useRecipes,
   useRecipe,
   useCreateRecipe,
@@ -23,17 +19,12 @@ import {
   useDistributions,
   useCreateDistribution,
   useDeleteDistribution,
-  usePurchaseOrders,
-  useCreatePurchaseOrder,
-  useDeletePurchaseOrder,
-  useUpdatePurchaseOrderStatus,
-  useReceivePurchaseOrder,
-  usePurchaseOrder,
   useInventoryLots,
   useProductionCostBreakdown,
   useLotConsumptionHistory,
 } from '@/hooks/useFeed';
 import { useBatches } from '@/hooks/useBatches';
+import { useInventorySuppliers } from '@/hooks/useInventoryManagement';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -78,7 +69,6 @@ import {
   Play,
   CheckCircle,
   XCircle,
-  ShoppingCart,
   Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -87,14 +77,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { FeedType } from '@farmflow/shared';
 
 // --- Types ---
-
-interface SupplierForm {
-  supplierName: string;
-  contactPerson: string;
-  phoneNumber: string;
-  email: string;
-  address: string;
-}
 
 interface RecipeIngredient {
   inventoryItemId: string;
@@ -122,22 +104,9 @@ interface InventoryForm {
 // --- Constants ---
 
 const FEED_TYPE_COLORS: Record<string, string> = {
-  starter: 'bg-blue-100 text-blue-800',
-  grower: 'bg-green-100 text-green-800',
-  finisher: 'bg-orange-100 text-orange-800',
-};
-
-const SUPPLIER_STATUS_COLORS: Record<string, string> = {
-  active: 'bg-green-100 text-green-800',
-  inactive: 'bg-gray-100 text-gray-800',
-};
-
-const EMPTY_SUPPLIER_FORM: SupplierForm = {
-  supplierName: '',
-  contactPerson: '',
-  phoneNumber: '',
-  email: '',
-  address: '',
+  starter: 'bg-info-soft text-info',
+  grower: 'bg-success-soft text-success',
+  finisher: 'bg-warning-soft text-warning',
 };
 
 const EMPTY_RECIPE_FORM: RecipeForm = {
@@ -176,10 +145,10 @@ interface DistributionForm {
 }
 
 const PRODUCTION_STATUS_COLORS: Record<string, string> = {
-  planned: 'bg-blue-100 text-blue-800',
-  in_progress: 'bg-yellow-100 text-yellow-800',
-  completed: 'bg-green-100 text-green-800',
-  cancelled: 'bg-gray-100 text-gray-800',
+  planned: 'bg-info-soft text-info',
+  in_progress: 'bg-warning-soft text-warning',
+  completed: 'bg-success-soft text-success',
+  cancelled: 'bg-muted text-foreground',
 };
 
 const EMPTY_PRODUCTION_FORM: ProductionForm = {
@@ -207,159 +176,9 @@ function formatQuantity(value: number, maxFractionDigits = 2) {
 
 // --- Helper Component ---
 
-function ReceivePOContent(
-  {
-    poId,
-    onClose,
-    receivePOMutation,
-    inventoryById,
-  }: {
-    poId: number;
-    onClose: () => void;
-    receivePOMutation: ReturnType<typeof useReceivePurchaseOrder>;
-    inventoryById: Map<number, { quantity: number | string; unit: string }>;
-  },
-) {
-  const { data: poDetailData } = usePurchaseOrder(poId);
-  const poDetail = poDetailData as unknown as {
-    data?: {
-      purchaseOrder: { orderCode: string; status: string };
-      items: {
-        id: number;
-        inventoryItemId: number;
-        ingredientName?: string;
-        orderedQuantity: string;
-        receivedQuantity: string;
-        unit: string;
-      }[];
-    };
-  };
-  const items = poDetail?.data?.items ?? [];
-  const [receiveAmounts, setReceiveAmounts] = useState<Record<number, string>>({});
-
-  const handleReceive = async () => {
-    const receiveItems = [];
-    for (const item of items) {
-      const receiveNow = Number(receiveAmounts[item.id] || 0);
-      if (!receiveNow || receiveNow <= 0) continue;
-      const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
-      if (receiveNow > remaining) {
-        toast.error(`Received quantity for ${item.ingredientName ?? `Item #${item.id}`} exceeds remaining amount`);
-        return;
-      }
-      receiveItems.push({
-        itemId: item.id,
-        receivedQuantity: receiveNow,
-      });
-    }
-
-    if (receiveItems.length === 0) {
-      toast.error('Enter at least one received quantity');
-      return;
-    }
-
-    try {
-      await receivePOMutation.mutateAsync({ id: poId, items: receiveItems });
-      toast.success('Items received and inventory updated');
-      onClose();
-    } catch (error) {
-      parseApiError(error, 'Failed to receive items');
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Loading items...</p>
-      ) : (
-        <>
-          <p className="text-sm text-muted-foreground">PO: {poDetail?.data?.purchaseOrder?.orderCode}</p>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Item</TableHead>
-                <TableHead className="text-right">Ordered</TableHead>
-                <TableHead className="text-right">Already Rcvd</TableHead>
-                <TableHead className="text-right">Receive Now</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) => {
-                const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
-                const receiveNow = Number(receiveAmounts[item.id] || 0);
-                const projectedReceived = Number(item.receivedQuantity) + receiveNow;
-                const projectedRemaining = Number(item.orderedQuantity) - projectedReceived;
-                const inventoryItem = inventoryById.get(item.inventoryItemId);
-                const currentStock = inventoryItem ? Number(inventoryItem.quantity) : null;
-                const projectedStock = currentStock != null ? currentStock + receiveNow : null;
-                const unit = inventoryItem?.unit ?? item.unit;
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell className="text-sm">{item.ingredientName ?? `Item #${item.id}`}</TableCell>
-                    <TableCell className="text-right text-sm">{formatQuantity(Number(item.orderedQuantity))} {item.unit}</TableCell>
-                    <TableCell className="text-right text-sm">{formatQuantity(Number(item.receivedQuantity))} {item.unit}</TableCell>
-                    <TableCell className="text-right">
-                      {remaining > 0 ? (
-                        <div className="space-y-1">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max={remaining}
-                            placeholder="0"
-                            className="w-24 ml-auto text-right"
-                            value={receiveAmounts[item.id] || ''}
-                            onChange={(e) => setReceiveAmounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                          />
-                          {receiveNow > 0 && (
-                            <div className="text-[11px] text-muted-foreground text-right">
-                              Received: {formatQuantity(Number(item.receivedQuantity))}{' -> '}{formatQuantity(projectedReceived)} {item.unit}
-                              {projectedRemaining >= 0 ? ` (remaining ${formatQuantity(projectedRemaining)})` : ''}
-                            </div>
-                          )}
-                          {receiveNow > 0 && currentStock != null && projectedStock != null && (
-                            <div className="text-[11px] text-green-700 text-right">
-                              Stock: {formatQuantity(currentStock)}{' -> '}{formatQuantity(projectedStock)} {unit}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-green-600">Fully received</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </>
-      )}
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-        <Button onClick={handleReceive} disabled={receivePOMutation.isPending}>
-          {receivePOMutation.isPending ? 'Receiving...' : 'Confirm Receipt'}
-        </Button>
-      </DialogFooter>
-    </div>
-  );
-}
-
-// --- Component ---
-
 export default function FeedPage() {
   const { hasPermission } = useAuthStore();
   const queryClient = useQueryClient();
-
-  // =====================
-  // SUPPLIERS STATE
-  // =====================
-  const [suppliersPage, setSuppliersPage] = useState(1);
-  const [supplierSearch, setSupplierSearch] = useState('');
-  const [supplierStatusFilter, setSupplierStatusFilter] = useState('');
-  const [showSupplierDialog, setShowSupplierDialog] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<{ id: number } | null>(null);
-  const [supplierForm, setSupplierForm] = useState<SupplierForm>(EMPTY_SUPPLIER_FORM);
-  const [showDeleteSupplierConfirm, setShowDeleteSupplierConfirm] = useState<number | null>(null);
 
   // =====================
   // RECIPES STATE
@@ -416,37 +235,10 @@ export default function FeedPage() {
   const [showDeleteDistributionConfirm, setShowDeleteDistributionConfirm] = useState<number | null>(null);
 
   // =====================
-  // PURCHASE ORDERS STATE
-  // =====================
-  const [poPage, setPoPage] = useState(1);
-  const [poStatusFilter, setPoStatusFilter] = useState('');
-  const [poSearch, setPoSearch] = useState('');
-  const [showPoDialog, setShowPoDialog] = useState(false);
-  const [poForm, setPoForm] = useState<{
-    supplierId: string;
-    orderDate: string;
-    expectedDeliveryDate: string;
-    notes: string;
-    items: { inventoryItemId: string; orderedQuantity: string; unitPrice: string; unit: string }[];
-  }>({
-    supplierId: '',
-    orderDate: new Date().toISOString().split('T')[0],
-    expectedDeliveryDate: '',
-    notes: '',
-    items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
-  });
-  const [showPoDetail, setShowPoDetail] = useState<number | null>(null);
-  const [showReceiveDialog, setShowReceiveDialog] = useState(false);
-
-  // =====================
   // DATA HOOKS
   // =====================
-  const { data: suppliersData, isLoading: suppliersLoading } = useSuppliers({
-    page: suppliersPage,
-    limit: 20,
-    search: supplierSearch || undefined,
-    status: supplierStatusFilter || undefined,
-  });
+  // Supplier choices for feed inventory items (suppliers are managed on the Stock page)
+  const { data: suppliersData } = useInventorySuppliers({ status: 'active' });
   const { data: recipesData, isLoading: recipesLoading } = useRecipes({
     page: recipesPage,
     limit: 20,
@@ -460,9 +252,6 @@ export default function FeedPage() {
   });
   const { data: inventoryLookupData } = useInventory({ page: 1, limit: 500 });
 
-  const createSupplierMutation = useCreateSupplier();
-  const updateSupplierMutation = useUpdateSupplier(editingSupplier ? String(editingSupplier.id) : '0');
-  const deleteSupplierMutation = useDeleteSupplier();
 
   const { data: recipeDetailData, isLoading: recipeDetailLoading } = useRecipe(
     editingRecipe ? String(editingRecipe.id) : viewingRecipe ? String(viewingRecipe.id) : undefined,
@@ -507,25 +296,8 @@ export default function FeedPage() {
   const createDistributionMutation = useCreateDistribution();
   const deleteDistributionMutation = useDeleteDistribution();
 
-  // Purchase Orders
-  const { data: poData, isLoading: poLoading } = usePurchaseOrders({
-    page: poPage,
-    limit: 20,
-    status: poStatusFilter || undefined,
-    search: poSearch || undefined,
-  });
-  const poList = ((poData as unknown as { data: unknown[] })?.data || []) as { id: number; orderCode: string; supplierName?: string; orderDate: string; status: string; totalCost: string | number }[];
-  const poTotal = (poData as unknown as { totalPages: number })?.totalPages || 1;
-
-  const createPO = useCreatePurchaseOrder();
-  const deletePO = useDeletePurchaseOrder();
-  const updatePOStatusMutation = useUpdatePurchaseOrderStatus();
-  const receivePOMutation = useReceivePurchaseOrder();
-
   // Derived data
   const suppliersList = suppliersData?.data ?? [];
-  const suppliersTotalPages = suppliersData?.totalPages ?? 0;
-  const suppliersTotal = suppliersData?.total ?? 0;
 
   const recipesList = recipesData?.data ?? [];
   const recipesTotalPages = recipesData?.totalPages ?? 0;
@@ -597,72 +369,6 @@ export default function FeedPage() {
 
   // =====================
   // SUPPLIER HANDLERS
-  // =====================
-  const handleOpenCreateSupplier = () => {
-    setEditingSupplier(null);
-    setSupplierForm(EMPTY_SUPPLIER_FORM);
-    setShowSupplierDialog(true);
-  };
-
-  const handleOpenEditSupplier = (supplier: {
-    id: number;
-    supplierName: string;
-    contactPerson?: string | null;
-    phoneNumber?: string | null;
-    email?: string | null;
-    address?: string | null;
-  }) => {
-    setEditingSupplier({ id: supplier.id });
-    setSupplierForm({
-      supplierName: supplier.supplierName,
-      contactPerson: supplier.contactPerson ?? '',
-      phoneNumber: supplier.phoneNumber ?? '',
-      email: supplier.email ?? '',
-      address: supplier.address ?? '',
-    });
-    setShowSupplierDialog(true);
-  };
-
-  const handleSaveSupplier = async () => {
-    if (!supplierForm.supplierName.trim()) {
-      toast.error('Supplier name is required');
-      return;
-    }
-    try {
-      const payload = {
-        supplierName: supplierForm.supplierName,
-        contactPerson: supplierForm.contactPerson || null,
-        phoneNumber: supplierForm.phoneNumber || null,
-        email: supplierForm.email || null,
-        address: supplierForm.address || null,
-      };
-      if (editingSupplier) {
-        await updateSupplierMutation.mutateAsync(payload);
-        toast.success('Supplier updated successfully');
-      } else {
-        await createSupplierMutation.mutateAsync(payload);
-        toast.success('Supplier created successfully');
-      }
-      setShowSupplierDialog(false);
-      setEditingSupplier(null);
-      setSupplierForm(EMPTY_SUPPLIER_FORM);
-    } catch (error) {
-      parseApiError(error, editingSupplier ? 'Failed to update supplier' : 'Failed to create supplier');
-    }
-  };
-
-  const handleDeleteSupplier = async (id: number) => {
-    try {
-      await deleteSupplierMutation.mutateAsync(id);
-      toast.success('Supplier deactivated');
-      setShowDeleteSupplierConfirm(null);
-    } catch (error) {
-      parseApiError(error, 'Failed to deactivate supplier');
-    }
-  };
-
-  // =====================
-  // RECIPE HANDLERS
   // =====================
   const handleOpenCreateRecipe = () => {
     setEditingRecipe(null);
@@ -1026,7 +732,7 @@ export default function FeedPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Feed Management</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Feed mill</h1>
       </div>
 
       <Tabs defaultValue="inventory">
@@ -1048,165 +754,6 @@ export default function FeedPage() {
             Distribution
           </TabsTrigger>
         </TabsList>
-
-        {/* ========================= */}
-        {/* SUPPLIERS TAB             */}
-        {/* ========================= */}
-        <TabsContent value="suppliers">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-col sm:flex-row gap-4 mb-6">
-                <Input
-                  placeholder="Search suppliers..."
-                  value={supplierSearch}
-                  onChange={(e) => {
-                    setSupplierSearch(e.target.value);
-                    setSuppliersPage(1);
-                  }}
-                  className="w-[250px]"
-                />
-                <Select
-                  value={supplierStatusFilter || 'all'}
-                  onValueChange={(v) => {
-                    setSupplierStatusFilter(v === 'all' ? '' : v);
-                    setSuppliersPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Statuses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="sm:ml-auto">
-                  {hasPermission('feed_inventory:create') && (
-                    <Button onClick={handleOpenCreateSupplier}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Supplier
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {suppliersLoading ? (
-                <div className="space-y-3">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : suppliersList.length === 0 ? (
-                <div className="text-center py-12">
-                  <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-foreground mb-1">No suppliers found</h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {supplierSearch || supplierStatusFilter
-                      ? 'Try adjusting your filters.'
-                      : 'Add your first feed supplier to get started.'}
-                  </p>
-                  {hasPermission('feed_inventory:create') && !supplierSearch && !supplierStatusFilter && (
-                    <Button onClick={handleOpenCreateSupplier}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Supplier
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead className="hidden sm:table-cell">Contact</TableHead>
-                        <TableHead className="hidden sm:table-cell">Phone</TableHead>
-                        <TableHead className="hidden md:table-cell">Email</TableHead>
-                        <TableHead>Status</TableHead>
-                        {(hasPermission('feed_inventory:update') || hasPermission('feed_inventory:delete')) && (
-                          <TableHead className="w-[120px]" />
-                        )}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {suppliersList.map((supplier) => (
-                        <TableRow key={supplier.id}>
-                          <TableCell className="font-medium">{supplier.supplierName}</TableCell>
-                          <TableCell className="hidden sm:table-cell text-muted-foreground">
-                            {supplier.contactPerson ?? '--'}
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell text-muted-foreground">
-                            {supplier.phoneNumber ?? '--'}
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-muted-foreground">
-                            {supplier.email ?? '--'}
-                          </TableCell>
-                          <TableCell>
-                            <span
-                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SUPPLIER_STATUS_COLORS[supplier.status ?? 'active'] ?? ''}`}
-                            >
-                              {supplier.status ?? 'active'}
-                            </span>
-                          </TableCell>
-                          {(hasPermission('feed_inventory:update') || hasPermission('feed_inventory:delete')) && (
-                            <TableCell>
-                              <div className="flex gap-1">
-                                {hasPermission('feed_inventory:update') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleOpenEditSupplier(supplier)}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {hasPermission('feed_inventory:delete') && supplier.status === 'active' && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-red-600"
-                                    onClick={() => setShowDeleteSupplierConfirm(supplier.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-
-                  <div className="flex items-center justify-between pt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {(suppliersPage - 1) * 20 + 1} to{' '}
-                      {Math.min(suppliersPage * 20, suppliersTotal)} of {suppliersTotal}
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={suppliersPage <= 1}
-                        onClick={() => setSuppliersPage((p) => p - 1)}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={suppliersPage >= suppliersTotalPages}
-                        onClick={() => setSuppliersPage((p) => p + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         {/* ========================= */}
         {/* RECIPES TAB               */}
@@ -1310,7 +857,7 @@ export default function FeedPage() {
                             {hasPermission('feed_production:update') ? (
                               <button
                                 type="button"
-                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize cursor-pointer transition-colors ${recipe.status === 'active' ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize cursor-pointer transition-colors ${recipe.status === 'active' ? 'bg-success-soft text-success hover:bg-success-soft/70' : 'bg-muted text-foreground hover:bg-muted/80'}`}
                                 onClick={() => handleToggleRecipeStatus(recipe.id, recipe.status ?? 'active')}
                                 title={`Click to ${recipe.status === 'active' ? 'deactivate' : 'activate'}`}
                               >
@@ -1318,7 +865,7 @@ export default function FeedPage() {
                               </button>
                             ) : (
                               <span
-                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${recipe.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${recipe.status === 'active' ? 'bg-success-soft text-success' : 'bg-muted text-foreground'}`}
                               >
                                 {recipe.status ?? 'active'}
                               </span>
@@ -1355,7 +902,7 @@ export default function FeedPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="text-red-600"
+                                  className="text-danger"
                                   onClick={() => setShowDeleteRecipeConfirm(recipe.id)}
                                   title="Permanently delete recipe"
                                 >
@@ -1469,7 +1016,7 @@ export default function FeedPage() {
                           item.reorderLevel != null &&
                           Number(item.quantity) < Number(item.reorderLevel);
                         return (
-                          <TableRow key={item.id} className={isLowStock ? 'bg-red-50/50' : ''}>
+                          <TableRow key={item.id} className={isLowStock ? 'bg-danger-soft' : ''}>
                             <TableCell className="font-medium">{item.ingredientName}</TableCell>
                             <TableCell>{Number(item.quantity).toLocaleString()}</TableCell>
                             <TableCell className="text-muted-foreground">{item.unit}</TableCell>
@@ -1510,7 +1057,7 @@ export default function FeedPage() {
                                   Low
                                 </Badge>
                               ) : (
-                                <Badge variant="secondary" className="bg-green-100 text-green-800">
+                                <Badge variant="secondary" className="bg-success-soft text-success">
                                   OK
                                 </Badge>
                               )}
@@ -1684,27 +1231,27 @@ export default function FeedPage() {
                               <div className="flex gap-1">
                                 {prod.status === 'planned' && (
                                   <Button variant="ghost" size="icon" title="Start" onClick={() => handleStartProduction(prod.id)}>
-                                    <Play className="h-4 w-4 text-blue-600" />
+                                    <Play className="h-4 w-4 text-info" />
                                   </Button>
                                 )}
                                 {prod.status === 'in_progress' && (
                                   <Button variant="ghost" size="icon" title="Complete" onClick={() => handleOpenComplete(prod.id)}>
-                                    <CheckCircle className="h-4 w-4 text-green-600" />
+                                    <CheckCircle className="h-4 w-4 text-success" />
                                   </Button>
                                 )}
                                 {(prod.status === 'planned' || prod.status === 'in_progress') && (
                                   <Button variant="ghost" size="icon" title="Cancel" onClick={() => handleCancelProduction(prod.id)}>
-                                    <XCircle className="h-4 w-4 text-orange-600" />
+                                    <XCircle className="h-4 w-4 text-warning" />
                                   </Button>
                                 )}
                                 {(prod.status === 'planned' || prod.status === 'cancelled') && hasPermission('feed_production:delete') && (
-                                  <Button variant="ghost" size="icon" className="text-red-600" onClick={() => setShowDeleteProductionConfirm(prod.id)}>
+                                  <Button variant="ghost" size="icon" className="text-danger" onClick={() => setShowDeleteProductionConfirm(prod.id)}>
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
                                 )}
                                 {prod.status === 'completed' && (
                                   <Button variant="ghost" size="icon" title="Cost Breakdown" onClick={() => setShowCostBreakdownDialog(prod.id)}>
-                                    <Eye className="h-4 w-4 text-purple-600" />
+                                    <Eye className="h-4 w-4 text-primary" />
                                   </Button>
                                 )}
                               </div>
@@ -1831,7 +1378,7 @@ export default function FeedPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="text-red-600"
+                                className="text-danger"
                                 onClick={() => setShowDeleteDistributionConfirm(dist.id)}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -1863,327 +1410,7 @@ export default function FeedPage() {
           </Card>
         </TabsContent>
 
-        {/* ========================= */}
-        {/* PURCHASE ORDERS TAB       */}
-        {/* ========================= */}
-        <TabsContent value="purchase-orders">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-col sm:flex-row gap-4 mb-6">
-                <Input
-                  placeholder="Search by PO code..."
-                  value={poSearch}
-                  onChange={(e) => {
-                    setPoSearch(e.target.value);
-                    setPoPage(1);
-                  }}
-                  className="sm:w-64"
-                />
-                <Select
-                  value={poStatusFilter}
-                  onValueChange={(v) => {
-                    setPoStatusFilter(v === 'all' ? '' : v);
-                    setPoPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-44">
-                    <SelectValue placeholder="All statuses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="submitted">Submitted</SelectItem>
-                    <SelectItem value="partially_received">Partially Received</SelectItem>
-                    <SelectItem value="received">Received</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="flex-1" />
-                {hasPermission('feed_inventory:create') && (
-                  <Button onClick={() => setShowPoDialog(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    New Purchase Order
-                  </Button>
-                )}
-              </div>
-
-              {poLoading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : poList.length === 0 ? (
-                <div className="text-center py-12">
-                  <ShoppingCart className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <h3 className="text-lg font-medium mb-1">No Purchase Orders</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Create a purchase order to start tracking procurement.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>PO Code</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Order Date</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Total Cost</TableHead>
-                        <TableHead className="w-[120px]" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {poList.map((po) => (
-                        <TableRow key={po.id}>
-                          <TableCell className="font-medium">{po.orderCode}</TableCell>
-                          <TableCell>{po.supplierName ?? '--'}</TableCell>
-                          <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className={
-                                po.status === 'received' ? 'bg-green-100 text-green-800' :
-                                  po.status === 'submitted' ? 'bg-blue-100 text-blue-800' :
-                                    po.status === 'partially_received' ? 'bg-yellow-100 text-yellow-800' :
-                                      po.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                        'bg-gray-100 text-gray-800'
-                              }
-                            >
-                              {po.status.replace(/_/g, ' ')}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            Rs. {Number(po.totalCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              {po.status === 'draft' && hasPermission('feed_inventory:update') && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={async () => {
-                                    try {
-                                      await updatePOStatusMutation.mutateAsync({ id: po.id, status: 'submitted' });
-                                      toast.success('Purchase order submitted');
-                                    } catch (error) {
-                                      parseApiError(error, 'Failed to submit PO');
-                                    }
-                                  }}
-                                >
-                                  <Play className="h-4 w-4 mr-1" />
-                                  Submit
-                                </Button>
-                              )}
-                              {['submitted', 'partially_received'].includes(po.status) && hasPermission('feed_inventory:update') && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setShowPoDetail(po.id);
-                                    setShowReceiveDialog(true);
-                                  }}
-                                >
-                                  <CheckCircle className="h-4 w-4 mr-1" />
-                                  Receive
-                                </Button>
-                              )}
-                              {['draft', 'submitted'].includes(po.status) && hasPermission('feed_inventory:update') && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-red-600"
-                                  onClick={async () => {
-                                    try {
-                                      await updatePOStatusMutation.mutateAsync({ id: po.id, status: 'cancelled' });
-                                      toast.success('Purchase order cancelled');
-                                    } catch (error) {
-                                      parseApiError(error, 'Failed to cancel PO');
-                                    }
-                                  }}
-                                >
-                                  <XCircle className="h-4 w-4 mr-1" />
-                                  Cancel
-                                </Button>
-                              )}
-                              {po.status === 'draft' && hasPermission('feed_inventory:delete') && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-red-600"
-                                  onClick={async () => {
-                                    try {
-                                      await deletePO.mutateAsync(po.id);
-                                      toast.success('Purchase order deleted');
-                                    } catch (error) {
-                                      parseApiError(error, 'Failed to delete PO');
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-
-                  <div className="flex items-center justify-between pt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Page {poPage} of {poTotal}
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={poPage <= 1}
-                        onClick={() => setPoPage((p) => p - 1)}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={poPage >= poTotal}
-                        onClick={() => setPoPage((p) => p + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
-
-      {/* ========================= */}
-      {/* SUPPLIER CREATE/EDIT DLG  */}
-      {/* ========================= */}
-      <Dialog
-        open={showSupplierDialog}
-        onOpenChange={(open) => {
-          setShowSupplierDialog(open);
-          if (!open) {
-            setEditingSupplier(null);
-            setSupplierForm(EMPTY_SUPPLIER_FORM);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>{editingSupplier ? 'Edit Supplier' : 'New Supplier'}</DialogTitle>
-            <DialogDescription>
-              {editingSupplier ? 'Update supplier details.' : 'Add a new feed supplier.'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="supplierName">Supplier Name *</Label>
-              <Input
-                id="supplierName"
-                placeholder="e.g. AgriFeeds Inc."
-                value={supplierForm.supplierName}
-                onChange={(e) => setSupplierForm((prev) => ({ ...prev, supplierName: e.target.value }))}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="contactPerson">Contact Person</Label>
-                <Input
-                  id="contactPerson"
-                  placeholder="e.g. John Smith"
-                  value={supplierForm.contactPerson}
-                  onChange={(e) => setSupplierForm((prev) => ({ ...prev, contactPerson: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phoneNumber">Phone</Label>
-                <Input
-                  id="phoneNumber"
-                  placeholder="e.g. +27 12 345 6789"
-                  value={supplierForm.phoneNumber}
-                  onChange={(e) => setSupplierForm((prev) => ({ ...prev, phoneNumber: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="supplierEmail">Email</Label>
-              <Input
-                id="supplierEmail"
-                type="email"
-                placeholder="supplier@example.com"
-                value={supplierForm.email}
-                onChange={(e) => setSupplierForm((prev) => ({ ...prev, email: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="supplierAddress">Address</Label>
-              <Input
-                id="supplierAddress"
-                placeholder="Full address..."
-                value={supplierForm.address}
-                onChange={(e) => setSupplierForm((prev) => ({ ...prev, address: e.target.value }))}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setShowSupplierDialog(false);
-                setEditingSupplier(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveSupplier}
-              disabled={createSupplierMutation.isPending || updateSupplierMutation.isPending}
-            >
-              {createSupplierMutation.isPending || updateSupplierMutation.isPending
-                ? 'Saving...'
-                : editingSupplier
-                  ? 'Update'
-                  : 'Create'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* DELETE SUPPLIER CONFIRM */}
-      <Dialog
-        open={showDeleteSupplierConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open) setShowDeleteSupplierConfirm(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Deactivate Supplier</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to deactivate this supplier? This action can be reversed later.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteSupplierConfirm(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => showDeleteSupplierConfirm !== null && handleDeleteSupplier(showDeleteSupplierConfirm)}
-              disabled={deleteSupplierMutation.isPending}
-            >
-              {deleteSupplierMutation.isPending ? 'Deactivating...' : 'Deactivate'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* ========================= */}
       {/* RECIPE CREATE/EDIT DLG    */}
@@ -2330,7 +1557,7 @@ export default function FeedPage() {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="text-red-600 shrink-0"
+                      className="text-danger shrink-0"
                       onClick={() => handleRemoveIngredient(index)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -2434,7 +1661,7 @@ export default function FeedPage() {
                   <SelectValue placeholder="Select supplier" />
                 </SelectTrigger>
                 <SelectContent>
-                  {suppliersList.filter((s) => s.status === 'active').map((s) => (
+                  {suppliersList.filter((s: { status: string }) => s.status === 'active').map((s: { id: number; supplierName: string }) => (
                     <SelectItem key={s.id} value={String(s.id)}>
                       {s.supplierName}
                     </SelectItem>
@@ -2502,7 +1729,7 @@ export default function FeedPage() {
                 <p className="text-muted-foreground">
                   Current: {formatQuantity(currentEditQuantity)} {inventoryForm.unit}
                 </p>
-                <p className={editQuantityDelta >= 0 ? 'text-green-700' : 'text-red-700'}>
+                <p className={editQuantityDelta >= 0 ? 'text-success' : 'text-danger'}>
                   After update: {formatQuantity(editedQuantity)} {inventoryForm.unit}
                   {' '}({editQuantityDelta >= 0 ? '+' : ''}{formatQuantity(editQuantityDelta)})
                 </p>
@@ -2568,7 +1795,7 @@ export default function FeedPage() {
               <p className="text-muted-foreground">
                 Current: {formatQuantity(restockCurrentQuantity)} {restockItem?.unit ?? 'kg'}
               </p>
-              <p className="text-green-700">
+              <p className="text-success">
                 After restock: {formatQuantity(restockAfterQuantity)} {restockItem?.unit ?? 'kg'} (+{formatQuantity(restockAmount)})
               </p>
             </div>
@@ -2729,7 +1956,7 @@ export default function FeedPage() {
                             Deduct {formatQuantity(planned)} {m.unit}
                           </div>
                           {available != null && after != null && (
-                            <div className={after < 0 ? 'text-red-600' : 'text-green-700'}>
+                            <div className={after < 0 ? 'text-danger' : 'text-success'}>
                               {formatQuantity(available)}{' -> '}{formatQuantity(after)} {m.unit}
                             </div>
                           )}
@@ -2876,7 +2103,7 @@ export default function FeedPage() {
                       </p>
                     )}
                     {distributionAvailableAfter != null && distributionQuantity > 0 && (
-                      <p className={distributionAvailableAfter < 0 ? 'text-red-700' : 'text-green-700'}>
+                      <p className={distributionAvailableAfter < 0 ? 'text-danger' : 'text-success'}>
                         Available after: {formatQuantity(distributionAvailableAfter)} {distributionProductionDetail.production?.unit ?? distributionForm.unit}
                         {' '}({distributionQuantity > 0 ? '-' : ''}{formatQuantity(distributionQuantity)})
                       </p>
@@ -2938,274 +2165,6 @@ export default function FeedPage() {
         </DialogContent>
       </Dialog>
 
-      {/* CREATE PO DIALOG */}
-      <Dialog
-        open={showPoDialog}
-        onOpenChange={(open) => {
-          setShowPoDialog(open);
-          if (!open) {
-            setPoForm({
-              supplierId: '',
-              orderDate: new Date().toISOString().split('T')[0],
-              expectedDeliveryDate: '',
-              notes: '',
-              items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
-            });
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>New Purchase Order</DialogTitle>
-            <DialogDescription>Create a purchase order for a supplier.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Supplier *</Label>
-                <Select
-                  value={poForm.supplierId}
-                  onValueChange={(v) => setPoForm((prev) => ({ ...prev, supplierId: v }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliersList.filter((s) => s.status === 'active').map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        {s.supplierName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Order Date *</Label>
-                <Input
-                  type="date"
-                  value={poForm.orderDate}
-                  onChange={(e) => setPoForm((prev) => ({ ...prev, orderDate: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Expected Delivery</Label>
-                <Input
-                  type="date"
-                  value={poForm.expectedDeliveryDate}
-                  onChange={(e) => setPoForm((prev) => ({ ...prev, expectedDeliveryDate: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Notes</Label>
-                <Input
-                  placeholder="Optional notes"
-                  value={poForm.notes}
-                  onChange={(e) => setPoForm((prev) => ({ ...prev, notes: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label>Line Items</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setPoForm((prev) => ({
-                      ...prev,
-                      items: [...prev.items, { inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
-                    }))
-                  }
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add Item
-                </Button>
-              </div>
-              {poForm.items.map((item, index) => (
-                <div key={index} className="flex gap-2 items-end">
-                  <div className="flex-1 space-y-1">
-                    {index === 0 && <Label className="text-xs text-muted-foreground">Inventory Item</Label>}
-                    <Select
-                      value={item.inventoryItemId}
-                      onValueChange={(v) => {
-                        const newItems = [...poForm.items];
-                        newItems[index] = { ...newItems[index], inventoryItemId: v };
-                        setPoForm((prev) => ({ ...prev, items: newItems }));
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select item" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryList.map((inv) => (
-                          <SelectItem key={inv.id} value={String(inv.id)}>
-                            {inv.ingredientName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="w-20 space-y-1">
-                    {index === 0 && <Label className="text-xs text-muted-foreground">Qty</Label>}
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="0"
-                      value={item.orderedQuantity}
-                      onChange={(e) => {
-                        const newItems = [...poForm.items];
-                        newItems[index] = { ...newItems[index], orderedQuantity: e.target.value };
-                        setPoForm((prev) => ({ ...prev, items: newItems }));
-                      }}
-                    />
-                  </div>
-                  <div className="w-24 space-y-1">
-                    {index === 0 && <Label className="text-xs text-muted-foreground">Unit Price</Label>}
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={item.unitPrice}
-                      onChange={(e) => {
-                        const newItems = [...poForm.items];
-                        newItems[index] = { ...newItems[index], unitPrice: e.target.value };
-                        setPoForm((prev) => ({ ...prev, items: newItems }));
-                      }}
-                    />
-                  </div>
-                  <div className="w-16 space-y-1">
-                    {index === 0 && <Label className="text-xs text-muted-foreground">Unit</Label>}
-                    <Select
-                      value={item.unit}
-                      onValueChange={(v) => {
-                        const newItems = [...poForm.items];
-                        newItems[index] = { ...newItems[index], unit: v };
-                        setPoForm((prev) => ({ ...prev, items: newItems }));
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="kg">kg</SelectItem>
-                        <SelectItem value="g">g</SelectItem>
-                        <SelectItem value="l">l</SelectItem>
-                        <SelectItem value="bags">bags</SelectItem>
-                        <SelectItem value="units">units</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {poForm.items.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="text-red-600 shrink-0"
-                      onClick={() => {
-                        setPoForm((prev) => ({
-                          ...prev,
-                          items: prev.items.filter((_, i) => i !== index),
-                        }));
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {poForm.items.some((it) => it.orderedQuantity && it.unitPrice) && (
-              <div className="text-sm text-right text-muted-foreground">
-                Estimated Total: Rs. {poForm.items
-                  .reduce((sum, it) => sum + (Number(it.orderedQuantity) || 0) * (Number(it.unitPrice) || 0), 0)
-                  .toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPoDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={createPO.isPending}
-              onClick={async () => {
-                if (!poForm.supplierId) {
-                  toast.error('Supplier is required');
-                  return;
-                }
-                if (!poForm.orderDate) {
-                  toast.error('Order date is required');
-                  return;
-                }
-                const validItems = poForm.items.filter((it) => it.inventoryItemId && it.orderedQuantity && it.unitPrice);
-                if (validItems.length === 0) {
-                  toast.error('At least one line item is required');
-                  return;
-                }
-                try {
-                  await createPO.mutateAsync({
-                    supplierId: Number(poForm.supplierId),
-                    orderDate: poForm.orderDate,
-                    expectedDeliveryDate: poForm.expectedDeliveryDate || undefined,
-                    notes: poForm.notes || undefined,
-                    items: validItems.map((it) => ({
-                      inventoryItemId: Number(it.inventoryItemId),
-                      orderedQuantity: Number(it.orderedQuantity),
-                      unitPrice: Number(it.unitPrice),
-                      unit: it.unit,
-                    })),
-                  });
-                  toast.success('Purchase order created');
-                  setShowPoDialog(false);
-                  setPoForm({
-                    supplierId: '',
-                    orderDate: new Date().toISOString().split('T')[0],
-                    expectedDeliveryDate: '',
-                    notes: '',
-                    items: [{ inventoryItemId: '', orderedQuantity: '', unitPrice: '', unit: 'kg' }],
-                  });
-                } catch (error) {
-                  parseApiError(error, 'Failed to create purchase order');
-                }
-              }}
-            >
-              {createPO.isPending ? 'Creating...' : 'Create PO'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* RECEIVE PO DIALOG */}
-      <Dialog
-        open={showReceiveDialog && showPoDetail !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setShowReceiveDialog(false);
-            setShowPoDetail(null);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Receive Items</DialogTitle>
-            <DialogDescription>Enter received quantities for purchase order items. Stock impact is shown before confirmation.</DialogDescription>
-          </DialogHeader>
-          <ReceivePOContent
-            poId={showPoDetail!}
-            onClose={() => {
-              setShowReceiveDialog(false);
-              setShowPoDetail(null);
-            }}
-            receivePOMutation={receivePOMutation}
-            inventoryById={inventoryById}
-          />
-        </DialogContent>
-      </Dialog>
       {/* VIEW RECIPE DETAILS DIALOG */}
       <Dialog
         open={viewingRecipe !== null}
@@ -3231,7 +2190,7 @@ export default function FeedPage() {
                 <span className="font-medium text-muted-foreground">Type:</span> <Badge variant="secondary" className={`ml-2 ${FEED_TYPE_COLORS[viewingRecipe?.feedType || '']}`}>{viewingRecipe?.feedType}</Badge>
               </div>
               <div>
-                <span className="font-medium text-muted-foreground">Status:</span> <span className={`ml-2 capitalize ${viewingRecipe?.status === 'active' ? 'text-green-600' : 'text-gray-500'}`}>{viewingRecipe?.status}</span>
+                <span className="font-medium text-muted-foreground">Status:</span> <span className={`ml-2 capitalize ${viewingRecipe?.status === 'active' ? 'text-success' : 'text-muted-foreground'}`}>{viewingRecipe?.status}</span>
               </div>
               <div>
                 <span className="font-medium text-muted-foreground">Cost:</span> <span className="ml-2">Rs. {Number(viewingRecipe?.cost).toFixed(2)}</span>
@@ -3327,7 +2286,7 @@ export default function FeedPage() {
                     const remaining = Number(lot.remainingQuantity);
                     const received = Number(lot.receivedQuantity);
                     const pct = received > 0 ? (remaining / received) * 100 : 0;
-                    const colorClass = remaining <= 0 ? 'text-muted-foreground bg-muted/30' : pct < 10 ? 'bg-red-50/50' : pct < 50 ? 'bg-yellow-50/30' : '';
+                    const colorClass = remaining <= 0 ? 'text-muted-foreground bg-muted/30' : pct < 10 ? 'bg-danger-soft' : pct < 50 ? 'bg-warning-soft' : '';
                     return (
                       <TableRow key={lot.id} className={colorClass}>
                         <TableCell className="font-mono text-xs">{lot.lotCode}</TableCell>

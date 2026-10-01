@@ -395,6 +395,7 @@ export interface BatchProfitabilityEntry {
   birdsSold: number;
   revenue: number;
   feedCost: number;
+  chickCost?: number;
   inventoryCost: number;
   laborCost: number;
   operationalExpenseCost: number;

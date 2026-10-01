@@ -1,9 +1,15 @@
 import { useMemo, useState } from 'react';
-import { Package, ShoppingCart, Truck, Plus, Pencil, Boxes, Factory, Eye, FileText, Receipt, ScanSearch } from 'lucide-react';
+import { Package, ShoppingCart, Truck, Plus, Pencil, Factory, Eye, FileText, Receipt, ScanSearch, Warehouse, ClipboardList } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
 import { parseApiError } from '@/lib/api';
+import { CategorySelect, CostCentreSelect, EMPTY_FINANCE_TAGS, FinanceTagFields, financeTagsToPayload, type FinanceTagValue } from '@/components/finance/FinanceTagFields';
 import { useBatches } from '@/hooks/useBatches';
+import { useStockLocations } from '@/hooks/useStock';
+import { StoresTab } from '@/components/stock/StoresTab';
+import { RequisitionsTab } from '@/components/stock/RequisitionsTab';
+import { InvoiceMatchBadge } from '@/components/stock/InvoiceMatchBadge';
 import {
   useConsumeInventoryItem,
   useCreateSupplierContract,
@@ -11,7 +17,6 @@ import {
   useCreateSupplierPayment,
   useBatchAllocations,
   useCreateInventoryItem,
-  useCreateInventoryItemType,
   useCreateInventoryPurchaseOrder,
   useCreateInventorySupplier,
   useInventoryItem,
@@ -30,11 +35,9 @@ import {
   useInventorySuppliers,
   useReceiveInventoryPurchaseOrder,
   useUpdateInventoryItem,
-  useUpdateInventoryItemType,
   useUpdateInventoryPurchaseOrderStatus,
   useUpdateInventorySupplier,
   type InventoryItem,
-  type InventoryItemType,
   type InventorySupplier,
 } from '@/hooks/useInventoryManagement';
 import { useChequeLeaves, useTreasuryAccounts } from '@/hooks/useTreasury';
@@ -69,17 +72,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-type ItemTypeForm = {
-  typeCode: string;
-  typeName: string;
-  category: string;
-  defaultUnit: string;
-  allowsBatchAllocation: string;
-  isFeed: string;
-  status: string;
-  description: string;
-};
-
 type SupplierForm = {
   supplierName: string;
   contactPerson: string;
@@ -87,6 +79,7 @@ type SupplierForm = {
   email: string;
   address: string;
   status: string;
+  defaultCategoryId: string;
 };
 
 type InventoryForm = {
@@ -111,6 +104,7 @@ type ConsumeForm = {
 type PurchaseOrderForm = {
   supplierId: string;
   contractId: string;
+  costCentreId: string;
   orderDate: string;
   expectedDeliveryDate: string;
   notes: string;
@@ -164,17 +158,7 @@ type SupplierPaymentForm = {
   referenceNumber: string;
   chequeLeafId: string;
   notes: string;
-};
-
-const EMPTY_ITEM_TYPE_FORM: ItemTypeForm = {
-  typeCode: '',
-  typeName: '',
-  category: 'operations',
-  defaultUnit: 'unit',
-  allowsBatchAllocation: 'false',
-  isFeed: 'false',
-  status: 'active',
-  description: '',
+  tags: FinanceTagValue;
 };
 
 const EMPTY_SUPPLIER_FORM: SupplierForm = {
@@ -184,6 +168,7 @@ const EMPTY_SUPPLIER_FORM: SupplierForm = {
   email: '',
   address: '',
   status: 'active',
+  defaultCategoryId: '',
 };
 
 const EMPTY_INVENTORY_FORM: InventoryForm = {
@@ -208,6 +193,7 @@ const EMPTY_CONSUME_FORM: ConsumeForm = {
 const EMPTY_PO_FORM: PurchaseOrderForm = {
   supplierId: '',
   contractId: '',
+  costCentreId: '',
   orderDate: new Date().toISOString().split('T')[0],
   expectedDeliveryDate: '',
   notes: '',
@@ -251,6 +237,7 @@ const EMPTY_SUPPLIER_PAYMENT_FORM: SupplierPaymentForm = {
   referenceNumber: '',
   chequeLeafId: '',
   notes: '',
+  tags: EMPTY_FINANCE_TAGS,
 };
 
 function ReceivePODialogContent({
@@ -267,7 +254,9 @@ function ReceivePODialogContent({
   const detail = data?.data;
   const items = detail?.items ?? [];
 
-  const [receiveForm, setReceiveForm] = useState<Record<number, { receivedQuantity: string; batchId: string; allocatedQuantity: string }>>({});
+  const [receiveForm, setReceiveForm] = useState<Record<number, { receivedQuantity: string; batchId: string; allocatedQuantity: string; expiryDate: string }>>({});
+  const stores = (useStockLocations().data?.data ?? []).filter((l) => l.status === 'active');
+  const [storeId, setStoreId] = useState('');
 
   const handleReceive = async () => {
     try {
@@ -283,17 +272,18 @@ function ReceivePODialogContent({
           return {
             itemId: item.id,
             receivedQuantity,
+            expiryDate: form.expiryDate || null,
             batchAllocations,
           };
         })
-        .filter((item): item is { itemId: number; receivedQuantity: number; batchAllocations: Array<{ batchId: number; quantity: number }> } => item !== null);
+        .filter((item): item is { itemId: number; receivedQuantity: number; expiryDate: string | null; batchAllocations: Array<{ batchId: number; quantity: number }> } => item !== null);
 
       if (payload.length === 0) {
         toast.error('Enter at least one received quantity');
         return;
       }
 
-      await receiveMutation.mutateAsync({ id: poId, items: payload });
+      await receiveMutation.mutateAsync({ id: poId, items: payload, locationId: storeId ? Number(storeId) : null });
       toast.success('Purchase order receipt recorded');
       onClose();
     } catch (error) {
@@ -306,13 +296,23 @@ function ReceivePODialogContent({
       <DialogHeader>
         <DialogTitle>Receive Purchase Order</DialogTitle>
         <DialogDescription>
-          Receive stock and optionally allocate non-feed items directly to a batch.
+          Receive stock into a store and, for medicine and supplies, optionally use some straight away on a batch.
         </DialogDescription>
       </DialogHeader>
+      <div className="grid gap-2">
+        <Label>Receive into</Label>
+        <Select value={storeId || 'auto'} onValueChange={(value) => setStoreId(value === 'auto' ? '' : value)}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="auto">Automatic (feed → mill store, farm orders → farm store)</SelectItem>
+            {stores.map((store) => <SelectItem key={store.id} value={String(store.id)}>{store.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
         {items.map((item) => {
           const remaining = Number(item.orderedQuantity) - Number(item.receivedQuantity);
-          const form = receiveForm[item.id] ?? { receivedQuantity: '', batchId: '', allocatedQuantity: '' };
+          const form = receiveForm[item.id] ?? { receivedQuantity: '', batchId: '', allocatedQuantity: '', expiryDate: '' };
           return (
             <div key={item.id} className="space-y-3 rounded-md border p-4">
               <div className="flex items-start justify-between gap-3">
@@ -338,6 +338,17 @@ function ReceivePODialogContent({
                     onChange={(e) => setReceiveForm((prev) => ({
                       ...prev,
                       [item.id]: { ...form, receivedQuantity: e.target.value },
+                    }))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Expiry date (if any)</Label>
+                  <Input
+                    type="date"
+                    value={form.expiryDate}
+                    onChange={(e) => setReceiveForm((prev) => ({
+                      ...prev,
+                      [item.id]: { ...form, expiryDate: e.target.value },
                     }))}
                   />
                 </div>
@@ -942,6 +953,8 @@ function LotTraceDialogContent({
 
 export default function InventoryManagementPage() {
   const { hasPermission } = useAuthStore();
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get('tab') ?? 'inventory';
   const [inventorySearch, setInventorySearch] = useState('');
   const [poSearch, setPoSearch] = useState('');
   const [selectedSupplierIdFilter, setSelectedSupplierIdFilter] = useState<string>('all');
@@ -976,9 +989,6 @@ export default function InventoryManagementPage() {
   const batches = (batchesData?.data ?? []).map((batch) => ({ id: batch.id, batchCode: batch.batchCode }));
   const treasuryAccounts = (treasuryAccountsData?.data ?? []).filter((account) => account.status === 'active');
 
-  const [showItemTypeDialog, setShowItemTypeDialog] = useState(false);
-  const [editingItemType, setEditingItemType] = useState<InventoryItemType | null>(null);
-  const [itemTypeForm, setItemTypeForm] = useState<ItemTypeForm>(EMPTY_ITEM_TYPE_FORM);
 
   const [showSupplierDialog, setShowSupplierDialog] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<InventorySupplier | null>(null);
@@ -1019,8 +1029,6 @@ export default function InventoryManagementPage() {
   });
   const availableChequeLeaves = (chequeLeavesData?.data ?? []).filter((leaf) => leaf.status === 'available');
 
-  const createItemType = useCreateInventoryItemType();
-  const updateItemType = useUpdateInventoryItemType(editingItemType?.id);
   const createSupplier = useCreateInventorySupplier();
   const updateSupplier = useUpdateInventorySupplier(editingSupplier?.id);
   const createItem = useCreateInventoryItem();
@@ -1037,12 +1045,6 @@ export default function InventoryManagementPage() {
     () => new Map(inventoryItems.map((item) => [item.id, item])),
     [inventoryItems],
   );
-
-  const resetItemTypeForm = () => {
-    setEditingItemType(null);
-    setItemTypeForm(EMPTY_ITEM_TYPE_FORM);
-    setShowItemTypeDialog(false);
-  };
 
   const resetSupplierForm = () => {
     setEditingSupplier(null);
@@ -1072,30 +1074,7 @@ export default function InventoryManagementPage() {
     setSupplierInvoiceForm(EMPTY_SUPPLIER_INVOICE_FORM);
   };
 
-  const handleSubmitItemType = async () => {
-    try {
-      const payload = {
-        typeCode: itemTypeForm.typeCode,
-        typeName: itemTypeForm.typeName,
-        category: itemTypeForm.category,
-        defaultUnit: itemTypeForm.defaultUnit,
-        allowsBatchAllocation: itemTypeForm.allowsBatchAllocation === 'true',
-        isFeed: itemTypeForm.isFeed === 'true',
-        status: itemTypeForm.status,
-        description: itemTypeForm.description || null,
-      };
-      if (editingItemType) {
-        await updateItemType.mutateAsync(payload);
-        toast.success('Inventory type updated');
-      } else {
-        await createItemType.mutateAsync(payload);
-        toast.success('Inventory type created');
-      }
-      resetItemTypeForm();
-    } catch (error) {
-      parseApiError(error, 'Failed to save inventory type');
-    }
-  };
+
 
   const handleSubmitSupplier = async () => {
     try {
@@ -1106,6 +1085,7 @@ export default function InventoryManagementPage() {
         email: supplierForm.email || null,
         address: supplierForm.address || null,
         status: supplierForm.status,
+        defaultCategoryId: supplierForm.defaultCategoryId ? Number(supplierForm.defaultCategoryId) : null,
       };
       if (editingSupplier) {
         await updateSupplier.mutateAsync(payload);
@@ -1172,6 +1152,7 @@ export default function InventoryManagementPage() {
       await createPurchaseOrder.mutateAsync({
         supplierId: Number(poForm.supplierId),
         contractId: poForm.contractId ? Number(poForm.contractId) : null,
+        ...(poForm.costCentreId ? { costCentreId: Number(poForm.costCentreId) } : {}),
         orderDate: poForm.orderDate,
         expectedDeliveryDate: poForm.expectedDeliveryDate || null,
         notes: poForm.notes || null,
@@ -1264,6 +1245,7 @@ export default function InventoryManagementPage() {
         referenceNumber: supplierPaymentForm.referenceNumber || undefined,
         chequeLeafId: supplierPaymentForm.paymentMethod === 'cheque' ? Number(supplierPaymentForm.chequeLeafId) : null,
         notes: supplierPaymentForm.notes || undefined,
+        ...(selectedSupplierPaymentTarget.purchaseOrderId ? {} : financeTagsToPayload(supplierPaymentForm.tags)),
       });
       toast.success('Supplier payment recorded');
       resetSupplierPaymentDialog();
@@ -1272,20 +1254,6 @@ export default function InventoryManagementPage() {
     }
   };
 
-  const openEditItemType = (itemType: InventoryItemType) => {
-    setEditingItemType(itemType);
-    setItemTypeForm({
-      typeCode: itemType.typeCode,
-      typeName: itemType.typeName,
-      category: itemType.category,
-      defaultUnit: itemType.defaultUnit,
-      allowsBatchAllocation: String(itemType.allowsBatchAllocation),
-      isFeed: String(itemType.isFeed),
-      status: itemType.status,
-      description: itemType.description ?? '',
-    });
-    setShowItemTypeDialog(true);
-  };
 
   const openEditSupplier = (supplier: InventorySupplier) => {
     setEditingSupplier(supplier);
@@ -1296,6 +1264,7 @@ export default function InventoryManagementPage() {
       email: supplier.email ?? '',
       address: supplier.address ?? '',
       status: supplier.status,
+      defaultCategoryId: supplier.defaultCategoryId ? String(supplier.defaultCategoryId) : '',
     });
     setShowSupplierDialog(true);
   };
@@ -1328,22 +1297,31 @@ export default function InventoryManagementPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-bold text-foreground">Inventory Management</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Stock & purchasing</h1>
         <p className="text-sm text-muted-foreground">
           Manage suppliers, purchase orders, and all inventory. Feed items remain available here and in Feed inventory.
         </p>
       </div>
 
-      <Tabs defaultValue="inventory" className="space-y-4">
-        <TabsList>
+      <Tabs value={activeTab} onValueChange={(tab) => setParams({ tab }, { replace: true })} className="space-y-4">
+        <TabsList className="max-w-full justify-start overflow-x-auto scrollbar-none">
           <TabsTrigger value="inventory" className="gap-2"><Package className="h-4 w-4" />Inventory</TabsTrigger>
+          <TabsTrigger value="stores" className="gap-2"><Warehouse className="h-4 w-4" />Stores</TabsTrigger>
+          <TabsTrigger value="requisitions" className="gap-2"><ClipboardList className="h-4 w-4" />Requests</TabsTrigger>
           <TabsTrigger value="purchase-orders" className="gap-2"><ShoppingCart className="h-4 w-4" />Purchase Orders</TabsTrigger>
           <TabsTrigger value="contracts" className="gap-2"><FileText className="h-4 w-4" />Contracts</TabsTrigger>
           <TabsTrigger value="supplier-invoices" className="gap-2"><Receipt className="h-4 w-4" />Invoices</TabsTrigger>
           <TabsTrigger value="traceability" className="gap-2"><ScanSearch className="h-4 w-4" />Traceability</TabsTrigger>
           <TabsTrigger value="suppliers" className="gap-2"><Truck className="h-4 w-4" />Suppliers</TabsTrigger>
-          <TabsTrigger value="basic-data" className="gap-2"><Boxes className="h-4 w-4" />Basic Data</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="stores">
+          <StoresTab canMove={hasPermission('inventory:update')} canWriteOff={hasPermission('inventory:create')} />
+        </TabsContent>
+
+        <TabsContent value="requisitions">
+          <RequisitionsTab canRequest={hasPermission('inventory:read')} canApprove={hasPermission('inventory:create')} />
+        </TabsContent>
 
         <TabsContent value="inventory">
           <Card>
@@ -1707,6 +1685,7 @@ export default function InventoryManagementPage() {
                       <TableHead>PO</TableHead>
                       <TableHead>Due Date</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Match</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                       <TableHead className="text-right">Balance Due</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -1715,7 +1694,7 @@ export default function InventoryManagementPage() {
                   <TableBody>
                     {supplierInvoices.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="h-24 text-center text-sm text-muted-foreground">No supplier invoices found.</TableCell>
+                        <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">No supplier invoices found.</TableCell>
                       </TableRow>
                     ) : supplierInvoices.map((invoice) => (
                       <TableRow key={invoice.id}>
@@ -1729,6 +1708,7 @@ export default function InventoryManagementPage() {
                         <TableCell>{invoice.purchaseOrderCode || '--'}</TableCell>
                         <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
                         <TableCell><Badge variant="outline">{invoice.status}</Badge></TableCell>
+                        <TableCell><InvoiceMatchBadge invoice={invoice} /></TableCell>
                         <TableCell className="text-right">Rs. {Number(invoice.invoiceAmount).toFixed(2)}</TableCell>
                         <TableCell className="text-right">Rs. {Number(invoice.balanceDue ?? 0).toFixed(2)}</TableCell>
                         <TableCell className="text-right">
@@ -1898,128 +1878,7 @@ export default function InventoryManagementPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="basic-data">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-medium">Inventory Item Types</h2>
-                  <p className="text-sm text-muted-foreground">Define how inventory behaves across feed and batch tracking.</p>
-                </div>
-                {hasPermission('feed_inventory:create') ? (
-                  <Button onClick={() => setShowItemTypeDialog(true)} className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Add Type
-                  </Button>
-                ) : null}
-              </div>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Default Unit</TableHead>
-                    <TableHead>Behavior</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {itemTypes.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
-                        No inventory item types found.
-                      </TableCell>
-                    </TableRow>
-                  ) : itemTypes.map((itemType) => (
-                    <TableRow key={itemType.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{itemType.typeName}</p>
-                          <p className="text-xs text-muted-foreground">{itemType.typeCode}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{itemType.category}</TableCell>
-                      <TableCell>{itemType.defaultUnit}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          {itemType.isFeed ? <Badge variant="secondary">Feed</Badge> : null}
-                          {itemType.allowsBatchAllocation ? <Badge variant="outline">Batch</Badge> : null}
-                        </div>
-                      </TableCell>
-                      <TableCell><Badge variant="outline">{itemType.status}</Badge></TableCell>
-                      <TableCell className="text-right">
-                        {hasPermission('feed_inventory:update') ? (
-                          <Button variant="outline" size="icon" onClick={() => openEditItemType(itemType)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
-
-      <Dialog open={showItemTypeDialog} onOpenChange={(open) => (!open ? resetItemTypeForm() : setShowItemTypeDialog(true))}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingItemType ? 'Edit Inventory Type' : 'Add Inventory Type'}</DialogTitle>
-            <DialogDescription>Configure classification and behavior for inventory items.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="grid gap-2"><Label>Type Code</Label><Input value={itemTypeForm.typeCode} onChange={(e) => setItemTypeForm((prev) => ({ ...prev, typeCode: e.target.value }))} /></div>
-              <div className="grid gap-2"><Label>Type Name</Label><Input value={itemTypeForm.typeName} onChange={(e) => setItemTypeForm((prev) => ({ ...prev, typeName: e.target.value }))} /></div>
-            </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="grid gap-2"><Label>Category</Label><Input value={itemTypeForm.category} onChange={(e) => setItemTypeForm((prev) => ({ ...prev, category: e.target.value }))} /></div>
-              <div className="grid gap-2"><Label>Default Unit</Label><Input value={itemTypeForm.defaultUnit} onChange={(e) => setItemTypeForm((prev) => ({ ...prev, defaultUnit: e.target.value }))} /></div>
-            </div>
-            <div className="grid gap-2 md:grid-cols-3">
-              <div className="grid gap-2">
-                <Label>Batch Allocation</Label>
-                <Select value={itemTypeForm.allowsBatchAllocation} onValueChange={(value) => setItemTypeForm((prev) => ({ ...prev, allowsBatchAllocation: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="false">Disabled</SelectItem>
-                    <SelectItem value="true">Enabled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Feed Type</Label>
-                <Select value={itemTypeForm.isFeed} onValueChange={(value) => setItemTypeForm((prev) => ({ ...prev, isFeed: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="false">No</SelectItem>
-                    <SelectItem value="true">Yes</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Status</Label>
-                <Select value={itemTypeForm.status} onValueChange={(value) => setItemTypeForm((prev) => ({ ...prev, status: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-2"><Label>Description</Label><Textarea value={itemTypeForm.description} onChange={(e) => setItemTypeForm((prev) => ({ ...prev, description: e.target.value }))} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={resetItemTypeForm}>Cancel</Button>
-            <Button onClick={handleSubmitItemType}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={showSupplierDialog} onOpenChange={(open) => (!open ? resetSupplierForm() : setShowSupplierDialog(true))}>
         <DialogContent>
@@ -2045,6 +1904,11 @@ export default function InventoryManagementPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Default finance category</Label>
+              <CategorySelect value={supplierForm.defaultCategoryId} onChange={(value) => setSupplierForm((prev) => ({ ...prev, defaultCategoryId: value }))} />
+              <p className="text-xs text-muted-foreground">Used for payments that aren't linked to a purchase order (for example, a hatchery's chick invoices).</p>
             </div>
             <div className="grid gap-2"><Label>Address</Label><Textarea value={supplierForm.address} onChange={(e) => setSupplierForm((prev) => ({ ...prev, address: e.target.value }))} /></div>
           </div>
@@ -2298,6 +2162,10 @@ export default function InventoryManagementPage() {
               <div className="grid gap-2"><Label>Order Date</Label><Input type="date" value={poForm.orderDate} onChange={(e) => setPoForm((prev) => ({ ...prev, orderDate: e.target.value }))} /></div>
               <div className="grid gap-2"><Label>Expected Delivery</Label><Input type="date" value={poForm.expectedDeliveryDate} onChange={(e) => setPoForm((prev) => ({ ...prev, expectedDeliveryDate: e.target.value }))} /></div>
             </div>
+            <div className="grid gap-2">
+              <Label>Charge to cost centre</Label>
+              <CostCentreSelect value={poForm.costCentreId} onChange={(value) => setPoForm((prev) => ({ ...prev, costCentreId: value }))} noneLabel="Automatic (feed items → Feed Mill, else Admin)" />
+            </div>
             <div className="grid gap-2"><Label>Notes</Label><Textarea value={poForm.notes} onChange={(e) => setPoForm((prev) => ({ ...prev, notes: e.target.value }))} /></div>
 
             <div className="space-y-3">
@@ -2544,17 +2412,7 @@ export default function InventoryManagementPage() {
             </div>
             <div className="grid gap-2 md:grid-cols-3">
               <div className="grid gap-2"><Label>Currency</Label><Input value={supplierInvoiceForm.currencyCode} onChange={(e) => setSupplierInvoiceForm((prev) => ({ ...prev, currencyCode: e.target.value }))} /></div>
-              <div className="grid gap-2">
-                <Label>Status</Label>
-                <Select value={supplierInvoiceForm.status} onValueChange={(value) => setSupplierInvoiceForm((prev) => ({ ...prev, status: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="recorded">Recorded</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="disputed">Disputed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <p className="self-end text-sm text-muted-foreground md:col-span-2">New invoices are recorded first, then approved or rejected from Farm control.</p>
             </div>
             <div className="grid gap-2"><Label>Notes</Label><Textarea value={supplierInvoiceForm.notes} onChange={(e) => setSupplierInvoiceForm((prev) => ({ ...prev, notes: e.target.value }))} /></div>
           </div>
@@ -2688,6 +2546,20 @@ export default function InventoryManagementPage() {
                 ) : null}
               </div>
             ) : null}
+            {!selectedSupplierPaymentTarget?.purchaseOrderId ? (
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
+                <p className="text-sm font-medium">What was this payment for?</p>
+                <p className="text-xs text-muted-foreground">Not linked to a purchase order. Leave blank to use the supplier's default category, charged to Admin.</p>
+                <FinanceTagFields
+                  value={supplierPaymentForm.tags}
+                  onChange={(tags) => setSupplierPaymentForm((prev) => ({ ...prev, tags }))}
+                  direction="outflow"
+                  required={false}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Recorded against the purchase order's lines and cost centre automatically.</p>
+            )}
             <div className="grid gap-2">
               <Label>Notes</Label>
               <Textarea

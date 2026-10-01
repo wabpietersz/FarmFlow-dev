@@ -12,8 +12,8 @@ import {
   UserPlus,
   BarChart3,
   Wheat,
+  HeartPulse,
   Settings,
-  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -40,9 +40,53 @@ export const mainNavigationItems: MainNavigationItem[] = [
   {
     type: 'link',
     key: 'dashboard',
-    label: 'Dashboard',
+    label: 'Home',
     href: '/dashboard',
     icon: LayoutDashboard,
+  },
+  {
+    type: 'group',
+    key: 'farms',
+    label: 'Farms',
+    icon: Egg,
+    children: [
+      { type: 'link', key: 'batches', label: 'Batches', href: '/batches', icon: Egg, requiredPermission: 'batches:read' },
+      { type: 'link', key: 'sites', label: 'Sites & houses', href: '/sites', icon: Building2, requiredPermission: 'sites:read' },
+      { type: 'link', key: 'farm-care', label: 'Health & houses', href: '/farm-care', icon: HeartPulse, requiredPermission: 'batches:read' },
+      { type: 'link', key: 'farm-control', label: 'Farm control', href: '/farm-control', icon: ShieldEllipsis, requiredPermission: 'inventory:read' },
+    ],
+  },
+  {
+    type: 'link',
+    key: 'feed',
+    label: 'Feed mill',
+    href: '/feed',
+    icon: Wheat,
+    requiredPermission: 'feed_inventory:read',
+  },
+  {
+    type: 'link',
+    key: 'inventory',
+    label: 'Stock',
+    href: '/inventory',
+    icon: Package,
+    requiredPermission: 'feed_inventory:read',
+  },
+  {
+    type: 'link',
+    key: 'sales',
+    label: 'Sales',
+    href: '/sales',
+    icon: ShoppingCart,
+    requiredPermission: 'sales:read',
+  },
+  {
+    type: 'link',
+    key: 'treasury',
+    label: 'Money',
+    href: '/treasury',
+    icon: Landmark,
+    requiredPermission: 'treasury:read',
   },
   {
     type: 'group',
@@ -50,95 +94,10 @@ export const mainNavigationItems: MainNavigationItem[] = [
     label: 'People',
     icon: Users,
     children: [
-      {
-        type: 'link',
-        key: 'employees',
-        label: 'Employees',
-        href: '/employees',
-        icon: Users,
-        requiredPermission: 'employees:read',
-      },
-      {
-        type: 'link',
-        key: 'attendance',
-        label: 'Attendance',
-        href: '/attendance',
-        icon: CalendarDays,
-        requiredPermission: 'attendance:read',
-      },
-      {
-        type: 'link',
-        key: 'payroll',
-        label: 'Payroll',
-        href: '/payroll',
-        icon: Banknote,
-        requiredPermission: 'payroll:read',
-      },
+      { type: 'link', key: 'employees', label: 'Employees', href: '/employees', icon: Users, requiredPermission: 'employees:read' },
+      { type: 'link', key: 'attendance', label: 'Attendance', href: '/attendance', icon: CalendarDays, requiredPermission: 'attendance:read' },
+      { type: 'link', key: 'payroll', label: 'Payroll', href: '/payroll', icon: Banknote, requiredPermission: 'payroll:read' },
     ],
-  },
-  {
-    type: 'group',
-    key: 'operational',
-    label: 'Operational',
-    icon: Building2,
-    children: [
-      {
-        type: 'link',
-        key: 'sites',
-        label: 'Sites',
-        href: '/sites',
-        icon: Building2,
-        requiredPermission: 'sites:read',
-      },
-      {
-        type: 'link',
-        key: 'batches',
-        label: 'Batches',
-        href: '/batches',
-        icon: Egg,
-        requiredPermission: 'batches:read',
-      },
-      {
-        type: 'link',
-        key: 'sales',
-        label: 'Sales',
-        href: '/sales',
-        icon: ShoppingCart,
-        requiredPermission: 'sales:read',
-      },
-    ],
-  },
-  {
-    type: 'link',
-    key: 'treasury',
-    label: 'Treasury',
-    href: '/treasury',
-    icon: Landmark,
-    requiredPermission: 'treasury:read',
-  },
-  {
-    type: 'link',
-    key: 'inventory',
-    label: 'Inventory',
-    href: '/inventory',
-    icon: Package,
-    requiredPermission: 'feed_inventory:read',
-  },
-  {
-    type: 'link',
-    key: 'farm-control',
-    label: 'Farm Control',
-    href: '/farm-control',
-    icon: ShieldEllipsis,
-    requiredPermission: 'inventory:read',
-  },
-  {
-    type: 'link',
-    key: 'feed',
-    label: 'Feed',
-    href: '/feed',
-    icon: Wheat,
-    requiredPermission: 'feed_inventory:read',
   },
   {
     type: 'link',
@@ -148,31 +107,16 @@ export const mainNavigationItems: MainNavigationItem[] = [
     icon: BarChart3,
     requiredPermission: 'reports:read',
   },
-  {
-    type: 'group',
-    key: 'admin',
-    label: 'Admin',
-    icon: ShieldCheck,
-    children: [
-      {
-        type: 'link',
-        key: 'users',
-        label: 'Users',
-        href: '/users',
-        icon: UserPlus,
-        requiredPermission: 'users:create',
-      },
-      {
-        type: 'link',
-        key: 'settings',
-        label: 'Settings',
-        href: '/settings',
-        icon: Settings,
-        requiredPermission: 'system:read',
-      },
-    ],
-  },
 ];
+
+/** Administration lives in the profile menu, not the main bar. */
+export const adminNavigationItems: NavItem[] = [
+  { type: 'link', key: 'settings', label: 'Settings', href: '/settings', icon: Settings, requiredPermission: 'system:read' },
+  { type: 'link', key: 'users', label: 'Users & access', href: '/settings?section=users', icon: UserPlus, requiredPermission: 'users:read' },
+];
+
+/** Phone bottom bar: the four places people go most; everything else sits under "More". */
+export const mobilePrimaryKeys = ['dashboard', 'farms', 'sales', 'treasury'];
 
 type PermissionChecker = (permission: string) => boolean;
 

@@ -1,4 +1,6 @@
 import { Router, type Request, type Response } from 'express';
+import { StockError, getLocationByCode, planLotConsumptionOrLegacy } from '../lib/stock';
+import { defaultPurchaseCostCentreId } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import {
@@ -91,210 +93,16 @@ async function isFeedInventoryItem(inventoryItemId: number) {
 // =============================================================================
 
 // GET /api/feed/suppliers — list all suppliers
-router.get('/suppliers', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const { status, search, page = '1', limit = '20' } = req.query;
-    const pageNum = Math.max(1, Number(page));
-    const limitNum = Math.min(100, Math.max(1, Number(limit)));
-    const offset = (pageNum - 1) * limitNum;
-
-    let query = db.select().from(suppliers).$dynamic();
-
-    const conditions = [];
-    if (status && status !== 'all') {
-      conditions.push(eq(suppliers.status, status as string));
-    }
-    if (search) {
-      conditions.push(ilike(suppliers.supplierName, `%${search as string}%`));
-    }
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    const results = await query
-      .orderBy(desc(suppliers.createdAt))
-      .limit(limitNum)
-      .offset(offset);
-
-    let countQuery = db.select({ total: sql<number>`count(*)::int` }).from(suppliers).$dynamic();
-    if (conditions.length > 0) {
-      countQuery = countQuery.where(and(...conditions));
-    }
-    const [{ total }] = await countQuery;
-
-    res.json({
-      success: true,
-      data: results,
-      total,
-      page: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(total / limitNum),
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error('Failed to fetch suppliers', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch suppliers', code: 'SUPPLIERS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // GET /api/feed/suppliers/:id — supplier detail
-router.get('/suppliers/:id', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const supplierId = Number(req.params.id as string);
-
-    const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
-    if (!supplier) {
-      res.status(404).json({ success: false, error: 'Supplier not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    res.json({
-      success: true,
-      data: supplier,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error('Failed to fetch supplier detail', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch supplier detail', code: 'SUPPLIER_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // POST /api/feed/suppliers — create supplier
-router.post('/suppliers', authenticate, requirePermission('feed_inventory:create'), validate(createSupplierSchema), async (req: Request, res: Response) => {
-  try {
-    const { supplierName, contactPerson, phoneNumber, email, address } = req.body;
-
-    // Check unique supplier name
-    const [existing] = await db.select().from(suppliers).where(eq(suppliers.supplierName, supplierName)).limit(1);
-    if (existing) {
-      res.status(409).json({ success: false, error: 'A supplier with this name already exists', code: 'SUPPLIER_NAME_EXISTS', statusCode: 409, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const [newSupplier] = await db
-      .insert(suppliers)
-      .values({
-        supplierName,
-        contactPerson: contactPerson || null,
-        phoneNumber: phoneNumber || null,
-        email: email || null,
-        address: address || null,
-        status: 'active',
-      })
-      .returning();
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'supplier_created',
-      entityType: 'supplier',
-      entityId: newSupplier.id,
-      changes: { supplierName, contactPerson },
-    });
-
-    res.status(201).json({ success: true, data: newSupplier, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to create supplier', { error });
-    res.status(500).json({ success: false, error: 'Failed to create supplier', code: 'CREATE_SUPPLIER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // PUT /api/feed/suppliers/:id — update supplier
-router.put('/suppliers/:id', authenticate, requirePermission('feed_inventory:update'), validate(updateSupplierSchema), async (req: Request, res: Response) => {
-  try {
-    const supplierId = Number(req.params.id as string);
-
-    const [existing] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Supplier not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // If supplierName is changing, check uniqueness
-    if (req.body.supplierName && req.body.supplierName !== existing.supplierName) {
-      const [duplicate] = await db.select().from(suppliers).where(eq(suppliers.supplierName, req.body.supplierName)).limit(1);
-      if (duplicate) {
-        res.status(409).json({ success: false, error: 'A supplier with this name already exists', code: 'SUPPLIER_NAME_EXISTS', statusCode: 409, timestamp: new Date().toISOString() });
-        return;
-      }
-    }
-
-    const [updated] = await db
-      .update(suppliers)
-      .set({ ...req.body, updatedAt: new Date() })
-      .where(eq(suppliers.id, supplierId))
-      .returning();
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'supplier_updated',
-      entityType: 'supplier',
-      entityId: supplierId,
-      changes: { before: { supplierName: existing.supplierName, status: existing.status }, after: req.body },
-    });
-
-    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to update supplier', { error });
-    res.status(500).json({ success: false, error: 'Failed to update supplier', code: 'UPDATE_SUPPLIER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // DELETE /api/feed/suppliers/:id — soft delete (deactivate)
-router.delete('/suppliers/:id', authenticate, requirePermission('feed_inventory:delete'), async (req: Request, res: Response) => {
-  try {
-    const supplierId = Number(req.params.id as string);
-
-    const [existing] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Supplier not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // Check for inventory items using this supplier
-    const [linkedInventory] = await db
-      .select({ id: feedInventory.id })
-      .from(feedInventory)
-      .where(eq(feedInventory.supplierId, supplierId))
-      .limit(1);
-
-    if (linkedInventory) {
-      res.status(409).json({ success: false, error: 'Cannot deactivate supplier with active inventory items. Reassign inventory first.', code: 'SUPPLIER_HAS_INVENTORY', statusCode: 409, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const [updated] = await db
-      .update(suppliers)
-      .set({ status: 'inactive', updatedAt: new Date() })
-      .where(eq(suppliers.id, supplierId))
-      .returning();
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'supplier_deactivated',
-      entityType: 'supplier',
-      entityId: supplierId,
-      changes: { before: { status: 'active' }, after: { status: 'inactive' } },
-    });
-
-    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to deactivate supplier', { error });
-    res.status(500).json({ success: false, error: 'Failed to deactivate supplier', code: 'DELETE_SUPPLIER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // GET /api/feed/suppliers/:id/inventory — inventory items for a supplier
-router.get('/suppliers/:id/inventory', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const supplierId = Number(req.params.id as string);
-    const items = await db.select().from(feedInventory).where(eq(feedInventory.supplierId, supplierId)).orderBy(desc(feedInventory.createdAt));
-    res.json({ success: true, data: items, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to fetch supplier inventory', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch supplier inventory', code: 'SUPPLIER_INVENTORY_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // =============================================================================
 // RECIPES CRUD
@@ -942,49 +750,9 @@ interface LotConsumption {
 async function consumeInventoryFIFO(
   inventoryItemId: number,
   requiredQuantity: number,
+  options: { preferredLocationId?: number | null; allowExpired?: boolean } = {},
 ): Promise<{ lotConsumptions: LotConsumption[]; totalCost: number }> {
-  // Fetch available lots in FIFO order (oldest first)
-  const availableLots = await db
-    .select()
-    .from(inventoryLots)
-    .where(and(
-      eq(inventoryLots.inventoryItemId, inventoryItemId),
-      sql`${inventoryLots.remainingQuantity}::numeric > 0`,
-    ))
-    .orderBy(asc(inventoryLots.receivedDate), asc(inventoryLots.id));
-
-  const totalAvailable = availableLots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
-  if (totalAvailable < requiredQuantity) {
-    throw new Error(`Insufficient lot quantity for inventory item ${inventoryItemId}: available ${totalAvailable}, needed ${requiredQuantity}`);
-  }
-
-  const lotConsumptions: LotConsumption[] = [];
-  let remaining = requiredQuantity;
-  let totalCost = 0;
-
-  for (const lot of availableLots) {
-    if (remaining <= 0) break;
-
-    const lotRemaining = Number(lot.remainingQuantity);
-    const consume = Math.min(remaining, lotRemaining);
-    const cost = Number(lot.costPerUnit);
-    const lineCost = Math.round(consume * cost * 100) / 100;
-
-    lotConsumptions.push({
-      lotId: lot.id,
-      lotCode: lot.lotCode,
-      quantityUsed: consume,
-      costPerUnit: cost,
-      lineCost,
-      previousRemaining: lotRemaining,
-      newRemaining: Math.round((lotRemaining - consume) * 100) / 100,
-    });
-
-    totalCost += lineCost;
-    remaining = Math.round((remaining - consume) * 100) / 100;
-  }
-
-  return { lotConsumptions, totalCost: Math.round(totalCost * 100) / 100 };
+  return planLotConsumptionOrLegacy({ inventoryItemId, quantity: requiredQuantity, ...options });
 }
 
 // GET /api/feed/production — list production batches
@@ -1415,7 +1183,8 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
 
       // FIFO lot consumption
       try {
-        const { lotConsumptions, totalCost } = await consumeInventoryFIFO(mat.inventoryItemId, mat.actualQuantity);
+        const millStore = await getLocationByCode('MILL');
+        const { lotConsumptions, totalCost } = await consumeInventoryFIFO(mat.inventoryItemId, mat.actualQuantity, { preferredLocationId: millStore.id });
         materialResults.push({
           inventoryItemId: mat.inventoryItemId,
           actualQuantity: mat.actualQuantity,
@@ -1425,6 +1194,10 @@ router.post('/production/:id/complete', authenticate, requirePermission('feed_pr
         });
         totalProductionCost += totalCost;
       } catch (err) {
+        if (err instanceof StockError) {
+          res.status(400).json({ success: false, error: `${invItem.ingredientName}: ${err.message}`, code: err.code, statusCode: 400, timestamp: new Date().toISOString() });
+          return;
+        }
         // Fallback to simple cost if no lots exist (legacy data)
         const simpleCost = mat.actualQuantity * Number(invItem.costPerUnit);
         materialResults.push({
@@ -1965,6 +1738,10 @@ router.post('/distribution', authenticate, requirePermission('feed_production:cr
 
     // Validate farm batch exists
     const [farmBatch] = await db.select().from(batches).where(eq(batches.id, farmBatchId)).limit(1);
+    if (farmBatch?.status === 'closed') {
+      res.status(400).json({ success: false, error: 'This batch is closed. Reopen it to make changes.', code: 'BATCH_CLOSED', statusCode: 400, timestamp: new Date().toISOString() });
+      return;
+    }
     if (!farmBatch) {
       res.status(404).json({ success: false, error: 'Farm batch not found', code: 'FARM_BATCH_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
       return;
@@ -2503,7 +2280,8 @@ router.post('/inventory/:id/adjust', authenticate, requirePermission('feed_inven
     let usedLotLevelAdjustment = false;
     if (quantity < 0) {
       try {
-        const { lotConsumptions } = await consumeInventoryFIFO(itemId, Math.abs(quantity));
+        // A stock-count correction may remove expired stock too.
+        const { lotConsumptions } = await consumeInventoryFIFO(itemId, Math.abs(quantity), { allowExpired: true });
         usedLotLevelAdjustment = lotConsumptions.length > 0;
         // Apply lot deductions
         for (const lc of lotConsumptions) {
@@ -2838,603 +2616,20 @@ async function generatePOCode(date: string): Promise<string> {
 }
 
 // GET /api/feed/purchase-orders — list purchase orders
-router.get('/purchase-orders', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const { status, supplierId, search, page = '1', limit = '20' } = req.query;
-    const pageNum = Math.max(1, Number(page));
-    const limitNum = Math.min(100, Math.max(1, Number(limit)));
-    const offset = (pageNum - 1) * limitNum;
-
-    let query = db
-      .select({
-        id: purchaseOrders.id,
-        orderCode: purchaseOrders.orderCode,
-        supplierId: purchaseOrders.supplierId,
-        supplierName: suppliers.supplierName,
-        orderDate: purchaseOrders.orderDate,
-        expectedDeliveryDate: purchaseOrders.expectedDeliveryDate,
-        actualDeliveryDate: purchaseOrders.actualDeliveryDate,
-        status: purchaseOrders.status,
-        totalCost: purchaseOrders.totalCost,
-        notes: purchaseOrders.notes,
-        createdBy: purchaseOrders.createdBy,
-        createdAt: purchaseOrders.createdAt,
-        updatedAt: purchaseOrders.updatedAt,
-      })
-      .from(purchaseOrders)
-      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
-      .$dynamic();
-
-    const conditions = [];
-    if (status && status !== 'all') {
-      conditions.push(eq(purchaseOrders.status, status as string));
-    }
-    if (supplierId) {
-      conditions.push(eq(purchaseOrders.supplierId, Number(supplierId)));
-    }
-    if (search) {
-      conditions.push(ilike(purchaseOrders.orderCode, `%${search as string}%`));
-    }
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    const results = await query
-      .orderBy(desc(purchaseOrders.createdAt))
-      .limit(limitNum)
-      .offset(offset);
-
-    let countQuery = db.select({ total: sql<number>`count(*)::int` }).from(purchaseOrders).$dynamic();
-    if (conditions.length > 0) {
-      countQuery = countQuery.where(and(...conditions));
-    }
-    const [{ total }] = await countQuery;
-
-    res.json({
-      success: true,
-      data: results,
-      total,
-      page: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(total / limitNum),
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error('Failed to fetch purchase orders', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch purchase orders', code: 'PO_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // GET /api/feed/purchase-orders/:id — purchase order detail with line items
-router.get('/purchase-orders/:id', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const poId = Number(req.params.id as string);
-
-    const [po] = await db
-      .select({
-        id: purchaseOrders.id,
-        orderCode: purchaseOrders.orderCode,
-        supplierId: purchaseOrders.supplierId,
-        supplierName: suppliers.supplierName,
-        orderDate: purchaseOrders.orderDate,
-        expectedDeliveryDate: purchaseOrders.expectedDeliveryDate,
-        actualDeliveryDate: purchaseOrders.actualDeliveryDate,
-        status: purchaseOrders.status,
-        totalCost: purchaseOrders.totalCost,
-        notes: purchaseOrders.notes,
-        createdBy: purchaseOrders.createdBy,
-        createdAt: purchaseOrders.createdAt,
-        updatedAt: purchaseOrders.updatedAt,
-      })
-      .from(purchaseOrders)
-      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
-      .where(eq(purchaseOrders.id, poId))
-      .limit(1);
-
-    if (!po) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // Fetch line items with inventory details
-    const items = await db
-      .select({
-        id: purchaseOrderItems.id,
-        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
-        inventoryItemId: purchaseOrderItems.inventoryItemId,
-        ingredientName: feedInventory.ingredientName,
-        orderedQuantity: purchaseOrderItems.orderedQuantity,
-        unitPrice: purchaseOrderItems.unitPrice,
-        receivedQuantity: purchaseOrderItems.receivedQuantity,
-        unit: purchaseOrderItems.unit,
-        notes: purchaseOrderItems.notes,
-      })
-      .from(purchaseOrderItems)
-      .leftJoin(feedInventory, eq(purchaseOrderItems.inventoryItemId, feedInventory.id))
-      .where(eq(purchaseOrderItems.purchaseOrderId, poId));
-
-    const itemsWithPercentage = items.map((item) => ({
-      ...item,
-      receivedPercentage: Number(item.orderedQuantity) > 0
-        ? Math.round((Number(item.receivedQuantity) / Number(item.orderedQuantity)) * 10000) / 100
-        : 0,
-    }));
-
-    res.json({
-      success: true,
-      data: { purchaseOrder: po, items: itemsWithPercentage },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error('Failed to fetch purchase order detail', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch purchase order detail', code: 'PO_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // POST /api/feed/purchase-orders — create purchase order
-router.post('/purchase-orders', authenticate, requirePermission('feed_inventory:create'), validate(createPurchaseOrderSchema), async (req: Request, res: Response) => {
-  try {
-    const { supplierId, contractId, orderDate, expectedDeliveryDate, notes, items } = req.body;
-
-    // Validate supplier exists and is active
-    const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
-    if (!supplier) {
-      res.status(400).json({ success: false, error: 'Supplier not found', code: 'INVALID_SUPPLIER', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-    if (supplier.status !== 'active') {
-      res.status(400).json({ success: false, error: 'Supplier is not active', code: 'INACTIVE_SUPPLIER', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    if (contractId) {
-      const [contract] = await db.select().from(supplierContracts).where(eq(supplierContracts.id, contractId)).limit(1);
-      if (!contract || contract.supplierId !== supplierId) {
-        res.status(400).json({ success: false, error: 'Contract does not belong to the selected supplier', code: 'INVALID_CONTRACT', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-    }
-
-    // Validate each item's inventoryItemId exists
-    for (const item of items as { inventoryItemId: number; orderedQuantity: number; unitPrice: number; unit: string; notes?: string | null }[]) {
-      const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, item.inventoryItemId)).limit(1);
-      if (!invItem) {
-        res.status(400).json({ success: false, error: `Inventory item ${item.inventoryItemId} not found`, code: 'INVALID_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-    }
-
-    // Auto-generate order code
-    const orderCode = await generatePOCode(orderDate);
-
-    // Calculate total cost
-    const totalCost = (items as { orderedQuantity: number; unitPrice: number }[]).reduce(
-      (sum, item) => sum + item.orderedQuantity * item.unitPrice,
-      0
-    );
-
-    // Insert purchase order
-    const [newPO] = await db
-      .insert(purchaseOrders)
-      .values({
-        orderCode,
-        supplierId,
-        contractId: contractId || null,
-        orderDate,
-        expectedDeliveryDate: expectedDeliveryDate || null,
-        status: 'draft',
-        totalCost: String(Math.round(totalCost * 100) / 100),
-        notes: notes || null,
-        createdBy: req.user!.id,
-      })
-      .returning();
-
-    // Insert line items
-    await db.insert(purchaseOrderItems).values(
-      (items as { inventoryItemId: number; orderedQuantity: number; unitPrice: number; unit: string; notes?: string | null }[]).map((item) => ({
-        purchaseOrderId: newPO.id,
-        inventoryItemId: item.inventoryItemId,
-        orderedQuantity: String(item.orderedQuantity),
-        unitPrice: String(item.unitPrice),
-        unit: item.unit,
-        notes: item.notes || null,
-      })),
-    );
-
-    // Fetch inserted items
-    const insertedItems = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, newPO.id));
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'purchase_order_created',
-      entityType: 'purchase_order',
-      entityId: newPO.id,
-      changes: { orderCode, supplierId, totalCost: Math.round(totalCost * 100) / 100, itemCount: items.length },
-    });
-
-    res.status(201).json({ success: true, data: { purchaseOrder: newPO, items: insertedItems }, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to create purchase order', { error });
-    res.status(500).json({ success: false, error: 'Failed to create purchase order', code: 'CREATE_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // PUT /api/feed/purchase-orders/:id — update purchase order (draft only)
-router.put('/purchase-orders/:id', authenticate, requirePermission('feed_inventory:update'), validate(updatePurchaseOrderSchema), async (req: Request, res: Response) => {
-  try {
-    const poId = Number(req.params.id as string);
-
-    const [existing] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    if (existing.status !== 'draft') {
-      res.status(400).json({ success: false, error: 'Can only update draft purchase orders', code: 'PO_NOT_DRAFT', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const { items, contractId, ...headerFields } = req.body;
-
-    // Update header fields
-    if (contractId) {
-      const [contract] = await db.select().from(supplierContracts).where(eq(supplierContracts.id, contractId)).limit(1);
-      if (!contract || contract.supplierId !== existing.supplierId) {
-        res.status(400).json({ success: false, error: 'Contract does not belong to the purchase order supplier', code: 'INVALID_CONTRACT', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-    }
-    const updateData: Record<string, unknown> = { ...headerFields, updatedAt: new Date() };
-    if (contractId !== undefined) {
-      updateData.contractId = contractId || null;
-    }
-    const [updated] = await db
-      .update(purchaseOrders)
-      .set(updateData)
-      .where(eq(purchaseOrders.id, poId))
-      .returning();
-
-    // Replace items if provided
-    if (items) {
-      await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, poId));
-
-      if (items.length > 0) {
-        // Validate each item's inventoryItemId
-        for (const item of items as { inventoryItemId: number; orderedQuantity: number; unitPrice: number; unit: string; notes?: string | null }[]) {
-          const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, item.inventoryItemId)).limit(1);
-          if (!invItem) {
-            res.status(400).json({ success: false, error: `Inventory item ${item.inventoryItemId} not found`, code: 'INVALID_INVENTORY_ITEM', statusCode: 400, timestamp: new Date().toISOString() });
-            return;
-          }
-        }
-
-        await db.insert(purchaseOrderItems).values(
-          (items as { inventoryItemId: number; orderedQuantity: number; unitPrice: number; unit: string; notes?: string | null }[]).map((item) => ({
-            purchaseOrderId: poId,
-            inventoryItemId: item.inventoryItemId,
-            orderedQuantity: String(item.orderedQuantity),
-            unitPrice: String(item.unitPrice),
-            unit: item.unit,
-            notes: item.notes || null,
-          })),
-        );
-
-        // Recalculate total cost
-        const totalCost = (items as { orderedQuantity: number; unitPrice: number }[]).reduce(
-          (sum, item) => sum + item.orderedQuantity * item.unitPrice,
-          0
-        );
-        await db.update(purchaseOrders).set({ totalCost: String(Math.round(totalCost * 100) / 100) }).where(eq(purchaseOrders.id, poId));
-      }
-    }
-
-    const updatedItems = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, poId));
-    const [freshPO] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'purchase_order_updated',
-      entityType: 'purchase_order',
-      entityId: poId,
-      changes: { before: { notes: existing.notes }, after: req.body },
-    });
-
-    res.json({ success: true, data: { purchaseOrder: freshPO, items: updatedItems }, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to update purchase order', { error });
-    res.status(500).json({ success: false, error: 'Failed to update purchase order', code: 'UPDATE_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // DELETE /api/feed/purchase-orders/:id — delete purchase order (draft only, no received items)
-router.delete('/purchase-orders/:id', authenticate, requirePermission('feed_inventory:delete'), async (req: Request, res: Response) => {
-  try {
-    const poId = Number(req.params.id as string);
-
-    const [existing] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    if (existing.status !== 'draft') {
-      res.status(400).json({ success: false, error: 'Can only delete draft purchase orders', code: 'PO_NOT_DRAFT', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // Check no received items
-    const [receivedCheck] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(purchaseOrderItems)
-      .where(and(eq(purchaseOrderItems.purchaseOrderId, poId), sql`${purchaseOrderItems.receivedQuantity}::numeric > 0`));
-
-    if ((receivedCheck?.total ?? 0) > 0) {
-      res.status(400).json({ success: false, error: 'Cannot delete purchase order with received items', code: 'PO_HAS_RECEIVED', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // Cascade delete (items have onDelete cascade)
-    await db.delete(purchaseOrders).where(eq(purchaseOrders.id, poId));
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'purchase_order_deleted',
-      entityType: 'purchase_order',
-      entityId: poId,
-      changes: { orderCode: existing.orderCode, status: existing.status },
-    });
-
-    res.json({ success: true, data: { id: poId }, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to delete purchase order', { error });
-    res.status(500).json({ success: false, error: 'Failed to delete purchase order', code: 'DELETE_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // PUT /api/feed/purchase-orders/:id/status — submit or cancel purchase order
-router.put('/purchase-orders/:id/status', authenticate, requirePermission('feed_inventory:update'), validate(updatePurchaseOrderStatusSchema), async (req: Request, res: Response) => {
-  try {
-    const poId = Number(req.params.id as string);
-    const { status: newStatus } = req.body;
-
-    const [existing] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    // Validate transitions
-    if (newStatus === 'submitted') {
-      if (existing.status !== 'draft') {
-        res.status(400).json({ success: false, error: 'Can only submit draft purchase orders', code: 'INVALID_PO_TRANSITION', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-    } else if (newStatus === 'cancelled') {
-      if (!['draft', 'submitted'].includes(existing.status)) {
-        res.status(400).json({ success: false, error: 'Can only cancel draft or submitted purchase orders', code: 'INVALID_PO_TRANSITION', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-      // Block cancel if any items have been received
-      const [receivedCheck] = await db
-        .select({ total: sql<number>`count(*)::int` })
-        .from(purchaseOrderItems)
-        .where(and(eq(purchaseOrderItems.purchaseOrderId, poId), sql`${purchaseOrderItems.receivedQuantity}::numeric > 0`));
-
-      if ((receivedCheck?.total ?? 0) > 0) {
-        res.status(400).json({ success: false, error: 'Cannot cancel purchase order with received items', code: 'PO_HAS_RECEIVED', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-    }
-
-    const [updated] = await db
-      .update(purchaseOrders)
-      .set({ status: newStatus, updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, poId))
-      .returning();
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'purchase_order_status_updated',
-      entityType: 'purchase_order',
-      entityId: poId,
-      changes: { before: { status: existing.status }, after: { status: newStatus } },
-    });
-
-    res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to update purchase order status', { error });
-    res.status(500).json({ success: false, error: 'Failed to update purchase order status', code: 'UPDATE_PO_STATUS_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // POST /api/feed/purchase-orders/:id/receive — receive items from a purchase order
-router.post('/purchase-orders/:id/receive', authenticate, requirePermission('feed_inventory:update'), validate(receivePurchaseOrderSchema), async (req: Request, res: Response) => {
-  try {
-    const poId = Number(req.params.id as string);
-    const { items: receiveItems } = req.body;
-
-    const [existing] = await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, poId)).limit(1);
-    if (!existing) {
-      res.status(404).json({ success: false, error: 'Purchase order not found', code: 'NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    if (!['submitted', 'partially_received'].includes(existing.status)) {
-      res.status(400).json({ success: false, error: 'Purchase order must be submitted or partially received to receive items', code: 'INVALID_PO_STATUS', statusCode: 400, timestamp: new Date().toISOString() });
-      return;
-    }
-
-    const receivedItemIds: number[] = [];
-    const createdLots: { lotCode: string; inventoryItemId: number; quantity: number; costPerUnit: number }[] = [];
-
-    for (const receiveItem of receiveItems as { itemId: number; receivedQuantity: number }[]) {
-      // Fetch the PO line item
-      const [poItem] = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.id, receiveItem.itemId)).limit(1);
-      if (!poItem) {
-        res.status(404).json({ success: false, error: `Purchase order item ${receiveItem.itemId} not found`, code: 'PO_ITEM_NOT_FOUND', statusCode: 404, timestamp: new Date().toISOString() });
-        return;
-      }
-      if (poItem.purchaseOrderId !== poId) {
-        res.status(400).json({ success: false, error: `Item ${receiveItem.itemId} does not belong to this purchase order`, code: 'PO_ITEM_MISMATCH', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
-      }
-
-      const newReceivedQty = Number(poItem.receivedQuantity) + receiveItem.receivedQuantity;
-      if (newReceivedQty > Number(poItem.orderedQuantity)) {
-        res.status(400).json({
-          success: false,
-          error: `Received quantity (${newReceivedQty}) would exceed ordered quantity (${poItem.orderedQuantity}) for item ${receiveItem.itemId}`,
-          code: 'EXCEEDS_ORDERED_QTY',
-          statusCode: 400,
-          timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      // Update PO item received quantity
-      await db.update(purchaseOrderItems).set({
-        receivedQuantity: String(newReceivedQty),
-      }).where(eq(purchaseOrderItems.id, receiveItem.itemId));
-
-      // Auto-restock inventory + create lot
-      const [invItem] = await db.select().from(feedInventory).where(eq(feedInventory.id, poItem.inventoryItemId)).limit(1);
-      if (invItem) {
-        const prevQty = Number(invItem.quantity);
-        const newQty = prevQty + receiveItem.receivedQuantity;
-        const today = new Date().toISOString().split('T')[0];
-
-        // Create inventory lot (FIFO cost tracking)
-        const lotCode = await generateLotCode(today);
-        const [newLot] = await db.insert(inventoryLots).values({
-          inventoryItemId: poItem.inventoryItemId,
-          purchaseOrderItemId: poItem.id,
-          lotCode,
-          receivedQuantity: String(receiveItem.receivedQuantity),
-          remainingQuantity: String(receiveItem.receivedQuantity),
-          costPerUnit: poItem.unitPrice,
-          receivedDate: today,
-        }).returning();
-
-        // Update inventory quantity and weighted average cost
-        const weightedAvgCost = await recalculateWeightedAverageCost(poItem.inventoryItemId);
-
-        await db.update(feedInventory).set({
-          quantity: String(newQty),
-          lastRestockDate: today,
-          costPerUnit: String(weightedAvgCost),
-          updatedAt: new Date(),
-        }).where(eq(feedInventory.id, poItem.inventoryItemId));
-
-        // Create audit trail entry with lot reference
-        await db.insert(inventoryAuditTrail).values({
-          inventoryItemId: poItem.inventoryItemId,
-          changeType: 'purchase_receive',
-          previousQuantity: String(prevQty),
-          changeQuantity: String(receiveItem.receivedQuantity),
-          newQuantity: String(newQty),
-          referenceId: poId,
-          referenceType: 'purchase_order',
-          lotId: newLot.id,
-          costAtTime: poItem.unitPrice,
-          notes: `PO ${existing.orderCode} — ${lotCode} received`,
-          performedBy: req.user!.id,
-        });
-
-        await postInventoryMovement({
-          movementType: 'purchase_receive',
-          movementDate: today,
-          sourceModule: 'feed',
-          sourceEntityType: 'purchase_order',
-          sourceEntityId: poId,
-          sourceCodeSnapshot: existing.orderCode,
-          inventoryItemId: poItem.inventoryItemId,
-          inventoryLotId: newLot.id,
-          purchaseOrderId: poId,
-          purchaseOrderItemId: poItem.id,
-          quantity: receiveItem.receivedQuantity,
-          unit: poItem.unit,
-          unitCost: Number(poItem.unitPrice),
-          lineCost: Math.round(receiveItem.receivedQuantity * Number(poItem.unitPrice) * 100) / 100,
-          balanceAfterQuantity: receiveItem.receivedQuantity,
-          balanceScope: 'inventory_lot',
-          notes: `PO ${existing.orderCode} — ${lotCode} received`,
-          createdBy: req.user!.id,
-        });
-
-        createdLots.push({ lotCode, inventoryItemId: poItem.inventoryItemId, quantity: receiveItem.receivedQuantity, costPerUnit: Number(poItem.unitPrice) });
-      }
-
-      receivedItemIds.push(receiveItem.itemId);
-    }
-
-    // Determine PO status: partially_received or received
-    const allItems = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, poId));
-    const allFullyReceived = allItems.every((item) => Number(item.receivedQuantity) >= Number(item.orderedQuantity));
-    const anyReceived = allItems.some((item) => Number(item.receivedQuantity) > 0);
-
-    const newStatus = allFullyReceived ? 'received' : (anyReceived ? 'partially_received' : existing.status);
-
-    const poUpdateData: Record<string, unknown> = { status: newStatus, updatedAt: new Date() };
-    // Set actualDeliveryDate on first receive
-    if (!existing.actualDeliveryDate) {
-      poUpdateData.actualDeliveryDate = new Date().toISOString().split('T')[0];
-    }
-
-    const [updatedPO] = await db.update(purchaseOrders).set(poUpdateData).where(eq(purchaseOrders.id, poId)).returning();
-
-    createAuditLog({
-      userId: req.user!.id,
-      action: 'purchase_order_received',
-      entityType: 'purchase_order',
-      entityId: poId,
-      changes: { receivedItems: receivedItemIds, newStatus, previousStatus: existing.status, lotsCreated: createdLots },
-    });
-
-    res.json({ success: true, data: { ...updatedPO, lotsCreated: createdLots }, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('Failed to receive purchase order items', { error });
-    res.status(500).json({ success: false, error: 'Failed to receive purchase order items', code: 'PO_RECEIVE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // GET /api/feed/suppliers/:id/purchase-orders — purchase order history for a supplier
-router.get('/suppliers/:id/purchase-orders', authenticate, requirePermission('feed_inventory:read'), async (req: Request, res: Response) => {
-  try {
-    const supplierId = Number(req.params.id as string);
-    const { page = '1', limit = '20' } = req.query;
-    const pageNum = Math.max(1, Number(page));
-    const limitNum = Math.min(100, Math.max(1, Number(limit)));
-    const offset = (pageNum - 1) * limitNum;
-
-    const results = await db
-      .select()
-      .from(purchaseOrders)
-      .where(eq(purchaseOrders.supplierId, supplierId))
-      .orderBy(desc(purchaseOrders.createdAt))
-      .limit(limitNum)
-      .offset(offset);
-
-    const [{ total }] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(purchaseOrders)
-      .where(eq(purchaseOrders.supplierId, supplierId));
-
-    res.json({
-      success: true,
-      data: results,
-      total,
-      page: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(total / limitNum),
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error('Failed to fetch supplier purchase orders', { error });
-    res.status(500).json({ success: false, error: 'Failed to fetch supplier purchase orders', code: 'SUPPLIER_PO_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
-  }
-});
 
 // =============================================================================
 // REPORT SCHEDULES

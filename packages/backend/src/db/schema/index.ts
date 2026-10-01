@@ -9,3 +9,5 @@ export * from './attendance';
 export * from './payroll';
 export * from './system';
 export * from './treasury';
+export * from './finance';
+export * from './farm-ops';

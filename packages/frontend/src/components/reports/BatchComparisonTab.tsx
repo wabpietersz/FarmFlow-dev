@@ -29,7 +29,7 @@ import {
 import { Download, Layers, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
-const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#ca8a04', '#7c3aed', '#06b6d4'];
+const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)', 'var(--chart-5)', 'var(--danger)'];
 
 type CurveType = 'fcr' | 'growth' | 'mortality' | 'feedEfficiency';
 

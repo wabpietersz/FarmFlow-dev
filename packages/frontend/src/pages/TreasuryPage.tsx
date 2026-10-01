@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft,
   Building2,
@@ -6,7 +7,6 @@ import {
   HandCoins,
   Landmark,
   Plus,
-  ShieldCheck,
   Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -61,6 +61,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { EMPTY_FINANCE_TAGS, FinanceTagFields, financeTagsToPayload, type FinanceTagValue } from '@/components/finance/FinanceTagFields';
+import { MoneyLedgerTab } from '@/components/finance/MoneyLedgerTab';
+import { FinanceSetupTab } from '@/components/finance/FinanceSetupTab';
 
 type AccountFormState = {
   accountCode: string;
@@ -86,6 +90,7 @@ type ManualTransactionFormState = {
   referenceNumber: string;
   counterpartyName: string;
   narrative: string;
+  tags: FinanceTagValue;
 };
 
 type PettyCashAllocationFormState = {
@@ -99,7 +104,7 @@ type PettyCashAllocationFormState = {
 
 type PettyCashExpenseFormState = {
   expenseDate: string;
-  expenseCategory: string;
+  tags: FinanceTagValue;
   amount: string;
   justification: string;
 };
@@ -138,6 +143,7 @@ const EMPTY_MANUAL_TRANSACTION_FORM: ManualTransactionFormState = {
   referenceNumber: '',
   counterpartyName: '',
   narrative: '',
+  tags: EMPTY_FINANCE_TAGS,
 };
 
 const EMPTY_PETTY_CASH_ALLOCATION_FORM: PettyCashAllocationFormState = {
@@ -151,7 +157,7 @@ const EMPTY_PETTY_CASH_ALLOCATION_FORM: PettyCashAllocationFormState = {
 
 const EMPTY_PETTY_CASH_EXPENSE_FORM: PettyCashExpenseFormState = {
   expenseDate: today,
-  expenseCategory: '',
+  tags: EMPTY_FINANCE_TAGS,
   amount: '',
   justification: '',
 };
@@ -184,31 +190,31 @@ const TRANSACTION_TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_BADGES: Record<string, string> = {
-  active: 'bg-green-100 text-green-800',
-  inactive: 'bg-slate-100 text-slate-700',
-  pending: 'bg-amber-100 text-amber-800',
-  posted: 'bg-blue-100 text-blue-800',
-  cleared: 'bg-green-100 text-green-800',
-  reversed: 'bg-red-100 text-red-800',
-  bounced: 'bg-rose-100 text-rose-800',
-  issued: 'bg-blue-100 text-blue-800',
-  voided: 'bg-slate-200 text-slate-700',
-  allocated: 'bg-amber-100 text-amber-800',
-  submitted: 'bg-blue-100 text-blue-800',
-  reviewed: 'bg-emerald-100 text-emerald-800',
-  approved: 'bg-emerald-100 text-emerald-800',
-  rejected: 'bg-rose-100 text-rose-800',
+  active: 'bg-success-soft text-success',
+  inactive: 'bg-muted text-foreground',
+  pending: 'bg-warning-soft text-warning',
+  posted: 'bg-info-soft text-info',
+  cleared: 'bg-success-soft text-success',
+  reversed: 'bg-danger-soft text-danger',
+  bounced: 'bg-danger-soft text-danger',
+  issued: 'bg-info-soft text-info',
+  voided: 'bg-muted text-foreground',
+  allocated: 'bg-warning-soft text-warning',
+  submitted: 'bg-info-soft text-info',
+  reviewed: 'bg-success-soft text-success',
+  approved: 'bg-success-soft text-success',
+  rejected: 'bg-danger-soft text-danger',
 };
 
 function AccountTypeBadge({ type }: { type: string }) {
   const tone =
     type === 'current'
-      ? 'bg-amber-100 text-amber-800'
+      ? 'bg-warning-soft text-warning'
       : type === 'cash'
-        ? 'bg-emerald-100 text-emerald-800'
+        ? 'bg-success-soft text-success'
         : type === 'petty_cash'
-          ? 'bg-sky-100 text-sky-800'
-          : 'bg-slate-100 text-slate-800';
+          ? 'bg-info-soft text-info'
+          : 'bg-muted text-foreground';
 
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${tone}`}>
@@ -219,7 +225,7 @@ function AccountTypeBadge({ type }: { type: string }) {
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGES[status] ?? 'bg-slate-100 text-slate-800'}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGES[status] ?? 'bg-muted text-foreground'}`}>
       {status.replace(/_/g, ' ')}
     </span>
   );
@@ -227,7 +233,8 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function TreasuryPage() {
   const { hasPermission, currentUser } = useAuthStore();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') ?? 'overview');
   const [showCreateAccount, setShowCreateAccount] = useState(false);
   const [showManualTransaction, setShowManualTransaction] = useState(false);
   const [showCreateAllocation, setShowCreateAllocation] = useState(false);
@@ -378,6 +385,7 @@ export default function TreasuryPage() {
         referenceNumber: manualTransactionForm.referenceNumber.trim() || undefined,
         counterpartyName: manualTransactionForm.counterpartyName.trim() || undefined,
         narrative: manualTransactionForm.narrative.trim(),
+        ...(manualTransactionForm.transactionType === 'internal_transfer' ? {} : financeTagsToPayload(manualTransactionForm.tags)),
       });
       toast.success('Treasury movement recorded');
       setManualTransactionForm(EMPTY_MANUAL_TRANSACTION_FORM);
@@ -428,7 +436,8 @@ export default function TreasuryPage() {
     try {
       await createExpenseMutation.mutateAsync({
         expenseDate: expenseForm.expenseDate,
-        expenseCategory: expenseForm.expenseCategory.trim(),
+        categoryId: Number(expenseForm.tags.categoryId),
+        ...(expenseForm.tags.costCentreId ? { costCentreId: Number(expenseForm.tags.costCentreId) } : {}),
         amount: Number(expenseForm.amount),
         justification: expenseForm.justification.trim(),
       });
@@ -491,59 +500,84 @@ export default function TreasuryPage() {
 
   return (
     <div className="space-y-6">
-      <Card className="overflow-hidden border-border/70 bg-gradient-to-br from-emerald-50 via-background to-amber-50">
-        <CardContent className="p-6 sm:p-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-3">
-              <div className="inline-flex items-center gap-2 rounded-full bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Central cash and bank visibility
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold tracking-tight text-foreground">Treasury</h1>
-                <p className="max-w-3xl text-sm text-muted-foreground sm:text-base">
-                  Centralize every money movement across the farm: customer receipts, payroll payouts, manual treasury entries, and petty cash allocations with reviewable justifications.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:w-[440px]">
-              <div className="rounded-xl border border-border/70 bg-background/80 p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Position</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{formatCurrency(overview.totalBalance)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Across {accounts.length} treasury accounts</p>
-              </div>
-              <div className="rounded-xl border border-border/70 bg-background/80 p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Money Flows Linked</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{transactions.length}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Sales, payroll, treasury, and petty cash movements</p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Money</h1>
+          <p className="mt-1 text-muted-foreground">Every rupee in and out: accounts, receipts, payments, cheques and petty cash.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {canManagePettyCash ? (
+            <Button variant="outline" onClick={() => setShowCreateAllocation(true)}>
+              <HandCoins className="h-4 w-4" /> Petty cash
+            </Button>
+          ) : null}
+          {canManageTransactions ? (
+            <Button onClick={() => setShowManualTransaction(true)}>
+              <Plus className="h-4 w-4" /> Record money movement
+            </Button>
+          ) : null}
+        </div>
+      </header>
 
       {schemaErrorMessage ? (
         <ErrorBanner title="Treasury schema is not ready" description={schemaErrorMessage} />
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <MetricCard title="Bank & Current" value={formatCurrency(overview.bankBalance)} description="Accounts used for transfers and cheque operations" icon={Landmark} />
-        <MetricCard title="Cash & Petty Cash" value={formatCurrency(overview.cashBalance)} description="Physical cash and delegated petty cash balances" icon={Wallet} />
-        <MetricCard title="Payroll Outflows" value={String(overview.payrollOutflows)} description="Treasury payouts linked to payroll" icon={ArrowRightLeft} />
-        <MetricCard title="Pending Petty Cash" value={String(overview.pendingPettyCash)} description="Submitted expenses awaiting admin review" icon={HandCoins} />
-        <MetricCard title="Issued Cheques" value={String(overview.issuedOutgoingCheques)} description="Outgoing cheque payouts still pending clearance" icon={Landmark} />
-        <MetricCard title="Pending Buyer Cheques" value={String(overview.pendingIncomingCheques)} description="Incoming cheque receipts not yet cleared into Treasury" icon={ShieldCheck} />
-      </div>
+      <section aria-label="Cash position" className="grid gap-4 rounded-3xl bg-panel p-5 sm:p-6 lg:grid-cols-[1.4fr_1fr_1fr] lg:items-end">
+        <div>
+          <p className="text-[15px] font-semibold text-muted-foreground">Cash on hand</p>
+          <p className="mt-1 text-4xl font-extrabold tracking-tight tabular-nums">{formatCurrency(overview.totalBalance)}</p>
+          <p className="mt-1 text-sm text-muted-foreground">Across {overview.activeAccounts} active account{overview.activeAccounts === 1 ? '' : 's'}</p>
+        </div>
+        <div className="rounded-2xl bg-card p-4">
+          <p className="flex items-center gap-2 text-sm text-muted-foreground"><Landmark className="h-4 w-4" /> Bank & current</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatCurrency(overview.bankBalance)}</p>
+        </div>
+        <div className="rounded-2xl bg-card p-4">
+          <p className="flex items-center gap-2 text-sm text-muted-foreground"><Wallet className="h-4 w-4" /> Cash & petty cash</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatCurrency(overview.cashBalance)}</p>
+        </div>
+      </section>
+
+      {overview.pendingPettyCash + overview.issuedOutgoingCheques + overview.pendingIncomingCheques + overview.bouncedIncomingCheques > 0 ? (
+        <div className="flex flex-wrap gap-2" aria-label="Needs attention">
+          {overview.pendingPettyCash > 0 ? (
+            <AttentionChip tone="info" onClick={() => setActiveTab('petty-cash')}>{overview.pendingPettyCash} petty cash to review</AttentionChip>
+          ) : null}
+          {overview.issuedOutgoingCheques > 0 ? (
+            <AttentionChip tone="warning" onClick={() => setActiveTab('cheques')}>{overview.issuedOutgoingCheques} cheque{overview.issuedOutgoingCheques === 1 ? '' : 's'} issued, not cleared</AttentionChip>
+          ) : null}
+          {overview.pendingIncomingCheques > 0 ? (
+            <AttentionChip tone="warning" onClick={() => setActiveTab('cheques')}>{overview.pendingIncomingCheques} buyer cheque{overview.pendingIncomingCheques === 1 ? '' : 's'} to deposit</AttentionChip>
+          ) : null}
+          {overview.bouncedIncomingCheques > 0 ? (
+            <AttentionChip tone="danger" onClick={() => setActiveTab('cheques')}>{overview.bouncedIncomingCheques} bounced buyer cheque{overview.bouncedIncomingCheques === 1 ? '' : 's'}</AttentionChip>
+          ) : null}
+        </div>
+      ) : null}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-5 sm:w-auto">
+        <TabsList className="flex h-auto w-full justify-start overflow-x-auto sm:w-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="ledger">Ledger</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="cheques">Cheques</TabsTrigger>
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
           <TabsTrigger value="petty-cash">Petty Cash</TabsTrigger>
+          <TabsTrigger value="setup">Setup</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="ledger">
+          <MoneyLedgerTab
+            accounts={accounts}
+            canManage={canManageTransactions}
+            onOpenTransaction={setSelectedTransactionId}
+          />
+        </TabsContent>
+
+        <TabsContent value="setup">
+          <FinanceSetupTab canManage={canManageAccounts} />
+        </TabsContent>
 
         <TabsContent value="overview" className="space-y-5">
           <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
@@ -739,7 +773,7 @@ export default function TreasuryPage() {
                                 ?? (receipt.financeAccountId
                                   ? accounts.find((account) => account.id === receipt.financeAccountId)?.accountName ?? `Account #${receipt.financeAccountId}`
                                   : null)
-                                ?? <span className="text-xs text-amber-700">Needs account link</span>}
+                                ?? <span className="text-xs text-warning">Needs account link</span>}
                             </TableCell>
                             <TableCell className="text-right font-medium">{formatCurrency(Number(receipt.paymentAmount))}</TableCell>
                             <TableCell><StatusBadge status={receipt.paymentStatus} /></TableCell>
@@ -1169,6 +1203,8 @@ export default function TreasuryPage() {
                         <TableHead>Reference</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Counterparty</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Cost centre</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Source</TableHead>
@@ -1189,6 +1225,12 @@ export default function TreasuryPage() {
                           </TableCell>
                           <TableCell>{TRANSACTION_TYPE_LABELS[transaction.transactionType] ?? transaction.transactionType.replace(/_/g, ' ')}</TableCell>
                           <TableCell>{transaction.counterpartyNameSnapshot ?? '--'}</TableCell>
+                          <TableCell>
+                            {transaction.hasUncategorized ? (
+                              <Badge variant="outline" className="border-warning/30 text-warning">Needs review</Badge>
+                            ) : (transaction.categoryNames ?? '--')}
+                          </TableCell>
+                          <TableCell>{transaction.costCentreNames ?? '--'}</TableCell>
                           <TableCell>{new Date(String(transaction.transactionDate)).toLocaleDateString()}</TableCell>
                           <TableCell><StatusBadge status={transaction.status} /></TableCell>
                           <TableCell className="capitalize">{transaction.sourceModule ?? '--'}</TableCell>
@@ -1662,6 +1704,15 @@ export default function TreasuryPage() {
               <Label>Amount</Label>
               <Input type="number" min="0" step="0.01" value={manualTransactionForm.amount} onChange={(e) => setManualTransactionForm((prev) => ({ ...prev, amount: e.target.value }))} />
             </div>
+            {manualTransactionForm.transactionType !== 'internal_transfer' ? (
+              <div className="sm:col-span-2">
+                <FinanceTagFields
+                  value={manualTransactionForm.tags}
+                  onChange={(tags) => setManualTransactionForm((prev) => ({ ...prev, tags }))}
+                  direction={manualTransactionForm.transactionType === 'manual_inflow' ? 'inflow' : 'outflow'}
+                />
+              </div>
+            ) : null}
             <div className="grid gap-2">
               <Label>Reference Number</Label>
               <Input value={manualTransactionForm.referenceNumber} onChange={(e) => setManualTransactionForm((prev) => ({ ...prev, referenceNumber: e.target.value }))} />
@@ -1767,10 +1818,15 @@ export default function TreasuryPage() {
               <Label>Expense Date</Label>
               <Input type="date" value={expenseForm.expenseDate} onChange={(e) => setExpenseForm((prev) => ({ ...prev, expenseDate: e.target.value }))} />
             </div>
-            <div className="grid gap-2">
-              <Label>Category</Label>
-              <Input value={expenseForm.expenseCategory} onChange={(e) => setExpenseForm((prev) => ({ ...prev, expenseCategory: e.target.value }))} />
-            </div>
+            <FinanceTagFields
+              value={expenseForm.tags}
+              onChange={(tags) => setExpenseForm((prev) => ({ ...prev, tags }))}
+              direction="outflow"
+              showBatch={false}
+              required={false}
+              categoryLabel="Category *"
+            />
+            <p className="-mt-2 text-xs text-muted-foreground">Leave the cost centre blank to charge it to the manager's farm.</p>
             <div className="grid gap-2">
               <Label>Amount</Label>
               <Input type="number" min="0" step="0.01" value={expenseForm.amount} onChange={(e) => setExpenseForm((prev) => ({ ...prev, amount: e.target.value }))} />
@@ -1783,7 +1839,7 @@ export default function TreasuryPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowExpenseDialog(false)}>Cancel</Button>
-            <Button onClick={handleCreateExpense} disabled={createExpenseMutation.isPending || !selectedAllocationId}>
+            <Button onClick={handleCreateExpense} disabled={createExpenseMutation.isPending || !selectedAllocationId || !expenseForm.tags.categoryId}>
               {createExpenseMutation.isPending ? 'Submitting...' : 'Submit Expense'}
             </Button>
           </DialogFooter>
@@ -1842,10 +1898,12 @@ export default function TreasuryPage() {
                       <div key={entry.id} className="flex items-center justify-between rounded-lg border border-border/70 p-3">
                         <div className="min-w-0">
                           <p className="font-medium">{entry.accountName ?? entry.accountCode}</p>
-                          <p className="text-xs text-muted-foreground">{entry.accountCode ?? '--'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {[entry.categoryName, entry.costCentreName, entry.batchCode].filter(Boolean).join(' · ') || (entry.accountCode ?? '--')}
+                          </p>
                         </div>
                         <div className="text-right">
-                          <p className={`font-medium ${entry.entryDirection === 'inflow' ? 'text-emerald-700' : 'text-red-700'}`}>
+                          <p className={`font-medium ${entry.entryDirection === 'inflow' ? 'text-success' : 'text-danger'}`}>
                             {entry.entryDirection === 'inflow' ? '+' : '-'}{formatCurrency(Number(entry.amount))}
                           </p>
                           <p className="text-xs text-muted-foreground">{new Date(entry.valueDate).toLocaleDateString()}</p>
@@ -1941,12 +1999,12 @@ function ErrorBanner({
   description: string;
 }) {
   return (
-    <Card className="border-amber-200 bg-amber-50/80">
+    <Card className="border-warning/30 bg-warning-soft">
       <CardContent className="flex items-start gap-3 p-4">
-        <CircleAlert className="mt-0.5 h-5 w-5 text-amber-700" />
+        <CircleAlert className="mt-0.5 h-5 w-5 text-warning" />
         <div>
-          <p className="font-medium text-amber-900">{title}</p>
-          <p className="mt-1 text-sm text-amber-800">{description}</p>
+          <p className="font-medium text-warning">{title}</p>
+          <p className="mt-1 text-sm text-warning">{description}</p>
         </div>
       </CardContent>
     </Card>
@@ -1955,10 +2013,10 @@ function ErrorBanner({
 
 function InlineErrorCard({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4">
+    <div className="rounded-xl border border-warning/30 bg-warning-soft p-4">
       <div className="flex items-start gap-3">
-        <CircleAlert className="mt-0.5 h-4 w-4 text-amber-700" />
-        <p className="text-sm text-amber-900">{message}</p>
+        <CircleAlert className="mt-0.5 h-4 w-4 text-warning" />
+        <p className="text-sm text-warning">{message}</p>
       </div>
     </div>
   );
@@ -1989,5 +2047,14 @@ function EmptyState({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+function AttentionChip({ tone, onClick, children }: { tone: 'info' | 'warning' | 'danger'; onClick: () => void; children: ReactNode }) {
+  const tones = { info: 'bg-info-soft text-info', warning: 'bg-warning-soft text-warning', danger: 'bg-danger-soft text-danger' };
+  return (
+    <button type="button" onClick={onClick} className={`inline-flex min-h-10 items-center rounded-full px-4 text-sm font-semibold transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tones[tone]}`}>
+      {children}
+    </button>
   );
 }

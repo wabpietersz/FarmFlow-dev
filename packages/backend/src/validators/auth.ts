@@ -4,7 +4,8 @@ import { type Request, type Response, type NextFunction } from 'express';
 
 export const registerSchema = z.object({
   email: z.string().email('Invalid email address'),
-  fullName: z.string().min(1, 'Full name is required').max(255),
+  firstName: z.string().trim().min(1, 'First name is required').max(120),
+  lastName: z.string().trim().min(1, 'Last name is required').max(120),
   userRole: z.nativeEnum(UserRole, { errorMap: () => ({ message: 'Invalid user role' }) }),
   siteId: z.number().int().positive().optional(),
 });
@@ -31,3 +32,9 @@ export function validate(schema: z.ZodSchema) {
     next();
   };
 }
+
+export const setAccessLevelSchema = z.object({
+  role: z.string().min(1),
+  moduleKey: z.enum(['farms', 'feed_mill', 'stock', 'sales', 'money', 'people', 'attendance', 'payroll', 'reports', 'administration']),
+  level: z.enum(['none', 'user', 'admin']),
+});

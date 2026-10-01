@@ -9,9 +9,11 @@ import {
   text,
   timestamp,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { users } from './users';
 import { sites } from './sites';
+import { costCentres } from './finance';
 
 export const employees = pgTable(
   'employees',
@@ -26,6 +28,7 @@ export const employees = pgTable(
     siteId: integer('site_id')
       .references(() => sites.id)
       .notNull(),
+    costCentreId: integer('cost_centre_id').references(() => costCentres.id),
     employmentType: varchar('employment_type', { length: 50 }).notNull(),
     joinDate: date('join_date').notNull(),
     status: varchar('status', { length: 50 }).default('active').notNull(),
@@ -110,6 +113,7 @@ export const employeeCompensationRevisions = pgTable(
     index('idx_employee_comp_revisions_effective_from').on(table.effectiveFrom),
     index('idx_employee_comp_revisions_effective_to').on(table.effectiveTo),
     index('idx_employee_comp_revisions_active').on(table.isActive),
+    uniqueIndex('idx_employee_comp_revisions_employee_effective_from_unique').on(table.employeeId, table.effectiveFrom),
   ],
 );
 

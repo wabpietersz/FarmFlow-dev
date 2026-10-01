@@ -58,9 +58,10 @@ interface BatchDetail {
   };
 }
 
-interface BatchCostSummary {
+export interface BatchCostSummary {
   batchId: number;
   batchCode: string;
+  chickCost?: number;
   feedCost: number;
   inventoryCost: number;
   laborCost: number;
@@ -69,8 +70,8 @@ interface BatchCostSummary {
   costPerBird: number;
 }
 
-interface BatchCostLedgerEntry {
-  componentType: 'feed' | 'inventory' | 'labor' | 'operational_expense';
+export interface BatchCostLedgerEntry {
+  componentType: 'chicks' | 'feed' | 'inventory' | 'labor' | 'operational_expense';
   allocationType: 'direct' | 'site' | 'shared_overhead';
   eventDate: string;
   sourceType: string;
@@ -81,6 +82,7 @@ interface BatchCostLedgerEntry {
   unit?: string | null;
   unitCost?: number | null;
   amount: number;
+  basis?: string | null;
   notes?: string | null;
 }
 
@@ -215,5 +217,87 @@ export function useCreateChickPlacement(batchId: string) {
       queryClient.invalidateQueries({ queryKey: ['batches', batchId, 'costs'] });
       queryClient.invalidateQueries({ queryKey: ['batches', batchId, 'cost-ledger'] });
     },
+  });
+}
+
+export interface BatchKpis {
+  birdsPlaced: number;
+  deaths: number;
+  birdsSold: number;
+  liveBirds: number;
+  unaccountedBirds?: number;
+  kgSold: number;
+  feedKg: number;
+  revenue: number;
+  ageDays: number;
+  averageWeightKg: number | null;
+  livabilityPct: number | null;
+  mortalityPct: number | null;
+  fcr: number | null;
+  epef: number | null;
+  totalCost: number;
+  costPerBirdSold: number | null;
+  costPerKg: number | null;
+  profit: number;
+  profitPerBird: number | null;
+  marginPct: number | null;
+}
+
+export interface BatchPerformance {
+  batchId: number;
+  status: string;
+  closed: boolean;
+  closedAt?: string | null;
+  kpis: BatchKpis;
+  costs: BatchCostSummary & { birdDays?: number; stale?: boolean; ledger: BatchCostLedgerEntry[] };
+  lateCosts: number;
+}
+
+export function useBatchPerformance(id: string | undefined) {
+  return useQuery({
+    queryKey: ['batches', id, 'performance'],
+    queryFn: () => apiGet<BatchPerformance>(`/batches/${id}/performance`),
+    enabled: !!id,
+  });
+}
+
+export function useCloseBatch(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { notes?: string; acceptVariance?: boolean }) => apiPost(`/batches/${id}/close`, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['batches'] }),
+  });
+}
+
+export function useReopenBatch(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost(`/batches/${id}/reopen`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['batches'] }),
+  });
+}
+
+export interface CostPoolRow {
+  kind: 'site' | 'admin' | 'mill';
+  siteId: number | null;
+  label: string;
+  month: string;
+  total: number;
+  allocated: number;
+  unallocated: number;
+}
+
+export interface MillMonthRow {
+  month: string;
+  overhead: number;
+  kgProduced: number;
+  overheadPerKg: number;
+}
+
+export function useCostingOverview(params: { from?: string; to?: string } = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString();
+  return useQuery({
+    queryKey: ['batches', 'costing-overview', params],
+    queryFn: () => apiGet<{ pools: CostPoolRow[]; mill: MillMonthRow[] }>(`/batches/costing/overview${query ? `?${query}` : ''}`),
   });
 }

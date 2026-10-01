@@ -1,14 +1,22 @@
 import { Router, type Request, type Response } from 'express';
+import { sendPasswordResetEmail, sendPasswordResetResendEmail } from '../lib/mailer';
 import { UserRole } from '@farmflow/shared';
 import { firebaseAuth } from '../lib/firebase';
-import { authenticate, requireRole } from '../middleware/auth';
-import { validate, registerSchema, loginSchema } from '../validators/auth';
-import { getUserPermissions } from '../lib/permissions';
+import { authenticate, requireRole, requirePermission } from '../middleware/auth';
+import { validate, registerSchema, loginSchema, setAccessLevelSchema } from '../validators/auth';
+import { getAccessMatrix, getUserPermissions, setAccessLevel } from '../lib/permissions';
+import { createAuditLog } from '../lib/audit';
+import type { AccessModuleKey } from '@farmflow/shared';
 import { db } from '../db';
 import { users, sites } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import logger from '../lib/logger';
 import { z } from 'zod';
+
+/** The display name used everywhere else in FarmFlow. */
+function joinName(firstName: string, lastName: string) {
+  return [firstName, lastName].map((part) => part.trim()).filter(Boolean).join(' ');
+}
 
 const router = Router();
 
@@ -16,11 +24,12 @@ const router = Router();
 router.post(
   '/register',
   authenticate,
-  requireRole(UserRole.SystemAdmin),
+  requirePermission('users:create'),
   validate(registerSchema),
   async (req: Request, res: Response) => {
     try {
-      const { email, fullName, userRole, siteId } = req.body;
+      const { email, firstName, lastName, userRole, siteId } = req.body;
+      const fullName = joinName(firstName, lastName);
 
       // Check if user already exists in our DB
       const [existing] = await db
@@ -58,14 +67,17 @@ router.post(
         .values({
           firebaseUid: firebaseUser.uid,
           email,
+          firstName,
+          lastName,
           fullName,
           userRole,
           siteId: siteId || null,
         })
         .returning();
 
-      // Generate password reset link (frontend will trigger Firebase email via client SDK)
+      // Generate the set-password link and email it from our mail server (if configured).
       const resetLink = await firebaseAuth.generatePasswordResetLink(email);
+      const emailSent = await sendPasswordResetEmail(email, fullName, resetLink);
 
       logger.info('User created', {
         createdBy: req.user!.id,
@@ -80,6 +92,8 @@ router.post(
           user: {
             id: newUser.id,
             email: newUser.email,
+            firstName: newUser.firstName,
+            lastName: newUser.lastName,
             fullName: newUser.fullName,
             userRole: newUser.userRole,
             siteId: newUser.siteId,
@@ -87,6 +101,7 @@ router.post(
             createdAt: newUser.createdAt,
           },
           passwordResetLink: resetLink,
+          emailSent,
         },
         timestamp: new Date().toISOString(),
       });
@@ -166,6 +181,8 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
         user: {
           id: user.id,
           email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
           fullName: user.fullName,
           userRole: user.userRole,
           siteId: user.siteId,
@@ -217,13 +234,15 @@ router.post('/logout', authenticate, async (req: Request, res: Response) => {
 router.get(
   '/users',
   authenticate,
-  requireRole(UserRole.SystemAdmin),
+  requirePermission('users:read'),
   async (_req: Request, res: Response) => {
     try {
       const allUsers = await db
         .select({
           id: users.id,
           email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
           fullName: users.fullName,
           userRole: users.userRole,
           siteId: users.siteId,
@@ -256,7 +275,8 @@ router.get(
 
 // PUT /api/auth/users/:id — admin-only update user
 const updateUserSchema = z.object({
-  fullName: z.string().min(1).max(255).optional(),
+  firstName: z.string().trim().min(1, 'First name is required').max(120).optional(),
+  lastName: z.string().trim().min(1, 'Last name is required').max(120).optional(),
   userRole: z.nativeEnum(UserRole).optional(),
   siteId: z.number().int().positive().nullable().optional(),
   isActive: z.boolean().optional(),
@@ -265,7 +285,7 @@ const updateUserSchema = z.object({
 router.put(
   '/users/:id',
   authenticate,
-  requireRole(UserRole.SystemAdmin),
+  requirePermission('users:update'),
   validate(updateUserSchema),
   async (req: Request, res: Response) => {
     try {
@@ -298,10 +318,14 @@ router.put(
         return;
       }
 
-      const { fullName, userRole, siteId, isActive } = req.body;
+      const { firstName, lastName, userRole, siteId, isActive } = req.body;
+      const nameChanged = firstName !== undefined || lastName !== undefined;
+      const fullName = nameChanged ? joinName(firstName ?? existing.firstName, lastName ?? existing.lastName) : undefined;
 
       // Build update object
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (firstName !== undefined) updateData.firstName = firstName;
+      if (lastName !== undefined) updateData.lastName = lastName;
       if (fullName !== undefined) updateData.fullName = fullName;
       if (userRole !== undefined) updateData.userRole = userRole;
       if (siteId !== undefined) updateData.siteId = siteId;
@@ -359,6 +383,8 @@ router.put(
         data: {
           id: updated.id,
           email: updated.email,
+          firstName: updated.firstName,
+          lastName: updated.lastName,
           fullName: updated.fullName,
           userRole: updated.userRole,
           siteId: updated.siteId,
@@ -385,7 +411,7 @@ router.put(
 router.post(
   '/users/:id/reset-password',
   authenticate,
-  requireRole(UserRole.SystemAdmin),
+  requirePermission('users:update'),
   async (req: Request, res: Response) => {
     try {
       const userId = parseInt(req.params.id as string, 10);
@@ -416,8 +442,8 @@ router.post(
         return;
       }
 
-      // Generate new password reset link (frontend will trigger Firebase email via client SDK)
       const resetLink = await firebaseAuth.generatePasswordResetLink(user.email);
+      const emailSent = await sendPasswordResetResendEmail(user.email, user.fullName, resetLink);
 
       logger.info('Password reset link resent', {
         requestedBy: req.user!.id,
@@ -429,11 +455,17 @@ router.post(
         success: true,
         data: {
           passwordResetLink: resetLink,
+          emailSent,
         },
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
       logger.error('Failed to generate reset link', { error });
+      const code = (error as { code?: string })?.code;
+      if (code === 'auth/user-not-found') {
+        res.status(404).json({ success: false, error: 'This user has no sign-in account in Firebase. Remove and re-create the user.', code: 'FIREBASE_USER_MISSING', statusCode: 404, timestamp: new Date().toISOString() });
+        return;
+      }
       res.status(500).json({
         success: false,
         error: 'Failed to generate password reset link',
@@ -456,6 +488,8 @@ router.get('/me', authenticate, (req: Request, res: Response) => {
       user: {
         id: user.id,
         email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
         fullName: user.fullName,
         userRole: user.userRole,
         siteId: user.siteId,
@@ -468,6 +502,28 @@ router.get('/me', authenticate, (req: Request, res: Response) => {
     },
     timestamp: new Date().toISOString(),
   });
+});
+
+// ─── Access levels: what each role can do in each module ─────────────────────
+
+router.get('/access', authenticate, requirePermission('system:read'), (_req: Request, res: Response) => {
+  res.json({ success: true, data: getAccessMatrix(), timestamp: new Date().toISOString() });
+});
+
+router.put('/access', authenticate, requirePermission('users:update'), validate(setAccessLevelSchema), async (req: Request, res: Response) => {
+  try {
+    const before = getAccessMatrix().roles.find((r) => r.role === req.body.role)?.levels[req.body.moduleKey as AccessModuleKey];
+    const matrix = await setAccessLevel({ ...req.body, userId: req.user!.id });
+    createAuditLog({
+      userId: req.user!.id,
+      action: 'access_level_changed',
+      entityType: 'role_access',
+      changes: { role: req.body.role, module: req.body.moduleKey, from: before, to: req.body.level },
+    });
+    res.json({ success: true, data: matrix, timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(400).json({ success: false, error: (error as Error).message, code: 'ACCESS_UPDATE_REJECTED', statusCode: 400, timestamp: new Date().toISOString() });
+  }
 });
 
 export default router;

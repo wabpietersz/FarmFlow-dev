@@ -1,628 +1,236 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
+  batchCloseSnapshots,
   batches,
-  batchInventoryConsumptions,
   chickPlacements,
-  employees,
+  dailyRecords,
   feedDistributions,
-  feedProductionBatches,
-  operationalExpenses,
-  payroll,
-  serviceWorkOrders,
-  siteInventoryConsumptions,
+  sales,
 } from '../db/schema';
+import { buildCostingModel, roundCurrency, type BatchCostSummary, type CostingModel } from './costing';
+import { toIsoDate } from './bird-days';
+import { startTurnaroundForBatch } from './farm-ops';
 
-type BatchRow = {
-  id: number;
-  batchCode: string;
-  siteId: number;
-  chicksPlaced: number;
-  placementDate: string;
-  actualDeliveryDate?: string | null;
-};
+export type { BatchCostLedgerEntry, BatchCostSummary } from './costing';
 
-export interface BatchCostLedgerEntry {
-  componentType: 'feed' | 'inventory' | 'labor' | 'operational_expense';
-  allocationType: 'direct' | 'site' | 'shared_overhead';
-  eventDate: string;
-  sourceType: string;
-  sourceId: number;
-  sourceCode?: string | null;
-  description: string;
-  quantity?: number | null;
-  unit?: string | null;
-  unitCost?: number | null;
-  amount: number;
-  notes?: string | null;
-}
+type BatchRow = { id: number };
 
-export interface BatchCostSummary {
-  batchId: number;
-  batchCode: string;
-  feedCost: number;
-  inventoryCost: number;
-  laborCost: number;
-  operationalExpenseCost: number;
+export interface BatchKpis {
+  birdsPlaced: number;
+  deaths: number;
+  birdsSold: number;
+  liveBirds: number;
+  kgSold: number;
+  feedKg: number;
+  revenue: number;
+  ageDays: number;
+  averageWeightKg: number | null;
+  livabilityPct: number | null;
+  mortalityPct: number | null;
+  fcr: number | null;
+  epef: number | null;
   totalCost: number;
-  costPerBird: number;
-  ledger: BatchCostLedgerEntry[];
+  costPerBirdSold: number | null;
+  costPerKg: number | null;
+  profit: number;
+  profitPerBird: number | null;
+  marginPct: number | null;
 }
 
-function roundCurrency(value: number) {
-  return Number(value.toFixed(2));
+export interface BatchPerformance {
+  batchId: number;
+  status: string;
+  closed: boolean;
+  closedAt?: string | null;
+  kpis: BatchKpis;
+  costs: BatchCostSummary;
+  /** For a closed batch: costs recorded after it was closed (live total − frozen total). */
+  lateCosts: number;
 }
 
-function isBatchActiveOnDate(batch: Pick<BatchRow, 'placementDate' | 'actualDeliveryDate'>, dateValue: string) {
-  const check = new Date(dateValue).getTime();
-  const placement = new Date(batch.placementDate).getTime();
-  const actualDelivery = batch.actualDeliveryDate ? new Date(batch.actualDeliveryDate).getTime() : null;
-  return placement <= check && (actualDelivery == null || actualDelivery >= check);
-}
+/**
+ * Cost summaries for the given batches. A closed batch returns its frozen close-out figures;
+ * everything else is computed live from the costing model.
+ */
+export async function buildBatchCostSummaries(batchRows: BatchRow[], model?: CostingModel): Promise<Map<number, BatchCostSummary>> {
+  const result = new Map<number, BatchCostSummary>();
+  if (batchRows.length === 0) return result;
+  const costing = model ?? await buildCostingModel();
+  const ids = batchRows.map((batch) => batch.id);
+  const snapshots = await db
+    .select({ batchId: batchCloseSnapshots.batchId, costs: batchCloseSnapshots.costs })
+    .from(batchCloseSnapshots)
+    .where(inArray(batchCloseSnapshots.batchId, ids));
+  const frozen = new Map(snapshots.map((snap) => [snap.batchId, snap.costs as BatchCostSummary]));
 
-export async function buildBatchCostSummaries(batchRows: BatchRow[]): Promise<Map<number, BatchCostSummary>> {
-  const summaries = new Map<number, BatchCostSummary>(
-    batchRows.map((batch) => [
-      batch.id,
-      {
-        batchId: batch.id,
-        batchCode: batch.batchCode,
-        feedCost: 0,
-        inventoryCost: 0,
-        laborCost: 0,
-        operationalExpenseCost: 0,
-        totalCost: 0,
-        costPerBird: 0,
-        ledger: [],
-      },
-    ]),
-  );
-
-  if (batchRows.length === 0) {
-    return summaries;
+  for (const id of ids) {
+    const summary = frozen.get(id) ?? costing.summaries.get(id);
+    if (summary) result.set(id, summary);
   }
-
-  const batchIds = batchRows.map((batch) => batch.id);
-  const siteIds = Array.from(new Set(batchRows.map((batch) => batch.siteId)));
-
-  const [
-    allBatches,
-    feedRows,
-    inventoryRows,
-    chickPlacementRows,
-    siteInventoryRows,
-    directExpenseRows,
-    siteExpenseRows,
-    sharedExpenseRows,
-    directServiceRows,
-    siteServiceRows,
-    sharedServiceRows,
-    payrollRows,
-  ] = await Promise.all([
-    db
-      .select({
-        id: batches.id,
-        batchCode: batches.batchCode,
-        siteId: batches.siteId,
-        chicksPlaced: batches.chicksPlaced,
-        placementDate: batches.placementDate,
-        actualDeliveryDate: batches.actualDeliveryDate,
-      })
-      .from(batches),
-    db
-      .select({
-        batchId: feedDistributions.farmBatchId,
-        distributionId: feedDistributions.id,
-        distributionDate: feedDistributions.distributionDate,
-        productionBatchId: feedDistributions.productionBatchId,
-        productionCode: feedProductionBatches.productionCode,
-        quantity: feedDistributions.quantity,
-        unit: feedDistributions.unit,
-        productionCost: feedProductionBatches.productionCost,
-        actualQuantity: feedProductionBatches.actualQuantity,
-        notes: feedDistributions.notes,
-      })
-      .from(feedDistributions)
-      .leftJoin(feedProductionBatches, eq(feedDistributions.productionBatchId, feedProductionBatches.id))
-      .where(inArray(feedDistributions.farmBatchId, batchIds)),
-    db
-      .select({
-        batchId: batchInventoryConsumptions.batchId,
-        id: batchInventoryConsumptions.id,
-        consumptionDate: batchInventoryConsumptions.consumptionDate,
-        quantity: batchInventoryConsumptions.quantity,
-        unit: batchInventoryConsumptions.unit,
-        unitCost: batchInventoryConsumptions.unitCost,
-        lineCost: batchInventoryConsumptions.lineCost,
-        referenceType: batchInventoryConsumptions.referenceType,
-        referenceId: batchInventoryConsumptions.referenceId,
-        notes: batchInventoryConsumptions.notes,
-        itemName: sql<string>`(
-          SELECT ingredient_name
-          FROM feed_inventory
-          WHERE feed_inventory.id = ${batchInventoryConsumptions.inventoryItemId}
-        )`,
-      })
-      .from(batchInventoryConsumptions)
-      .where(inArray(batchInventoryConsumptions.batchId, batchIds)),
-    db
-      .select({
-        batchId: chickPlacements.batchId,
-        id: chickPlacements.id,
-        placementDate: chickPlacements.placementDate,
-        supplierId: chickPlacements.supplierId,
-        invoiceReference: chickPlacements.invoiceReference,
-        deliveredQuantity: chickPlacements.deliveredQuantity,
-        acceptedQuantity: chickPlacements.acceptedQuantity,
-        unitCost: chickPlacements.unitCost,
-        batchOpeningCost: chickPlacements.batchOpeningCost,
-        notes: chickPlacements.notes,
-      })
-      .from(chickPlacements)
-      .where(inArray(chickPlacements.batchId, batchIds)),
-    db
-      .select({
-        siteId: siteInventoryConsumptions.siteId,
-        id: siteInventoryConsumptions.id,
-        consumptionDate: siteInventoryConsumptions.consumptionDate,
-        quantity: siteInventoryConsumptions.quantity,
-        unit: siteInventoryConsumptions.unit,
-        unitCost: siteInventoryConsumptions.unitCost,
-        lineCost: siteInventoryConsumptions.lineCost,
-        referenceType: siteInventoryConsumptions.referenceType,
-        referenceId: siteInventoryConsumptions.referenceId,
-        notes: siteInventoryConsumptions.notes,
-        itemName: sql<string>`(
-          SELECT ingredient_name
-          FROM feed_inventory
-          WHERE feed_inventory.id = ${siteInventoryConsumptions.inventoryItemId}
-        )`,
-      })
-      .from(siteInventoryConsumptions)
-      .where(inArray(siteInventoryConsumptions.siteId, siteIds)),
-    db
-      .select({
-        id: operationalExpenses.id,
-        batchId: operationalExpenses.batchId,
-        expenseDate: operationalExpenses.expenseDate,
-        expenseCode: operationalExpenses.expenseCode,
-        expenseCategory: operationalExpenses.expenseCategory,
-        counterpartyName: operationalExpenses.counterpartyName,
-        amount: operationalExpenses.amount,
-        notes: operationalExpenses.notes,
-      })
-      .from(operationalExpenses)
-      .where(
-        and(
-          eq(operationalExpenses.status, 'paid'),
-          eq(operationalExpenses.allocationType, 'batch'),
-          inArray(operationalExpenses.batchId, batchIds),
-        ),
-      ),
-    db
-      .select({
-        id: operationalExpenses.id,
-        siteId: operationalExpenses.siteId,
-        expenseDate: operationalExpenses.expenseDate,
-        expenseCode: operationalExpenses.expenseCode,
-        expenseCategory: operationalExpenses.expenseCategory,
-        counterpartyName: operationalExpenses.counterpartyName,
-        amount: operationalExpenses.amount,
-        notes: operationalExpenses.notes,
-      })
-      .from(operationalExpenses)
-      .where(
-        and(
-          eq(operationalExpenses.status, 'paid'),
-          eq(operationalExpenses.allocationType, 'site'),
-          inArray(operationalExpenses.siteId, siteIds),
-        ),
-      ),
-    db
-      .select({
-        id: operationalExpenses.id,
-        expenseDate: operationalExpenses.expenseDate,
-        expenseCode: operationalExpenses.expenseCode,
-        expenseCategory: operationalExpenses.expenseCategory,
-        counterpartyName: operationalExpenses.counterpartyName,
-        amount: operationalExpenses.amount,
-        notes: operationalExpenses.notes,
-      })
-      .from(operationalExpenses)
-      .where(
-        and(
-          eq(operationalExpenses.status, 'paid'),
-          eq(operationalExpenses.allocationType, 'shared_overhead'),
-        ),
-      ),
-    db
-      .select({
-        id: serviceWorkOrders.id,
-        batchId: serviceWorkOrders.batchId,
-        serviceDate: serviceWorkOrders.serviceDate,
-        workOrderCode: serviceWorkOrders.workOrderCode,
-        serviceType: serviceWorkOrders.serviceType,
-        title: serviceWorkOrders.title,
-        totalAmount: serviceWorkOrders.totalAmount,
-        notes: serviceWorkOrders.notes,
-      })
-      .from(serviceWorkOrders)
-      .where(
-        and(
-          eq(serviceWorkOrders.status, 'paid'),
-          eq(serviceWorkOrders.allocationType, 'batch'),
-          inArray(serviceWorkOrders.batchId, batchIds),
-        ),
-      ),
-    db
-      .select({
-        id: serviceWorkOrders.id,
-        siteId: serviceWorkOrders.siteId,
-        serviceDate: serviceWorkOrders.serviceDate,
-        workOrderCode: serviceWorkOrders.workOrderCode,
-        serviceType: serviceWorkOrders.serviceType,
-        title: serviceWorkOrders.title,
-        totalAmount: serviceWorkOrders.totalAmount,
-        notes: serviceWorkOrders.notes,
-      })
-      .from(serviceWorkOrders)
-      .where(
-        and(
-          eq(serviceWorkOrders.status, 'paid'),
-          eq(serviceWorkOrders.allocationType, 'site'),
-          inArray(serviceWorkOrders.siteId, siteIds),
-        ),
-      ),
-    db
-      .select({
-        id: serviceWorkOrders.id,
-        serviceDate: serviceWorkOrders.serviceDate,
-        workOrderCode: serviceWorkOrders.workOrderCode,
-        serviceType: serviceWorkOrders.serviceType,
-        title: serviceWorkOrders.title,
-        totalAmount: serviceWorkOrders.totalAmount,
-        notes: serviceWorkOrders.notes,
-      })
-      .from(serviceWorkOrders)
-      .where(
-        and(
-          eq(serviceWorkOrders.status, 'paid'),
-          eq(serviceWorkOrders.allocationType, 'shared_overhead'),
-        ),
-      ),
-    db
-      .select({
-        payrollId: payroll.id,
-        payPeriod: payroll.payPeriod,
-        grossSalary: payroll.grossSalary,
-        employeeId: payroll.employeeId,
-        employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
-        siteId: employees.siteId,
-      })
-      .from(payroll)
-      .innerJoin(employees, eq(payroll.employeeId, employees.id))
-      .where(inArray(employees.siteId, siteIds)),
-  ]);
-
-  const allBatchesForAllocation = allBatches.map((batch) => ({
-    ...batch,
-    placementDate: String(batch.placementDate),
-    actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate) : null,
-  }));
-
-  for (const row of feedRows) {
-    const summary = summaries.get(row.batchId);
-    if (!summary) continue;
-    const outputQty = Number(row.actualQuantity ?? 0);
-    const productionCost = Number(row.productionCost ?? 0);
-    const quantity = Number(row.quantity ?? 0);
-    const unitCost = outputQty > 0 ? productionCost / outputQty : 0;
-    const amount = roundCurrency(quantity * unitCost);
-    summary.feedCost += amount;
-    summary.ledger.push({
-      componentType: 'feed',
-      allocationType: 'direct',
-      eventDate: String(row.distributionDate),
-      sourceType: 'feed_distribution',
-      sourceId: row.distributionId,
-      sourceCode: row.productionCode ?? null,
-      description: row.productionCode ? `Feed distribution from ${row.productionCode}` : 'Feed distribution',
-      quantity,
-      unit: row.unit,
-      unitCost: roundCurrency(unitCost),
-      amount,
-      notes: row.notes,
-    });
-  }
-
-  for (const row of inventoryRows) {
-    const summary = summaries.get(row.batchId);
-    if (!summary) continue;
-    const amount = roundCurrency(Number(row.lineCost ?? 0));
-    summary.inventoryCost += amount;
-    summary.ledger.push({
-      componentType: 'inventory',
-      allocationType: 'direct',
-      eventDate: String(row.consumptionDate),
-      sourceType: row.referenceType ?? 'batch_inventory_consumption',
-      sourceId: row.referenceId ?? row.id,
-      sourceCode: null,
-      description: row.itemName || 'Inventory consumption',
-      quantity: Number(row.quantity ?? 0),
-      unit: row.unit,
-      unitCost: roundCurrency(Number(row.unitCost ?? 0)),
-      amount,
-      notes: row.notes,
-    });
-  }
-
-  for (const row of chickPlacementRows) {
-    const summary = summaries.get(row.batchId);
-    if (!summary) continue;
-    const amount = roundCurrency(Number(row.batchOpeningCost ?? 0));
-    summary.inventoryCost += amount;
-    summary.ledger.push({
-      componentType: 'inventory',
-      allocationType: 'direct',
-      eventDate: String(row.placementDate),
-      sourceType: 'chick_placement',
-      sourceId: row.id,
-      sourceCode: row.invoiceReference ?? null,
-      description: 'Chick placement',
-      quantity: Number(row.acceptedQuantity ?? row.deliveredQuantity ?? 0),
-      unit: 'birds',
-      unitCost: roundCurrency(Number(row.unitCost ?? 0)),
-      amount,
-      notes: row.notes,
-    });
-  }
-
-  for (const row of siteInventoryRows) {
-    const activeSiteBatches = allBatchesForAllocation.filter(
-      (batch) => batch.siteId === row.siteId && isBatchActiveOnDate(batch, String(row.consumptionDate)),
-    );
-    if (activeSiteBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.lineCost ?? 0) / activeSiteBatches.length);
-    for (const batch of activeSiteBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.inventoryCost += share;
-      summary.ledger.push({
-        componentType: 'inventory',
-        allocationType: 'site',
-        eventDate: String(row.consumptionDate),
-        sourceType: row.referenceType ?? 'site_inventory_consumption',
-        sourceId: row.referenceId ?? row.id,
-        sourceCode: null,
-        description: row.itemName || 'Site inventory consumption',
-        quantity: Number(row.quantity ?? 0),
-        unit: row.unit,
-        unitCost: roundCurrency(Number(row.unitCost ?? 0)),
-        amount: share,
-        notes: row.notes,
-      });
-    }
-  }
-
-  for (const row of directExpenseRows) {
-    const summary = summaries.get(row.batchId ?? 0);
-    if (!summary) continue;
-    const amount = roundCurrency(Number(row.amount ?? 0));
-    summary.operationalExpenseCost += amount;
-    summary.ledger.push({
-      componentType: 'operational_expense',
-      allocationType: 'direct',
-      eventDate: String(row.expenseDate),
-      sourceType: 'operational_expense',
-      sourceId: row.id,
-      sourceCode: row.expenseCode,
-      description: row.counterpartyName ? `${row.expenseCategory} - ${row.counterpartyName}` : row.expenseCategory,
-      quantity: null,
-      unit: null,
-      unitCost: null,
-      amount,
-      notes: row.notes,
-    });
-  }
-
-  for (const row of siteExpenseRows) {
-    const activeSiteBatches = allBatchesForAllocation.filter(
-      (batch) => batch.siteId === row.siteId && isBatchActiveOnDate(batch, String(row.expenseDate)),
-    );
-    if (activeSiteBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.amount ?? 0) / activeSiteBatches.length);
-    for (const batch of activeSiteBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.operationalExpenseCost += share;
-      summary.ledger.push({
-        componentType: 'operational_expense',
-        allocationType: 'site',
-        eventDate: String(row.expenseDate),
-        sourceType: 'operational_expense',
-        sourceId: row.id,
-        sourceCode: row.expenseCode,
-        description: row.counterpartyName ? `${row.expenseCategory} - ${row.counterpartyName}` : row.expenseCategory,
-        quantity: null,
-        unit: null,
-        unitCost: null,
-        amount: share,
-        notes: row.notes,
-      });
-    }
-  }
-
-  for (const row of sharedExpenseRows) {
-    const activeBatches = allBatchesForAllocation.filter((batch) => isBatchActiveOnDate(batch, String(row.expenseDate)));
-    if (activeBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.amount ?? 0) / activeBatches.length);
-    for (const batch of activeBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.operationalExpenseCost += share;
-      summary.ledger.push({
-        componentType: 'operational_expense',
-        allocationType: 'shared_overhead',
-        eventDate: String(row.expenseDate),
-        sourceType: 'operational_expense',
-        sourceId: row.id,
-        sourceCode: row.expenseCode,
-        description: row.counterpartyName ? `${row.expenseCategory} - ${row.counterpartyName}` : row.expenseCategory,
-        quantity: null,
-        unit: null,
-        unitCost: null,
-        amount: share,
-        notes: row.notes,
-      });
-    }
-  }
-
-  for (const row of directServiceRows) {
-    const summary = summaries.get(row.batchId ?? 0);
-    if (!summary) continue;
-    const amount = roundCurrency(Number(row.totalAmount ?? 0));
-    summary.operationalExpenseCost += amount;
-    summary.ledger.push({
-      componentType: 'operational_expense',
-      allocationType: 'direct',
-      eventDate: String(row.serviceDate),
-      sourceType: 'service_work_order',
-      sourceId: row.id,
-      sourceCode: row.workOrderCode,
-      description: `${row.serviceType} - ${row.title}`,
-      quantity: null,
-      unit: null,
-      unitCost: null,
-      amount,
-      notes: row.notes,
-    });
-  }
-
-  for (const row of siteServiceRows) {
-    const activeSiteBatches = allBatchesForAllocation.filter(
-      (batch) => batch.siteId === row.siteId && isBatchActiveOnDate(batch, String(row.serviceDate)),
-    );
-    if (activeSiteBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.totalAmount ?? 0) / activeSiteBatches.length);
-    for (const batch of activeSiteBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.operationalExpenseCost += share;
-      summary.ledger.push({
-        componentType: 'operational_expense',
-        allocationType: 'site',
-        eventDate: String(row.serviceDate),
-        sourceType: 'service_work_order',
-        sourceId: row.id,
-        sourceCode: row.workOrderCode,
-        description: `${row.serviceType} - ${row.title}`,
-        quantity: null,
-        unit: null,
-        unitCost: null,
-        amount: share,
-        notes: row.notes,
-      });
-    }
-  }
-
-  for (const row of sharedServiceRows) {
-    const activeBatches = allBatchesForAllocation.filter((batch) => isBatchActiveOnDate(batch, String(row.serviceDate)));
-    if (activeBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.totalAmount ?? 0) / activeBatches.length);
-    for (const batch of activeBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.operationalExpenseCost += share;
-      summary.ledger.push({
-        componentType: 'operational_expense',
-        allocationType: 'shared_overhead',
-        eventDate: String(row.serviceDate),
-        sourceType: 'service_work_order',
-        sourceId: row.id,
-        sourceCode: row.workOrderCode,
-        description: `${row.serviceType} - ${row.title}`,
-        quantity: null,
-        unit: null,
-        unitCost: null,
-        amount: share,
-        notes: row.notes,
-      });
-    }
-  }
-
-  for (const row of payrollRows) {
-    const activeSiteBatches = allBatchesForAllocation.filter(
-      (batch) => batch.siteId === row.siteId && isBatchActiveOnDate(batch, String(row.payPeriod)),
-    );
-    if (activeSiteBatches.length === 0) continue;
-    const share = roundCurrency(Number(row.grossSalary ?? 0) / activeSiteBatches.length);
-    for (const batch of activeSiteBatches) {
-      const summary = summaries.get(batch.id);
-      if (!summary) continue;
-      summary.laborCost += share;
-      summary.ledger.push({
-        componentType: 'labor',
-        allocationType: 'site',
-        eventDate: String(row.payPeriod),
-        sourceType: 'payroll',
-        sourceId: row.payrollId,
-        sourceCode: `PAY-${row.payrollId}`,
-        description: `Payroll allocation - ${row.employeeName}`,
-        quantity: null,
-        unit: null,
-        unitCost: null,
-        amount: share,
-        notes: null,
-      });
-    }
-  }
-
-  for (const summary of summaries.values()) {
-    summary.feedCost = roundCurrency(summary.feedCost);
-    summary.inventoryCost = roundCurrency(summary.inventoryCost);
-    summary.laborCost = roundCurrency(summary.laborCost);
-    summary.operationalExpenseCost = roundCurrency(summary.operationalExpenseCost);
-    summary.totalCost = roundCurrency(
-      summary.feedCost + summary.inventoryCost + summary.laborCost + summary.operationalExpenseCost,
-    );
-    summary.costPerBird = summary.totalCost > 0
-      ? roundCurrency(summary.totalCost / Math.max(batchRows.find((batch) => batch.id === summary.batchId)?.chicksPlaced ?? 0, 1))
-      : 0;
-    summary.ledger.sort((a, b) => {
-      const dateDiff = new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime();
-      if (dateDiff !== 0) return dateDiff;
-      return b.sourceId - a.sourceId;
-    });
-  }
-
-  return summaries;
+  return result;
 }
 
 export async function buildSingleBatchCostSummary(batchId: number) {
-  const [batch] = await db
-    .select({
-      id: batches.id,
-      batchCode: batches.batchCode,
-      siteId: batches.siteId,
-      chicksPlaced: batches.chicksPlaced,
-      placementDate: batches.placementDate,
-      actualDeliveryDate: batches.actualDeliveryDate,
-    })
-    .from(batches)
-    .where(eq(batches.id, batchId))
-    .limit(1);
+  const summaries = await buildBatchCostSummaries([{ id: batchId }]);
+  return summaries.get(batchId) ?? null;
+}
 
-  if (!batch) {
-    return null;
+async function computeKpis(batchId: number, costs: BatchCostSummary, asOf: string): Promise<BatchKpis & { lastSaleDate: string | null }> {
+  const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
+  const [placement] = await db
+    .select({ accepted: sql<number>`COALESCE(SUM(${chickPlacements.acceptedQuantity}), 0)::int`, count: sql<number>`count(*)::int` })
+    .from(chickPlacements)
+    .where(eq(chickPlacements.batchId, batchId));
+  const [mortality] = await db
+    .select({ deaths: sql<number>`COALESCE(SUM(${dailyRecords.mortalityCount}), 0)::int` })
+    .from(dailyRecords)
+    .where(eq(dailyRecords.batchId, batchId));
+  const [sold] = await db
+    .select({
+      birds: sql<number>`COALESCE(SUM(${sales.totalBirds}), 0)::int`,
+      kg: sql<number>`COALESCE(SUM(${sales.totalWeight}::numeric), 0)::float`,
+      revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}::numeric), 0)::float`,
+      lastSale: sql<string | null>`MAX(${sales.saleDate})::text`,
+    })
+    .from(sales)
+    .where(sql`${sales.batchId} = ${batchId} AND ${sales.status} <> 'cancelled'`);
+  const [feed] = await db
+    .select({ kg: sql<number>`COALESCE(SUM(${feedDistributions.quantity}::numeric), 0)::float` })
+    .from(feedDistributions)
+    .where(eq(feedDistributions.farmBatchId, batchId));
+  const [eaten] = await db
+    .select({ kg: sql<number>`COALESCE(SUM(${dailyRecords.feedConsumption}::numeric), 0)::float` })
+    .from(dailyRecords)
+    .where(eq(dailyRecords.batchId, batchId));
+
+  const birdsPlaced = (placement?.count ?? 0) > 0 ? placement.accepted : batch.chicksPlaced;
+  const deaths = mortality?.deaths ?? 0;
+  const birdsSold = sold?.birds ?? 0;
+  const kgSold = roundCurrency(sold?.kg ?? 0);
+  const revenue = roundCurrency(sold?.revenue ?? 0);
+  // FCR uses feed the birds ate (daily logs); if nobody logged feed, fall back to feed delivered to the batch.
+  const feedKg = roundCurrency((eaten?.kg ?? 0) > 0 ? eaten.kg : feed?.kg ?? 0);
+  const lastSaleDate = sold?.lastSale ?? null;
+  const endDate = lastSaleDate ?? asOf;
+  const ageDays = Math.max(0, Math.round((new Date(endDate).getTime() - new Date(toIsoDate(batch.placementDate)).getTime()) / 86_400_000));
+
+  const averageWeightKg = birdsSold > 0 ? kgSold / birdsSold : null;
+  const livabilityPct = birdsPlaced > 0 ? ((birdsPlaced - deaths) / birdsPlaced) * 100 : null;
+  const mortalityPct = birdsPlaced > 0 ? (deaths / birdsPlaced) * 100 : null;
+  const fcr = kgSold > 0 && feedKg > 0 ? feedKg / kgSold : null;
+  const epef = livabilityPct != null && averageWeightKg != null && fcr && ageDays > 0
+    ? (livabilityPct * averageWeightKg * 100) / (ageDays * fcr)
+    : null;
+  const totalCost = costs.totalCost;
+  const profit = roundCurrency(revenue - totalCost);
+
+  const round = (value: number | null, digits = 2) => (value == null ? null : Number(value.toFixed(digits)));
+  return {
+    birdsPlaced,
+    deaths,
+    birdsSold,
+    liveBirds: Math.max(0, birdsPlaced - deaths - birdsSold),
+    kgSold,
+    feedKg,
+    revenue,
+    ageDays,
+    averageWeightKg: round(averageWeightKg, 3),
+    livabilityPct: round(livabilityPct),
+    mortalityPct: round(mortalityPct),
+    fcr: round(fcr, 3),
+    epef: round(epef, 0),
+    totalCost,
+    costPerBirdSold: birdsSold > 0 ? roundCurrency(totalCost / birdsSold) : null,
+    costPerKg: kgSold > 0 ? roundCurrency(totalCost / kgSold) : null,
+    profit,
+    profitPerBird: birdsSold > 0 ? roundCurrency(profit / birdsSold) : null,
+    marginPct: revenue > 0 ? round((profit / revenue) * 100) : null,
+    lastSaleDate,
+  };
+}
+
+export async function getBatchPerformance(batchId: number): Promise<BatchPerformance | null> {
+  const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
+  if (!batch) return null;
+  const model = await buildCostingModel();
+  const live = model.summaries.get(batchId);
+  if (!live) return null;
+
+  const [snapshot] = await db.select().from(batchCloseSnapshots).where(eq(batchCloseSnapshots.batchId, batchId)).limit(1);
+  if (snapshot) {
+    const costs = snapshot.costs as BatchCostSummary;
+    return {
+      batchId,
+      status: batch.status,
+      closed: true,
+      closedAt: snapshot.closedAt.toISOString(),
+      kpis: snapshot.kpis as BatchKpis,
+      costs,
+      lateCosts: roundCurrency(live.totalCost - costs.totalCost),
+    };
   }
 
-  const summaries = await buildBatchCostSummaries([
-    {
-      ...batch,
-      placementDate: String(batch.placementDate),
-      actualDeliveryDate: batch.actualDeliveryDate ? String(batch.actualDeliveryDate) : null,
-    },
-  ]);
+  const { lastSaleDate: _lastSaleDate, ...kpis } = await computeKpis(batchId, live, toIsoDate(new Date()));
+  return { batchId, status: batch.status, closed: false, kpis, costs: live, lateCosts: 0 };
+}
 
-  return summaries.get(batchId) ?? null;
+export class BatchCloseError extends Error {
+  readonly statusCode = 400;
+}
+
+/**
+ * Close a batch: freeze its costs, revenue and KPIs. Every bird must be accounted for
+ * (placed = deaths + sold) unless the caller accepts the variance, which is recorded.
+ */
+export async function closeBatch(params: { batchId: number; closedBy: number; notes?: string | null; acceptVariance?: boolean }) {
+  const [batch] = await db.select().from(batches).where(eq(batches.id, params.batchId)).limit(1);
+  if (!batch) throw new BatchCloseError('Batch not found');
+  const [existing] = await db.select({ id: batchCloseSnapshots.id }).from(batchCloseSnapshots).where(eq(batchCloseSnapshots.batchId, params.batchId)).limit(1);
+  if (existing) throw new BatchCloseError('Batch is already closed');
+
+  const model = await buildCostingModel();
+  const costs = model.summaries.get(params.batchId);
+  if (!costs) throw new BatchCloseError('Batch not found');
+  const { lastSaleDate, ...kpis } = await computeKpis(params.batchId, costs, toIsoDate(new Date()));
+
+  if (kpis.birdsSold === 0) {
+    throw new BatchCloseError('No sales recorded for this batch yet');
+  }
+  if (kpis.liveBirds > 0 && !params.acceptVariance) {
+    throw new BatchCloseError(
+      `${kpis.liveBirds.toLocaleString('en-US')} birds are not accounted for (placed ${kpis.birdsPlaced}, deaths ${kpis.deaths}, sold ${kpis.birdsSold}). Record the missing deaths or sales, or close with the variance accepted.`,
+    );
+  }
+
+  const frozenKpis = { ...kpis, unaccountedBirds: kpis.liveBirds, liveBirds: 0 };
+  return db.transaction(async (tx) => {
+    const [snapshot] = await tx.insert(batchCloseSnapshots).values({
+      batchId: params.batchId,
+      closedBy: params.closedBy,
+      revenue: kpis.revenue.toFixed(2),
+      totalCost: costs.totalCost.toFixed(2),
+      profit: kpis.profit.toFixed(2),
+      costs,
+      kpis: frozenKpis,
+      notes: params.notes ?? null,
+    }).returning();
+    await tx.update(batches).set({
+      status: 'closed',
+      actualDeliveryDate: batch.actualDeliveryDate ?? lastSaleDate ?? toIsoDate(new Date()),
+      updatedAt: new Date(),
+    }).where(eq(batches.id, params.batchId));
+    await startTurnaroundForBatch({ batchId: params.batchId, userId: params.closedBy }, tx);
+    return snapshot;
+  });
+}
+
+export async function reopenBatch(batchId: number) {
+  const [snapshot] = await db.select().from(batchCloseSnapshots).where(eq(batchCloseSnapshots.batchId, batchId)).limit(1);
+  if (!snapshot) throw new BatchCloseError('Batch is not closed');
+  await db.transaction(async (tx) => {
+    await tx.delete(batchCloseSnapshots).where(eq(batchCloseSnapshots.batchId, batchId));
+    await tx.update(batches).set({ status: 'sold', updatedAt: new Date() }).where(eq(batches.id, batchId));
+  });
+  return snapshot;
 }

@@ -188,7 +188,7 @@ describe('Auth Routes', () => {
     it('should return 401 without auth', async () => {
       const res = await request(app).post('/api/auth/register').send({
         email: 'new@farmflow.com',
-        fullName: 'New User',
+        firstName: 'New', lastName: 'User',
         userRole: 'farm_worker',
       });
       expect(res.status).toBe(401);
@@ -204,7 +204,7 @@ describe('Auth Routes', () => {
         .set('Authorization', 'Bearer valid-token')
         .send({
           email: 'new@farmflow.com',
-          fullName: 'New User',
+          firstName: 'New', lastName: 'User',
           userRole: 'farm_worker',
         });
 
@@ -247,7 +247,7 @@ describe('Auth Routes', () => {
         .set('Authorization', 'Bearer valid-token')
         .send({
           email: 'worker@farmflow.com',
-          fullName: 'Farm Worker',
+          firstName: 'Farm', lastName: 'Worker',
           userRole: 'farm_worker',
         });
 
@@ -269,7 +269,7 @@ describe('Auth Routes', () => {
         .set('Authorization', 'Bearer valid-token')
         .send({
           email: 'new@farmflow.com',
-          fullName: 'New User',
+          firstName: 'New', lastName: 'User',
           userRole: 'invalid_role',
         });
 

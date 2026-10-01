@@ -31,7 +31,7 @@ import { Download, Users, Clock, Calendar, DollarSign } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency, formatCurrencyCompact } from '@/lib/utils';
 
-const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#ca8a04', '#7c3aed', '#06b6d4'];
+const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)', 'var(--chart-5)', 'var(--danger)'];
 
 function getDefaultDateRange() {
   const end = new Date();
@@ -277,7 +277,7 @@ export default function HRAnalyticsTab() {
                       <TableCell className="font-medium">{emp.name}</TableCell>
                       <TableCell className="text-right">{emp.presentDays}</TableCell>
                       <TableCell className="text-right">{emp.totalDays}</TableCell>
-                      <TableCell className={`text-right font-medium ${emp.rate >= 80 ? 'text-green-600' : emp.rate >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                      <TableCell className={`text-right font-medium ${emp.rate >= 80 ? 'text-success' : emp.rate >= 60 ? 'text-warning' : 'text-danger'}`}>
                         {emp.rate.toFixed(1)}%
                       </TableCell>
                     </TableRow>

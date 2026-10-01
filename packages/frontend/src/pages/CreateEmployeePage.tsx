@@ -16,6 +16,7 @@ export default function CreateEmployeePage() {
         lastName: values.lastName,
         designation: values.designation,
         siteId: values.siteId,
+        ...(values.costCentreId ? { costCentreId: Number(values.costCentreId) } : {}),
         employmentType: values.employmentType as unknown as import('@farmflow/shared').EmploymentType,
         joinDate: values.joinDate,
         phone: values.phone || undefined,
@@ -29,7 +30,7 @@ export default function CreateEmployeePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Add Employee</h1>
+      <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Add Employee</h1>
       <Card>
         <CardHeader>
           <CardTitle>Employee Details</CardTitle>

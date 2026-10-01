@@ -12,6 +12,8 @@ export interface User {
   id: number;
   firebaseUid: string;
   email: string;
+  firstName: string;
+  lastName: string;
   fullName: string;
   userRole: UserRole;
   siteId?: number | null;
@@ -39,7 +41,8 @@ export interface AuthTokens {
 
 export interface CreateUserRequest {
   email: string;
-  fullName: string;
+  firstName: string;
+  lastName: string;
   userRole: UserRole;
   siteId?: number;
 }

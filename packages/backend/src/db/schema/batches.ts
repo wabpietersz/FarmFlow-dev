@@ -9,6 +9,7 @@ import {
   decimal,
   index,
   unique,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sites, cages } from './sites';
 import { users } from './users';
@@ -29,6 +30,10 @@ export const batches = pgTable(
     expectedDeliveryDate: date('expected_delivery_date'),
     actualDeliveryDate: date('actual_delivery_date'),
     status: varchar('status', { length: 50 }).default('placement').notNull(),
+    /** Target curve this batch is measured against (FK to growth_standards; kept loose to avoid a circular import) */
+    growthStandardId: integer('growth_standard_id'),
+    /** Health programme its tasks were generated from */
+    healthTemplateId: integer('health_template_id'),
     notes: text('notes'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -101,3 +106,20 @@ export const vaccinations = pgTable(
     index('idx_vaccinations_inventory_item').on(table.inventoryItemId),
   ],
 );
+
+// Frozen result of a closed batch: costs, revenue and KPIs as they stood on the day it was closed.
+export const batchCloseSnapshots = pgTable('batch_close_snapshots', {
+  id: serial('id').primaryKey(),
+  batchId: integer('batch_id')
+    .references(() => batches.id)
+    .unique()
+    .notNull(),
+  closedAt: timestamp('closed_at').defaultNow().notNull(),
+  closedBy: integer('closed_by').references(() => users.id),
+  revenue: decimal('revenue', { precision: 14, scale: 2 }).notNull(),
+  totalCost: decimal('total_cost', { precision: 14, scale: 2 }).notNull(),
+  profit: decimal('profit', { precision: 14, scale: 2 }).notNull(),
+  costs: jsonb('costs').notNull(),
+  kpis: jsonb('kpis').notNull(),
+  notes: text('notes'),
+});

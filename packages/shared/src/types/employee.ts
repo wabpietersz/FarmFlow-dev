@@ -33,6 +33,7 @@ export interface Employee {
   lastName: string;
   designation: string;
   siteId: number;
+  costCentreId?: number | null;
   siteName?: string;
   employmentType: EmploymentType;
   joinDate: Date;
@@ -119,6 +120,7 @@ export interface CreateEmployeeRequest {
   lastName: string;
   designation: string;
   siteId: number;
+  costCentreId?: number | null;
   employmentType: EmploymentType;
   joinDate: string;
   phone?: string;
@@ -131,6 +133,7 @@ export interface UpdateEmployeeRequest {
   lastName?: string;
   designation?: string;
   siteId?: number;
+  costCentreId?: number | null;
   employmentType?: EmploymentType;
   phone?: string;
   status?: EmployeeStatus;

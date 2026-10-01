@@ -13,6 +13,8 @@ import { initOfflineSync } from '@/lib/offlineSync';
 
 // Lazy-loaded page components for code splitting
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
+const TodayCheckPage = lazy(() => import('@/pages/TodayCheckPage'));
+const FarmCarePage = lazy(() => import('@/pages/FarmCarePage'));
 const EmployeesPage = lazy(() => import('@/pages/EmployeesPage'));
 const EmployeeDetailPage = lazy(() => import('@/pages/EmployeeDetailPage'));
 const CreateEmployeePage = lazy(() => import('@/pages/CreateEmployeePage'));
@@ -33,7 +35,6 @@ const InventoryManagementPage = lazy(() => import('@/pages/InventoryManagementPa
 const FarmControlPage = lazy(() => import('@/pages/FarmControlPage'));
 const TreasuryPage = lazy(() => import('@/pages/TreasuryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
-const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 const UnauthorizedPage = lazy(() => import('@/pages/UnauthorizedPage'));
 
@@ -150,6 +151,22 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="/batches/:id/today"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <TodayCheckPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="/farm-care"
+                  element={
+                    <Suspense fallback={<PageLoader />}>
+                      <FarmCarePage />
+                    </Suspense>
+                  }
+                />
+                <Route
                   path="/batches/:id"
                   element={
                     <Suspense fallback={<PageLoader />}>
@@ -255,11 +272,7 @@ export default function App() {
                 />
                 <Route
                   path="/users"
-                  element={
-                    <Suspense fallback={<PageLoader />}>
-                      <UserManagementPage />
-                    </Suspense>
-                  }
+                  element={<Navigate to="/settings?section=users" replace />}
                 />
                 <Route
                   path="/unauthorized"

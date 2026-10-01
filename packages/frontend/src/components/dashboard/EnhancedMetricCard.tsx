@@ -22,7 +22,7 @@ export default function EnhancedMetricCard({
   icon: Icon,
   loading,
   trend,
-  sparklineColor = '#2563eb',
+  sparklineColor = 'var(--chart-1)',
   invertTrend = false,
 }: EnhancedMetricCardProps) {
   if (loading) {
@@ -64,18 +64,18 @@ export default function EnhancedMetricCard({
               {trend && trend.direction !== 'flat' && (
                 <>
                   {isPositive ? (
-                    <TrendingUp className="h-3 w-3 text-green-600" />
+                    <TrendingUp className="h-3 w-3 text-success" />
                   ) : isNegative ? (
-                    <TrendingDown className="h-3 w-3 text-red-600" />
+                    <TrendingDown className="h-3 w-3 text-danger" />
                   ) : (
                     <Minus className="h-3 w-3 text-muted-foreground" />
                   )}
                   <span
                     className={`text-xs font-medium ${
                       isPositive
-                        ? 'text-green-600'
+                        ? 'text-success'
                         : isNegative
-                          ? 'text-red-600'
+                          ? 'text-danger'
                           : 'text-muted-foreground'
                     }`}
                   >

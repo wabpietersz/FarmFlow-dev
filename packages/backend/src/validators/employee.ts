@@ -5,6 +5,7 @@ export const createEmployeeSchema = z.object({
   lastName: z.string().min(1).max(100),
   designation: z.string().min(1).max(100),
   siteId: z.number().int().positive(),
+  costCentreId: z.number().int().positive().optional(),
   employmentType: z.enum(['permanent', 'contract', 'seasonal']),
   joinDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
   phone: z.string().max(20).optional(),
@@ -33,6 +34,8 @@ export const updateEmployeeSchema = z.object({
   lastName: z.string().min(1).max(100).optional(),
   designation: z.string().min(1).max(100).optional(),
   siteId: z.number().int().positive().optional(),
+  /** null = follow the site's cost centre */
+  costCentreId: z.number().int().positive().nullable().optional(),
   employmentType: z.enum(['permanent', 'contract', 'seasonal']).optional(),
   phone: z.string().max(20).nullable().optional(),
   status: z.enum(['active', 'on_leave', 'terminated']).optional(),

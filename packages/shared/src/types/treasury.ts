@@ -13,6 +13,68 @@ export type TreasuryTransactionType =
 
 export type ChequeLeafStatus = 'available' | 'issued' | 'cleared' | 'bounced' | 'voided';
 
+/** income: money in only · expense: money out only · financing: capital/loans/advances, either way · transfer: between own accounts · suspense: needs review */
+export type FinanceCategoryType = 'income' | 'expense' | 'financing' | 'transfer' | 'suspense';
+export type CostCentreType = 'site' | 'mill' | 'admin';
+
+export interface FinanceCategory {
+  id: number;
+  code: string;
+  name: string;
+  categoryType: FinanceCategoryType;
+  reportGroup: string;
+  description?: string | null;
+  isSystem: boolean;
+  sortOrder: number;
+  status: 'active' | 'inactive';
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface CostCentre {
+  id: number;
+  code: string;
+  name: string;
+  centreType: CostCentreType;
+  siteId?: number | null;
+  status: 'active' | 'inactive';
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+/** One line of the money ledger: a single movement on one account, tagged with what it was for and where it belongs. */
+export interface MoneyLedgerEntry {
+  id: number;
+  valueDate: string;
+  entryDirection: 'inflow' | 'outflow';
+  amount: string;
+  notes?: string | null;
+  financeAccountId: number;
+  financeAccountName: string;
+  categoryId: number;
+  categoryCode: string;
+  categoryName: string;
+  categoryType: FinanceCategoryType;
+  reportGroup: string;
+  costCentreId?: number | null;
+  costCentreName?: string | null;
+  batchId?: number | null;
+  batchCode?: string | null;
+  treasuryTransactionId: number;
+  transactionCode: string;
+  transactionType: string;
+  transactionStatus: string;
+  counterpartyNameSnapshot?: string | null;
+  referenceNumber?: string | null;
+  narrative?: string | null;
+}
+
+export interface MoneyLedgerResponse {
+  entries: MoneyLedgerEntry[];
+  totals: { inflow: number; outflow: number; net: number };
+  pagination: { page: number; limit: number; total: number };
+}
+
 export interface FinanceAccount {
   id: number;
   accountCode: string;
@@ -46,6 +108,9 @@ export interface TreasuryTransaction {
   sourceEntityId?: number | null;
   sourceCodeSnapshot?: string | null;
   narrative?: string | null;
+  categoryNames?: string | null;
+  costCentreNames?: string | null;
+  hasUncategorized?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -137,6 +202,8 @@ export interface PettyCashExpense {
   allocationId: number;
   expenseDate: Date | string;
   expenseCategory: string;
+  categoryId?: number | null;
+  costCentreId?: number | null;
   amount: number;
   justification: string;
   status: 'submitted' | 'approved' | 'rejected' | string;
@@ -172,8 +239,10 @@ export interface OperationalExpense extends SettlementDetails {
   expenseCode: string;
   expenseDate: Date | string;
   expenseCategory: string;
+  categoryId?: number | null;
+  costCentreId?: number | null;
   counterpartyName?: string | null;
-  allocationType: 'batch' | 'site' | 'shared_overhead' | string;
+  allocationType: 'batch' | 'site' | 'shared_overhead' | 'mill' | string;
   siteId?: number | null;
   siteName?: string | null;
   batchId?: number | null;

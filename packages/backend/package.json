@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "jest --passWithNoTests",
+    "test:integration": "jest -c jest.integration.config.js",
     "test:watch": "jest --watch",
     "lint": "eslint src/ --ext .ts",
     "db:migrate": "drizzle-kit migrate",

@@ -317,7 +317,7 @@ export default function EmployeeDetailPage() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/employees')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
             {employee.firstName} {employee.lastName}
           </h1>
           <Badge variant={statusVariant(employee.status)} className="capitalize">

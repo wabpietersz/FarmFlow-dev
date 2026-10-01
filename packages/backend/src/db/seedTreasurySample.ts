@@ -17,6 +17,7 @@ import {
   submitPettyCashExpense,
 } from '../lib/treasury';
 import { createBuyerReceiptForSale } from '../lib/sales-ledger';
+import { getCategoryByCode } from '../lib/finance-tags';
 
 const ADMIN_USER_ID = 1;
 const today = new Date().toISOString().split('T')[0] as string;
@@ -225,7 +226,7 @@ async function ensureSeedPettyCash(sourceFinanceAccountId: number, pettyCashAcco
   const approvedExpense = await submitPettyCashExpense({
     allocationId: allocation.id,
     expenseDate: today,
-    expenseCategory: 'Stationery',
+    categoryId: (await getCategoryByCode('office_admin')).id,
     amount: 4500,
     justification: 'Seed approved petty cash expense',
     createdBy: 2,
@@ -241,7 +242,7 @@ async function ensureSeedPettyCash(sourceFinanceAccountId: number, pettyCashAcco
   await submitPettyCashExpense({
     allocationId: allocation.id,
     expenseDate: today,
-    expenseCategory: 'Transport',
+    categoryId: (await getCategoryByCode('transport')).id,
     amount: 2300,
     justification: 'Seed submitted petty cash expense awaiting review',
     createdBy: 2,

@@ -5,6 +5,8 @@ import type { CreateUserRequest, UserRole } from '@farmflow/shared';
 export interface UserListItem {
   id: number;
   email: string;
+  firstName: string;
+  lastName: string;
   fullName: string;
   userRole: string;
   siteId: number | null;
@@ -15,7 +17,8 @@ export interface UserListItem {
 }
 
 export interface UpdateUserRequest {
-  fullName?: string;
+  firstName?: string;
+  lastName?: string;
   userRole?: UserRole;
   siteId?: number | null;
   isActive?: boolean;
@@ -53,6 +56,6 @@ export function useUpdateUser() {
 export function useResendResetLink() {
   return useMutation({
     mutationFn: (userId: number) =>
-      apiPost<{ passwordResetLink: string }>(`/auth/users/${userId}/reset-password`, {}),
+      apiPost<{ passwordResetLink: string; emailSent?: boolean }>(`/auth/users/${userId}/reset-password`, {}),
   });
 }

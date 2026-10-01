@@ -11,5 +11,10 @@ const queryClient = postgres(config.databaseUrl, {
 
 export const db = drizzle(queryClient, { schema });
 
+/** Close the connection pool (used by integration tests and graceful shutdown). */
+export async function closeDb() {
+  await queryClient.end({ timeout: 5 });
+}
+
 export { schema };
 export default db;

@@ -25,6 +25,13 @@ export interface TreasuryTransactionEntry {
   amount: string;
   valueDate: string;
   notes?: string | null;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  categoryType?: string | null;
+  costCentreId?: number | null;
+  costCentreName?: string | null;
+  batchId?: number | null;
+  batchCode?: string | null;
 }
 
 export interface TreasuryTransactionLink {
@@ -122,6 +129,9 @@ export interface CreateManualTreasuryTransactionPayload {
   sourceEntityType?: string;
   sourceEntityId?: number;
   sourceCodeSnapshot?: string;
+  categoryId?: number;
+  costCentreId?: number;
+  batchId?: number;
 }
 
 export interface CreatePettyCashAllocationPayload {
@@ -135,7 +145,8 @@ export interface CreatePettyCashAllocationPayload {
 
 export interface CreatePettyCashExpensePayload {
   expenseDate: string;
-  expenseCategory: string;
+  categoryId: number;
+  costCentreId?: number;
   amount: number;
   justification: string;
 }

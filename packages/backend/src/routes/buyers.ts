@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, desc, eq, ilike, sql } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
@@ -66,6 +67,7 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch buyers', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch buyers', code: 'BUYERS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -85,6 +87,7 @@ router.get('/:id/ledger', authenticate, requirePermission('sales:read'), async (
     const ledger = await buildBuyerLedger(buyerId);
     res.json({ success: true, data: ledger, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch buyer ledger', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch buyer ledger', code: 'BUYER_LEDGER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -135,6 +138,7 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch buyer detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch buyer detail', code: 'BUYER_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -207,6 +211,7 @@ router.post('/:id/receipts', authenticate, requirePermission('payments:create'),
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -250,6 +255,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
 
     res.status(201).json({ success: true, data: newBuyer, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create buyer', { error });
     res.status(500).json({ success: false, error: 'Failed to create buyer', code: 'CREATE_BUYER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -290,6 +296,7 @@ router.put('/:id', authenticate, requirePermission('sales:update'), validate(upd
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update buyer', { error });
     res.status(500).json({ success: false, error: 'Failed to update buyer', code: 'UPDATE_BUYER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -333,6 +340,7 @@ router.delete('/:id', authenticate, requirePermission('sales:delete'), async (re
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to deactivate buyer', { error });
     res.status(500).json({ success: false, error: 'Failed to deactivate buyer', code: 'DELETE_BUYER_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }

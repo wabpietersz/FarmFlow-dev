@@ -66,6 +66,7 @@ export default function EditEmployeePage() {
         lastName: values.lastName,
         designation: values.designation,
         siteId: values.siteId,
+        costCentreId: values.costCentreId ? Number(values.costCentreId) : null,
         employmentType: values.employmentType as unknown as import('@farmflow/shared').EmploymentType,
         phone: values.phone || undefined,
       });
@@ -113,7 +114,7 @@ export default function EditEmployeePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">
+      <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
         Edit {employee.firstName} {employee.lastName}
       </h1>
       <Card>
@@ -127,6 +128,7 @@ export default function EditEmployeePage() {
               lastName: employee.lastName,
               designation: employee.designation,
               siteId: employee.siteId,
+              costCentreId: employee.costCentreId ? String(employee.costCentreId) : '',
               employmentType: employee.employmentType as unknown as 'permanent' | 'contract' | 'seasonal',
               joinDate: typeof employee.joinDate === 'string'
                 ? employee.joinDate

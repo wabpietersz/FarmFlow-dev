@@ -1,3 +1,4 @@
+import { CostCentreSelect } from '@/components/finance/FinanceTagFields';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useSites } from '@/hooks/useSites';
@@ -46,6 +47,7 @@ export default function EmployeeForm({
       lastName: '',
       designation: '',
       siteId: undefined,
+      costCentreId: '',
       employmentType: undefined,
       joinDate: '',
       phone: '',
@@ -142,6 +144,17 @@ export default function EmployeeForm({
                     ))}
                   </SelectContent>
                 </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="costCentreId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Labour cost centre</FormLabel>
+                <CostCentreSelect value={field.value ?? ''} onChange={field.onChange} noneLabel="Same as site" />
                 <FormMessage />
               </FormItem>
             )}

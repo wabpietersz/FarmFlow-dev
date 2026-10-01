@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
@@ -135,6 +136,7 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch sales', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch sales', code: 'SALES_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -209,6 +211,7 @@ router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Re
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch sale detail', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch sale detail', code: 'SALE_DETAIL_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -325,6 +328,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
 
     res.status(201).json({ success: true, data: createdSale, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create sale', { error });
     const message = error instanceof Error ? error.message : 'Failed to create sale';
     res.status(500).json({ success: false, error: message, code: 'CREATE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
@@ -490,6 +494,7 @@ router.put('/:id', authenticate, requirePermission('sales:update'), validate(upd
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update sale', { error });
     res.status(500).json({ success: false, error: 'Failed to update sale', code: 'UPDATE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -534,6 +539,7 @@ router.delete('/:id', authenticate, requirePermission('sales:delete'), async (re
 
     res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to delete sale', { error });
     res.status(500).json({ success: false, error: 'Failed to delete sale', code: 'DELETE_SALE_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -617,6 +623,7 @@ router.post('/:saleId/payments', authenticate, requirePermission('payments:creat
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;

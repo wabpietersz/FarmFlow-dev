@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, desc, eq } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
@@ -102,6 +103,7 @@ router.get('/', authenticate, requirePermission('payments:read'), async (req: Re
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to fetch payments', { error });
     res.status(500).json({ success: false, error: 'Failed to fetch payments', code: 'PAYMENTS_FETCH_FAILED', statusCode: 500, timestamp: new Date().toISOString() });
   }
@@ -234,6 +236,7 @@ router.put('/:id', authenticate, requirePermission('payments:update'), validate(
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;

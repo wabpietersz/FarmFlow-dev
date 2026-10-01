@@ -38,6 +38,9 @@ export const createManualTreasuryTransactionSchema = z
     sourceEntityType: z.string().max(50).optional().or(z.literal('')),
     sourceEntityId: z.number().int().positive().optional(),
     sourceCodeSnapshot: z.string().max(100).optional().or(z.literal('')),
+    categoryId: z.number().int().positive().optional(),
+    costCentreId: z.number().int().positive().optional(),
+    batchId: z.number().int().positive().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.transactionType === 'manual_inflow' || data.transactionType === 'manual_outflow') {
@@ -46,6 +49,20 @@ export const createManualTreasuryTransactionSchema = z
           code: z.ZodIssueCode.custom,
           message: 'Account is required',
           path: ['financeAccountId'],
+        });
+      }
+      if (!data.categoryId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Category is required',
+          path: ['categoryId'],
+        });
+      }
+      if (!data.costCentreId && !data.batchId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cost centre is required',
+          path: ['costCentreId'],
         });
       }
     }
@@ -81,27 +98,19 @@ export const createManualTreasuryTransactionSchema = z
 
 export const createOperationalExpenseSchema = z.object({
   expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  expenseCategory: z.string().min(1, 'Expense category is required').max(100),
+  categoryId: z.number({ required_error: 'Category is required' }).int().positive('Category is required'),
   counterpartyName: z.string().max(200).optional().or(z.literal('')),
-  allocationType: z.enum(['batch', 'site', 'shared_overhead']).default('shared_overhead'),
+  costCentreId: z.number().int().positive().optional(),
   siteId: z.number().int().positive().optional(),
   batchId: z.number().int().positive().optional(),
   amount: z.number().positive('Amount must be positive'),
   notes: z.string().max(1000).optional().or(z.literal('')),
 }).superRefine((data, ctx) => {
-  if (data.allocationType === 'batch' && !data.batchId) {
+  if (!data.costCentreId && !data.siteId && !data.batchId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Batch is required for batch allocation',
-      path: ['batchId'],
-    });
-  }
-
-  if (data.allocationType === 'site' && !data.siteId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Site is required for site allocation',
-      path: ['siteId'],
+      message: 'Cost centre is required',
+      path: ['costCentreId'],
     });
   }
 });
@@ -148,7 +157,8 @@ export const createPettyCashAllocationSchema = z.object({
 
 export const createPettyCashExpenseSchema = z.object({
   expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  expenseCategory: z.string().min(1, 'Expense category is required').max(100),
+  categoryId: z.number({ required_error: 'Category is required' }).int().positive('Category is required'),
+  costCentreId: z.number().int().positive().optional(),
   amount: z.number().positive('Amount must be positive'),
   justification: z.string().min(1, 'Justification is required').max(1000),
 });
@@ -197,4 +207,38 @@ export const createPeriodLockSchema = z.object({
 
 export const releasePeriodLockSchema = z.object({
   notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export const createFinanceCategorySchema = z.object({
+  code: z.string().min(2).max(50).regex(/^[a-z0-9_]+$/, 'Code must be lowercase letters, numbers, and underscores'),
+  name: z.string().min(1, 'Name is required').max(100),
+  categoryType: z.enum(['income', 'expense', 'financing']),
+  reportGroup: z.string().min(1, 'Report group is required').max(100),
+  description: z.string().max(1000).optional().or(z.literal('')),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const updateFinanceCategorySchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  reportGroup: z.string().min(1).max(100).optional(),
+  description: z.string().max(1000).optional().or(z.literal('')),
+  sortOrder: z.number().int().min(0).optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+});
+
+export const createCostCentreSchema = z.object({
+  code: z.string().min(2).max(50).regex(/^[A-Z0-9_-]+$/, 'Code must be uppercase letters, numbers, dashes, and underscores'),
+  name: z.string().min(1, 'Name is required').max(100),
+  centreType: z.enum(['mill', 'admin']),
+});
+
+export const updateCostCentreSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+});
+
+export const retagLedgerEntrySchema = z.object({
+  categoryId: z.number().int().positive('Category is required'),
+  costCentreId: z.number().int().positive().nullable().optional(),
+  batchId: z.number().int().positive().nullable().optional(),
 });

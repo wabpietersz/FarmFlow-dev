@@ -3,7 +3,9 @@ import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { createSiteSchema, updateSiteSchema, createCageSchema, updateCageSchema } from '../validators/site';
 import { db } from '../db';
-import { sites, cages, batches } from '../db/schema';
+import { sites, cages, batches, costCentres } from '../db/schema';
+import { ensureSiteCostCentre } from '../lib/finance-tags';
+import { ensureFarmStore } from '../lib/stock';
 import { eq, sql, and, count } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
@@ -161,7 +163,13 @@ router.post('/', authenticate, requirePermission('sites:read'), validate(createS
       return;
     }
 
-    const [newSite] = await db.insert(sites).values({ siteName, location, capacity }).returning();
+    // Every site is a cost centre for money tagging.
+    const newSite = await db.transaction(async (tx) => {
+      const [site] = await tx.insert(sites).values({ siteName, location, capacity }).returning();
+      await ensureSiteCostCentre(site.id, tx);
+      await ensureFarmStore(site.id, tx);
+      return site;
+    });
 
     createAuditLog({
       userId: req.user!.id,
@@ -183,7 +191,7 @@ router.post('/', authenticate, requirePermission('sites:read'), validate(createS
 });
 
 // PUT /api/sites/:id — update a site
-router.put('/:id', authenticate, requirePermission('sites:read'), validate(updateSiteSchema), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requirePermission('sites:update'), validate(updateSiteSchema), async (req: Request, res: Response) => {
   try {
     const siteId = Number(req.params.id as string);
     const [existing] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
@@ -192,11 +200,19 @@ router.put('/:id', authenticate, requirePermission('sites:read'), validate(updat
       return;
     }
 
-    const [updated] = await db
-      .update(sites)
-      .set({ ...req.body, updatedAt: new Date() })
-      .where(eq(sites.id, siteId))
-      .returning();
+    const updated = await db.transaction(async (tx) => {
+      const [site] = await tx
+        .update(sites)
+        .set({ ...req.body, updatedAt: new Date() })
+        .where(eq(sites.id, siteId))
+        .returning();
+      const centre = await ensureSiteCostCentre(site.id, tx);
+      await tx
+        .update(costCentres)
+        .set({ name: site.siteName, status: site.status === 'inactive' ? 'inactive' : 'active', updatedAt: new Date() })
+        .where(eq(costCentres.id, centre.id));
+      return site;
+    });
 
     createAuditLog({
       userId: req.user!.id,

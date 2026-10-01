@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
-import { useBatch, useBatchCostLedger, useCreateChickPlacement, useUpdateBatch, useCreateDailyRecord, useUpdateDailyRecord, useRecordMortality, useCreateVaccination } from '@/hooks/useBatches';
+import { BatchPerformancePanel } from '@/components/batches/BatchPerformancePanel';
+import { BatchCarePanel } from '@/components/batches/BatchCarePanel';
+import { useBatch, useCreateChickPlacement, useUpdateBatch, useCreateDailyRecord, useUpdateDailyRecord, useRecordMortality, useCreateVaccination } from '@/hooks/useBatches';
 import { useInventoryItems, useInventorySuppliers, useSupplierContracts } from '@/hooks/useInventoryManagement';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,7 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil, AlertTriangle, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 const dailyRecordSchema = z.object({
@@ -112,18 +114,18 @@ type ChickPlacementFormValues = z.infer<typeof chickPlacementSchema>;
 type EditBatchFormValues = z.infer<typeof editBatchSchema>;
 
 const BATCH_STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-blue-100 text-blue-800',
-  growing: 'bg-green-100 text-green-800',
-  ready_for_sale: 'bg-yellow-100 text-yellow-800',
-  sold: 'bg-gray-100 text-gray-800',
-  culled: 'bg-red-100 text-red-800',
+  placement: 'bg-info-soft text-info',
+  growing: 'bg-success-soft text-success',
+  ready_for_sale: 'bg-warning-soft text-warning',
+  sold: 'bg-muted text-foreground',
+  culled: 'bg-danger-soft text-danger',
+  closed: 'bg-foreground text-background',
 };
 
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { hasPermission } = useAuthStore();
   const { data, isLoading } = useBatch(id);
-  const { data: costLedgerData } = useBatchCostLedger(id);
   const updateMutation = useUpdateBatch(id!);
   const createRecordMutation = useCreateDailyRecord(id!);
   const updateRecordMutation = useUpdateDailyRecord(id!);
@@ -149,8 +151,6 @@ export default function BatchDetailPage() {
   const records = batchData?.dailyRecords ?? [];
   const vaxRecords = batchData?.vaccinations ?? [];
   const stats = batchData?.stats;
-  const costSummary = batchData?.costSummary ?? costLedgerData?.data?.totals;
-  const costLedger = costLedgerData?.data?.ledger ?? [];
 
   const mortalityForm = useForm<MortalityFormValues>({
     resolver: zodResolver(mortalitySchema),
@@ -422,7 +422,7 @@ export default function BatchDetailPage() {
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost" size="icon"><Link to="/batches"><ArrowLeft className="h-4 w-4" /></Link></Button>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{batch.batchCode}</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">{batch.batchCode}</h1>
             <p className="text-sm text-muted-foreground">{batch.siteName} / Cage {batch.cageNumber}</p>
           </div>
           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${BATCH_STATUS_COLORS[batch.status] ?? ''}`}>
@@ -430,7 +430,7 @@ export default function BatchDetailPage() {
           </span>
         </div>
         <div className="flex gap-2">
-          {hasPermission('batches:update') && (
+          {batch.status !== 'closed' && hasPermission('batches:update') && (
             <Button variant="outline" onClick={handleOpenEditBatch}>
               <Pencil className="h-4 w-4 mr-2" />
               Edit
@@ -446,6 +446,14 @@ export default function BatchDetailPage() {
             </Button>
           )}
           {isActive && hasPermission('daily_records:create') && (
+            <Button asChild>
+              <Link to={`/batches/${id}/today`}>
+                <ClipboardCheck className="h-4 w-4" />
+                Today's check
+              </Link>
+            </Button>
+          )}
+          {isActive && hasPermission('daily_records:create') && (
             <Button variant="outline" onClick={handleOpenDailyRecord}>
               <Plus className="h-4 w-4 mr-2" />
               Daily Record
@@ -457,7 +465,7 @@ export default function BatchDetailPage() {
               Vaccination
             </Button>
           )}
-          {hasPermission('batches:update') && (
+          {batch.status !== 'closed' && hasPermission('batches:update') && (
             <Button variant="outline" onClick={handleOpenChickPlacement}>
               <Plus className="h-4 w-4 mr-2" />
               Chick Placement
@@ -548,7 +556,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-blue-600" />
+              <Activity className="h-5 w-5 text-info" />
               <div>
                 <p className="text-2xl font-bold">{stats?.currentBirdCount?.toLocaleString() ?? '--'}</p>
                 <p className="text-xs text-muted-foreground">Current Birds</p>
@@ -559,7 +567,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-green-600" />
+              <Calendar className="h-5 w-5 text-success" />
               <div>
                 <p className="text-2xl font-bold">{stats?.currentAge ?? 0}</p>
                 <p className="text-xs text-muted-foreground">Age (days)</p>
@@ -570,7 +578,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-purple-600" />
+              <TrendingUp className="h-5 w-5 text-primary" />
               <div>
                 <p className="text-2xl font-bold">{stats?.fcr ?? '--'}</p>
                 <p className="text-xs text-muted-foreground">FCR</p>
@@ -581,7 +589,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Skull className="h-5 w-5 text-red-600" />
+              <Skull className="h-5 w-5 text-danger" />
               <div>
                 <p className="text-2xl font-bold">{stats?.mortalityRate ?? 0}%</p>
                 <p className="text-xs text-muted-foreground">Mortality ({stats?.totalMortality ?? 0})</p>
@@ -592,7 +600,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Scale className="h-5 w-5 text-orange-600" />
+              <Scale className="h-5 w-5 text-warning" />
               <div>
                 <p className="text-2xl font-bold">{stats?.latestWeight ? `${stats.latestWeight}g` : '--'}</p>
                 <p className="text-xs text-muted-foreground">Avg Weight</p>
@@ -603,7 +611,7 @@ export default function BatchDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Scale className="h-5 w-5 text-slate-600" />
+              <Scale className="h-5 w-5 text-muted-foreground" />
               <div>
                 <p className="text-2xl font-bold">Rs. {(stats?.totalInventoryCost ?? 0).toFixed(2)}</p>
                 <p className="text-xs text-muted-foreground">Inventory Cost</p>
@@ -613,71 +621,9 @@ export default function BatchDetailPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Cost Summary</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Feed</p>
-              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.feedCost ?? 0).toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Inventory</p>
-              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.inventoryCost ?? 0).toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Labor</p>
-              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.laborCost ?? 0).toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Operational</p>
-              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.operationalExpenseCost ?? 0).toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Total</p>
-              <p className="mt-1 text-xl font-semibold">Rs. {(costSummary?.totalCost ?? 0).toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground">Cost per bird: Rs. {(costSummary?.costPerBird ?? 0).toFixed(2)}</p>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Component</TableHead>
-                  <TableHead>Allocation</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {costLedger.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="h-20 text-center text-sm text-muted-foreground">
-                      No traced batch cost entries yet.
-                    </TableCell>
-                  </TableRow>
-                ) : costLedger.slice(0, 12).map((entry) => (
-                  <TableRow key={`${entry.sourceType}-${entry.sourceId}-${entry.componentType}-${entry.eventDate}`}>
-                    <TableCell>{new Date(entry.eventDate).toLocaleDateString()}</TableCell>
-                    <TableCell className="capitalize">{entry.componentType.replace('_', ' ')}</TableCell>
-                    <TableCell className="capitalize">{entry.allocationType.replace('_', ' ')}</TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{entry.description}</p>
-                        <p className="text-xs text-muted-foreground">{entry.sourceCode || `${entry.sourceType} #${entry.sourceId}`}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">Rs. {entry.amount.toFixed(2)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+      <BatchPerformancePanel batchId={id!} canManage={hasPermission('batches:update')} />
+
+      <BatchCarePanel batchId={id!} siteId={batch.siteId} canManage={hasPermission('vaccinations:create')} isOpen={batch.status !== 'closed'} />
 
       <Card>
         <CardHeader>
@@ -749,7 +695,7 @@ export default function BatchDetailPage() {
                       <TableCell>{new Date(record.recordDate).toLocaleDateString()}</TableCell>
                       <TableCell>{record.currentAge}d</TableCell>
                       <TableCell>{record.birdCount.toLocaleString()}</TableCell>
-                      <TableCell className={record.mortalityCount > 0 ? 'text-red-600 font-medium' : ''}>
+                      <TableCell className={record.mortalityCount > 0 ? 'text-danger font-medium' : ''}>
                         {record.mortalityCount}
                       </TableCell>
                       <TableCell>{record.feedConsumption}</TableCell>
@@ -814,7 +760,7 @@ export default function BatchDetailPage() {
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-red-600" />
+              <AlertTriangle className="h-5 w-5 text-danger" />
               Record Mortality
             </DialogTitle>
             <DialogDescription>
@@ -889,8 +835,8 @@ export default function BatchDetailPage() {
               </div>
 
               {/* Mortality section */}
-              <div className="rounded-md border border-red-200 bg-red-50 p-3 space-y-3">
-                <p className="text-sm font-medium text-red-800">Mortality</p>
+              <div className="rounded-md border border-danger/30 bg-danger-soft p-3 space-y-3">
+                <p className="text-sm font-medium text-danger">Mortality</p>
                 <div className="grid grid-cols-2 gap-4">
                   <FormField control={recordForm.control} name="mortalityCount" render={({ field }) => (
                     <FormItem><FormLabel>Deaths today</FormLabel><FormControl><Input type="number" min={0} {...field} /></FormControl><FormMessage /></FormItem>
@@ -953,8 +899,8 @@ export default function BatchDetailPage() {
           </DialogHeader>
           <Form {...editRecordForm}>
             <form onSubmit={editRecordForm.handleSubmit(handleUpdateRecord)} className="space-y-5">
-              <div className="rounded-md border border-red-200 bg-red-50 p-3 space-y-3">
-                <p className="text-sm font-medium text-red-800">Mortality &amp; Birds</p>
+              <div className="rounded-md border border-danger/30 bg-danger-soft p-3 space-y-3">
+                <p className="text-sm font-medium text-danger">Mortality &amp; Birds</p>
                 <div className="grid grid-cols-3 gap-4">
                   <FormField control={editRecordForm.control} name="birdCount" render={({ field }) => (
                     <FormItem><FormLabel>Bird Count</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>

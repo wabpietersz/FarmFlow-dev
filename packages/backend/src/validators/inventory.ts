@@ -7,6 +7,7 @@ export const createInventoryItemTypeSchema = z.object({
   defaultUnit: z.string().min(1, 'Default unit is required').max(20),
   allowsBatchAllocation: z.boolean().optional().default(false),
   isFeed: z.boolean().optional().default(false),
+  financeCategoryId: z.number().int().positive().nullable().optional(),
   status: z.enum(['active', 'inactive']).optional().default('active'),
   description: z.string().max(500).nullable().optional(),
 });
@@ -42,6 +43,8 @@ export const consumeInventoryToSiteSchema = z.object({
 });
 
 export const createInventoryPurchaseOrderSchema = z.object({
+  deliveryLocationId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
   supplierId: z.number().int().positive('Supplier is required'),
   contractId: z.number().int().positive().nullable().optional(),
   orderDate: z.string().min(1, 'Order date is required'),
@@ -59,6 +62,8 @@ export const createInventoryPurchaseOrderSchema = z.object({
 });
 
 export const updateInventoryPurchaseOrderSchema = z.object({
+  deliveryLocationId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
   contractId: z.number().int().positive().nullable().optional(),
   expectedDeliveryDate: z.string().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
@@ -80,10 +85,13 @@ export const updateInventoryPurchaseOrderStatusSchema = z.object({
 });
 
 export const receiveInventoryPurchaseOrderSchema = z.object({
+  /** Store the goods go into; defaults from the order (feed → mill, farm orders → that farm's store) */
+  locationId: z.number().int().positive().nullable().optional(),
   items: z.array(
     z.object({
       itemId: z.number().int().positive('Item ID is required'),
       receivedQuantity: z.number().positive('Received quantity must be positive'),
+      expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)').nullable().optional(),
       batchAllocations: z.array(
         z.object({
           batchId: z.number().int().positive('Batch is required'),
@@ -111,6 +119,9 @@ export const createSupplierPaymentSchema = z.object({
   referenceNumber: z.string().max(100).nullable().optional(),
   chequeLeafId: z.number().int().positive().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
+  categoryId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
+  batchId: z.number().int().positive().nullable().optional(),
 }).superRefine((data, ctx) => {
   if (data.paymentMethod === 'cheque' && !data.chequeLeafId) {
     ctx.addIssue({
@@ -179,6 +190,63 @@ export const createSupplierInvoiceSchema = z.object({
 export const reviewSupplierInvoiceSchema = z.object({
   status: z.enum(['approved', 'rejected']),
   approvalNotes: z.string().max(1000).optional().or(z.literal('')),
+  /** Required to approve an invoice for more than the goods received */
+  overrideNote: z.string().max(1000).optional().or(z.literal('')),
+});
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)');
+
+export const stockLocationSchema = z.object({
+  code: z.string().min(2).max(50).regex(/^[A-Z0-9_-]+$/, 'Use capital letters, numbers and dashes'),
+  name: z.string().min(1).max(100),
+  locationType: z.enum(['central', 'mill_store', 'farm_store', 'other']),
+  siteId: z.number().int().positive().nullable().optional(),
+});
+
+export const updateStockLocationSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  status: z.enum(['active', 'inactive']).optional(),
+});
+
+export const stockTransferSchema = z.object({
+  fromLocationId: z.number().int().positive(),
+  toLocationId: z.number().int().positive(),
+  transferDate: isoDate,
+  notes: z.string().max(1000).nullable().optional(),
+  lines: z.array(z.object({
+    inventoryItemId: z.number().int().positive(),
+    quantity: z.number().positive('Quantity must be more than 0'),
+  })).min(1, 'Add at least one item'),
+});
+
+export const writeOffLotSchema = z.object({
+  quantity: z.number().positive().nullable().optional(),
+  reason: z.string().min(1, 'Say why the stock is being written off').max(500),
+  date: isoDate.optional(),
+});
+
+export const createRequisitionSchema = z.object({
+  costCentreId: z.number().int().positive('Say who needs it'),
+  deliveryLocationId: z.number().int().positive().nullable().optional(),
+  neededBy: isoDate.nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+  items: z.array(z.object({
+    inventoryItemId: z.number().int().positive(),
+    quantity: z.number().positive(),
+    notes: z.string().max(500).nullable().optional(),
+  })).min(1, 'Add at least one item'),
+});
+
+export const reviewRequisitionSchema = z.object({
+  status: z.enum(['approved', 'rejected']),
+  reviewNotes: z.string().max(1000).nullable().optional(),
+});
+
+export const convertRequisitionSchema = z.object({
+  supplierId: z.number().int().positive('Choose a supplier'),
+  orderDate: isoDate,
+  expectedDeliveryDate: isoDate.nullable().optional(),
+  prices: z.array(z.object({ inventoryItemId: z.number().int().positive(), unitPrice: z.number().positive() })).min(1),
 });
 
 export const createServiceWorkOrderSchema = z.object({
@@ -186,7 +254,7 @@ export const createServiceWorkOrderSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
   supplierId: z.number().int().positive('Supplier is required'),
   contractId: z.number().int().positive().nullable().optional(),
-  allocationType: z.enum(['batch', 'site', 'shared_overhead']).default('shared_overhead'),
+  allocationType: z.enum(['batch', 'site', 'shared_overhead', 'mill']).default('shared_overhead'),
   siteId: z.number().int().positive().nullable().optional(),
   batchId: z.number().int().positive().nullable().optional(),
   serviceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
@@ -196,6 +264,8 @@ export const createServiceWorkOrderSchema = z.object({
   unitRate: z.number().nonnegative().nullable().optional(),
   totalAmount: z.number().positive('Total amount must be positive'),
   notes: z.string().max(1000).nullable().optional(),
+  categoryId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
 }).superRefine((data, ctx) => {
   if (data.allocationType === 'batch' && !data.batchId) {
     ctx.addIssue({

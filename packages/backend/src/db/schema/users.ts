@@ -15,6 +15,9 @@ export const users = pgTable(
     id: serial('id').primaryKey(),
     firebaseUid: varchar('firebase_uid', { length: 128 }).unique().notNull(),
     email: varchar('email', { length: 255 }).unique().notNull(),
+    firstName: varchar('first_name', { length: 120 }).notNull().default(''),
+    lastName: varchar('last_name', { length: 120 }).notNull().default(''),
+    /** Always "first last"; kept so names show everywhere without joins changing */
     fullName: varchar('full_name', { length: 255 }).notNull(),
     userRole: varchar('user_role', { length: 50 }).notNull(),
     siteId: integer('site_id').references(() => sites.id),

@@ -35,6 +35,7 @@ export interface InventoryItemType {
   defaultUnit: string;
   allowsBatchAllocation: boolean;
   isFeed: boolean;
+  financeCategoryId?: number | null;
   status: string;
   description?: string | null;
 }
@@ -46,6 +47,7 @@ export interface InventorySupplier {
   phoneNumber?: string | null;
   email?: string | null;
   address?: string | null;
+  defaultCategoryId?: number | null;
   status: string;
 }
 
@@ -169,6 +171,10 @@ export interface CreateSupplierPaymentPayload {
   referenceNumber?: string;
   chequeLeafId?: number | null;
   notes?: string;
+  /** Only used when the payment isn't linked to a purchase order. */
+  categoryId?: number;
+  costCentreId?: number;
+  batchId?: number;
 }
 
 export interface SupplierContractTerm {
@@ -237,6 +243,11 @@ export interface SupplierInvoice {
   invoiceAmount: string;
   currencyCode: string;
   status: string;
+  /** How the invoice compares with the goods received on its purchase order */
+  matchStatus?: 'matched' | 'over_billed' | 'under_billed' | 'no_po' | null;
+  receivedValue?: string | null;
+  matchVariance?: string | null;
+  overrideNote?: string | null;
   notes?: string | null;
   paidAmount?: number;
   balanceDue?: number;
@@ -555,7 +566,7 @@ export function useCreateSupplierInvoice() {
 export function useReviewSupplierInvoice() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { status: 'approved' | 'rejected'; approvalNotes?: string } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { status: 'approved' | 'rejected'; approvalNotes?: string; overrideNote?: string } }) =>
       apiPut<SupplierInvoice>(`/inventory/supplier-invoices/${id}/review`, data),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['inventory-management', 'supplier-invoices'] });
@@ -626,6 +637,7 @@ export function useCreateInventoryItem() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory-management', 'items'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
     },
   });
 }
@@ -776,9 +788,11 @@ export function useReceiveInventoryPurchaseOrder() {
       items: Array<{
         itemId: number;
         receivedQuantity: number;
+        expiryDate?: string | null;
         batchAllocations?: Array<{ batchId: number; quantity: number; notes?: string | null }>;
       }>;
-    }) => apiPost(`/inventory/purchase-orders/${data.id}/receive`, { items: data.items }),
+      locationId?: number | null;
+    }) => apiPost(`/inventory/purchase-orders/${data.id}/receive`, { items: data.items, locationId: data.locationId ?? null }),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ['inventory-management', 'purchase-orders'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-management', 'purchase-orders', variables.id] });

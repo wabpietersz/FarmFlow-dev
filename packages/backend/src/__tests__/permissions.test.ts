@@ -3,25 +3,28 @@ import { getUserPermissions, hasPermission } from '../lib/permissions';
 
 describe('Permissions', () => {
   describe('getUserPermissions', () => {
-    it('should return permissions for system_admin', () => {
-      const perms = getUserPermissions(UserRole.SystemAdmin);
-      expect(perms).toContain('users:create');
-      expect(perms).toContain('users:delete');
-      expect(perms).toContain('system:*');
+    it('gives system admins everything, including user management', () => {
+      expect(hasPermission(UserRole.SystemAdmin, 'users:create')).toBe(true);
+      expect(hasPermission(UserRole.SystemAdmin, 'users:delete')).toBe(true);
+      expect(getUserPermissions(UserRole.SystemAdmin)).toContain('system:*');
     });
 
-    it('should return permissions for farm_worker', () => {
-      const perms = getUserPermissions(UserRole.FarmWorker);
-      expect(perms).toContain('daily_records:create');
-      expect(perms).toContain('daily_records:read_own');
-      expect(perms).not.toContain('users:create');
+    it('lets farm workers record daily checks but not manage users', () => {
+      expect(hasPermission(UserRole.FarmWorker, 'daily_records:create')).toBe(true);
+      expect(hasPermission(UserRole.FarmWorker, 'batches:create')).toBe(false);
+      expect(hasPermission(UserRole.FarmWorker, 'users:create')).toBe(false);
     });
 
-    it('should return permissions for viewer', () => {
-      const perms = getUserPermissions(UserRole.Viewer);
-      expect(perms).toContain('reports:read');
-      expect(perms).toContain('batches:read');
-      expect(perms).not.toContain('batches:create');
+    it('limits viewers to reports by default', () => {
+      expect(hasPermission(UserRole.Viewer, 'reports:read')).toBe(true);
+      expect(hasPermission(UserRole.Viewer, 'reports:financial:read')).toBe(false);
+      expect(hasPermission(UserRole.Viewer, 'batches:create')).toBe(false);
+    });
+
+    it('gives admin level everything user level has, plus more', () => {
+      expect(hasPermission(UserRole.Supervisor, 'attendance:delete')).toBe(true);
+      expect(hasPermission(UserRole.FarmManager, 'attendance:create')).toBe(true);
+      expect(hasPermission(UserRole.FarmManager, 'attendance:delete')).toBe(false);
     });
 
     it('should return empty array for invalid role', () => {

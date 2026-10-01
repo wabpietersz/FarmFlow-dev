@@ -15,7 +15,10 @@ export interface InventoryMovementInput {
     | 'site_consume'
     | 'return'
     | 'wastage'
-    | 'transfer';
+    | 'transfer'
+    | 'transfer_out'
+    | 'transfer_in'
+    | 'write_off';
   movementDate: string;
   sourceModule: string;
   sourceEntityType: string;

@@ -357,6 +357,12 @@ export interface SupplierInvoice {
   balanceDue?: number;
   currencyCode: string;
   status: 'recorded' | 'cancelled' | string;
+  /** How the invoice compares with the goods received on its purchase order */
+  matchStatus?: 'matched' | 'over_billed' | 'under_billed' | 'no_po' | null;
+  receivedValue?: number | string | null;
+  matchVariance?: number | string | null;
+  overrideNote?: string | null;
+  approvalNotes?: string | null;
   notes?: string | null;
   createdBy: number;
   createdAt: Date | string;

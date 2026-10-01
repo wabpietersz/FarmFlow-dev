@@ -28,8 +28,21 @@ import {
   treasuryTransactionLinks,
   treasuryTransactions,
   users,
+  costCentres,
+  financeCategories,
+  purchaseOrderItems,
+  feedInventory,
+  inventoryItemTypes,
 } from '../db/schema';
 import { assertPeriodOpen } from './period-locks';
+import {
+  type EntryTagInput,
+  FinanceTagError,
+  ensureSiteCostCentre,
+  getCostCentreByCode,
+  resolveEntryTags,
+  splitAmountByWeights,
+} from './finance-tags';
 
 function toIsoDate(value: Date | string) {
   if (value instanceof Date) {
@@ -210,6 +223,7 @@ async function getBuyerReceiptSaleLinks(receiptLineId: number, executor: typeof 
     .select({
       saleId: sales.id,
       saleCode: sales.saleCode,
+      batchId: sales.batchId,
       allocatedAmount: buyerReceiptAllocations.allocatedAmount,
     })
     .from(buyerReceiptAllocations)
@@ -271,17 +285,20 @@ export async function postBuyerReceiptLineToTreasury(params: {
       })
       .returning();
 
-    await tx.insert(treasuryTransactionEntries).values({
-      treasuryTransactionId: treasuryTransaction.id,
-      financeAccountId: targetAccountId,
-      entryDirection: 'inflow',
-      amount: Number(receiptLine.paymentAmount).toFixed(2),
-      valueDate: receiptDate,
-      notes: `${receiptLine.paymentMethod} receipt`,
-    });
-
     const saleLinks = (await getBuyerReceiptSaleLinks(receiptLine.lineId, tx)).filter(
       (saleLink: { saleId: number | null }) => saleLink.saleId,
+    );
+    await insertTaggedEntries(
+      treasuryTransaction.id,
+      await buildReceiptEntries({
+        financeAccountId: targetAccountId,
+        entryDirection: 'inflow',
+        totalAmount: Number(receiptLine.paymentAmount),
+        valueDate: receiptDate,
+        notes: `${receiptLine.paymentMethod} receipt`,
+        saleLinks,
+      }),
+      tx,
     );
     await tx.insert(treasuryTransactionLinks).values([
       {
@@ -363,13 +380,12 @@ export async function reverseBuyerReceiptLineTreasuryPosting(params: {
       })
       .returning();
 
-    await tx.insert(treasuryTransactionEntries).values({
-      treasuryTransactionId: reversalTransaction.id,
-      financeAccountId: receiptLine.financeAccountId,
-      entryDirection: 'outflow',
-      amount: Number(receiptLine.paymentAmount).toFixed(2),
+    await insertMirroredEntries({
+      originalTransactionId: receiptLine.treasuryTransactionId,
+      reversalTransactionId: reversalTransaction.id,
       valueDate: reversalDate,
       notes: `Reversal for ${receiptLine.receiptCode}`,
+      executor: tx,
     });
 
     const saleLinks = (await getBuyerReceiptSaleLinks(receiptLine.lineId, tx)).filter(
@@ -423,6 +439,8 @@ export async function postPayrollToTreasury(params: {
         treasuryTransactionId: payroll.treasuryTransactionId,
         employeeId: employees.id,
         employeeName: sql<string>`${employees.firstName} || ' ' || ${employees.lastName}`,
+        employeeCostCentreId: employees.costCentreId,
+        employeeSiteId: employees.siteId,
       })
       .from(payroll)
       .leftJoin(employees, eq(payroll.employeeId, employees.id))
@@ -466,14 +484,22 @@ export async function postPayrollToTreasury(params: {
       })
       .returning();
 
-    await tx.insert(treasuryTransactionEntries).values({
-      treasuryTransactionId: treasuryTransaction.id,
-      financeAccountId: params.financeAccountId,
-      entryDirection: 'outflow',
-      amount: Number(payrollRecord.netSalary).toFixed(2),
-      valueDate: payDate,
-      notes: `Payroll ${payrollRecord.id}`,
-    });
+    await insertTaggedEntries(
+      treasuryTransaction.id,
+      [{
+        financeAccountId: params.financeAccountId,
+        entryDirection: 'outflow',
+        amount: Number(payrollRecord.netSalary),
+        valueDate: payDate,
+        notes: `Payroll ${payrollRecord.id}`,
+        tags: {
+          categoryCode: 'wages_salaries',
+          costCentreId: payrollRecord.employeeCostCentreId,
+          siteId: payrollRecord.employeeSiteId,
+        },
+      }],
+      tx,
+    );
 
     await tx.insert(treasuryTransactionLinks).values({
       treasuryTransactionId: treasuryTransaction.id,
@@ -524,7 +550,108 @@ type TreasuryEntryInput = {
   amount: number;
   valueDate: string;
   notes?: string;
+  tags: EntryTagInput;
 };
+
+const TRANSFER_TAGS: EntryTagInput = { categoryCode: 'internal_transfer' };
+
+/** The only way ledger lines are written: every line's tags are resolved and validated first. */
+async function insertTaggedEntries(
+  treasuryTransactionId: number,
+  entries: TreasuryEntryInput[],
+  executor: typeof db | any,
+) {
+  if (entries.length === 0) {
+    throw new Error('A treasury transaction needs at least one entry');
+  }
+  const rows = [];
+  for (const entry of entries) {
+    const tags = await resolveEntryTags(entry.tags, executor);
+    rows.push({
+      treasuryTransactionId,
+      financeAccountId: entry.financeAccountId,
+      entryDirection: entry.entryDirection,
+      amount: Number(entry.amount).toFixed(2),
+      categoryId: tags.categoryId,
+      costCentreId: tags.costCentreId,
+      batchId: tags.batchId,
+      valueDate: entry.valueDate,
+      notes: entry.notes ?? null,
+    });
+  }
+  await executor.insert(treasuryTransactionEntries).values(rows);
+}
+
+/** Reversals mirror the original lines (same account and tags, opposite direction). */
+async function insertMirroredEntries(params: {
+  originalTransactionId: number;
+  reversalTransactionId: number;
+  valueDate: string;
+  notes: string;
+  executor: typeof db | any;
+}) {
+  const originalEntries = await params.executor
+    .select()
+    .from(treasuryTransactionEntries)
+    .where(eq(treasuryTransactionEntries.treasuryTransactionId, params.originalTransactionId));
+  if (originalEntries.length === 0) {
+    throw new Error('Original treasury transaction has no entries to reverse');
+  }
+  await params.executor.insert(treasuryTransactionEntries).values(
+    originalEntries.map((entry: typeof treasuryTransactionEntries.$inferSelect) => ({
+      treasuryTransactionId: params.reversalTransactionId,
+      financeAccountId: entry.financeAccountId,
+      entryDirection: entry.entryDirection === 'inflow' ? 'outflow' : 'inflow',
+      amount: entry.amount,
+      categoryId: entry.categoryId,
+      costCentreId: entry.costCentreId,
+      batchId: entry.batchId,
+      valueDate: params.valueDate,
+      notes: params.notes,
+    })),
+  );
+}
+
+/** A receipt line splits into Bird Sales per allocated sale (tagged to that batch); any remainder is a customer advance. */
+async function buildReceiptEntries(params: {
+  financeAccountId: number;
+  entryDirection: 'inflow' | 'outflow';
+  totalAmount: number;
+  valueDate: string;
+  notes: string;
+  saleLinks: Array<{ saleId: number | null; batchId: number | null; allocatedAmount: string | number }>;
+}): Promise<TreasuryEntryInput[]> {
+  const entries: TreasuryEntryInput[] = [];
+  let allocatedCents = 0;
+  for (const link of params.saleLinks) {
+    const cents = Math.round(Number(link.allocatedAmount) * 100);
+    if (cents <= 0 || !link.batchId) continue;
+    allocatedCents += cents;
+    entries.push({
+      financeAccountId: params.financeAccountId,
+      entryDirection: params.entryDirection,
+      amount: cents / 100,
+      valueDate: params.valueDate,
+      notes: params.notes,
+      tags: { categoryCode: 'bird_sales', batchId: link.batchId },
+    });
+  }
+  const remainderCents = Math.round(params.totalAmount * 100) - allocatedCents;
+  if (remainderCents < 0) {
+    throw new Error('Receipt allocations exceed the receipt amount');
+  }
+  if (remainderCents > 0) {
+    entries.push({
+      financeAccountId: params.financeAccountId,
+      entryDirection: params.entryDirection,
+      amount: remainderCents / 100,
+      valueDate: params.valueDate,
+      notes: `${params.notes} (unallocated credit)`,
+      tags: { categoryCode: 'customer_advances', costCentreCode: 'ADMIN' },
+    });
+  }
+  return entries;
+}
 
 type TreasuryLinkInput = {
   sourceModule: string;
@@ -571,16 +698,7 @@ async function createTreasuryTransactionRecord(params: {
     })
     .returning();
 
-  await params.executor.insert(treasuryTransactionEntries).values(
-    params.entries.map((entry) => ({
-      treasuryTransactionId: transaction.id,
-      financeAccountId: entry.financeAccountId,
-      entryDirection: entry.entryDirection,
-      amount: Number(entry.amount).toFixed(2),
-      valueDate: entry.valueDate,
-      notes: entry.notes ?? null,
-    })),
-  );
+  await insertTaggedEntries(transaction.id, params.entries, params.executor);
 
   if (params.links && params.links.length > 0) {
     await params.executor.insert(treasuryTransactionLinks).values(
@@ -725,6 +843,118 @@ async function refreshPettyCashAllocationStatus(
   return nextStatus;
 }
 
+async function getCostCentreById(costCentreId: number, executor: typeof db | any) {
+  const [centre] = await executor.select().from(costCentres).where(eq(costCentres.id, costCentreId)).limit(1);
+  if (!centre) {
+    throw new FinanceTagError('Cost centre not found');
+  }
+  return centre as typeof costCentres.$inferSelect;
+}
+
+/** Income categories only take money in; expense categories only take money out. Financing/suspense go either way. */
+async function assertCategoryFitsDirection(
+  categoryId: number | null,
+  direction: 'inflow' | 'outflow',
+  executor: typeof db | any,
+) {
+  if (!categoryId) {
+    throw new FinanceTagError('Finance category is required');
+  }
+  const [category] = await executor
+    .select()
+    .from(financeCategories)
+    .where(eq(financeCategories.id, categoryId))
+    .limit(1);
+  if (!category) {
+    throw new FinanceTagError('Finance category not found');
+  }
+  if (category.categoryType === 'income' && direction === 'outflow') {
+    throw new FinanceTagError(`"${category.name}" is an income category and cannot be used for money going out`);
+  }
+  if (category.categoryType === 'expense' && direction === 'inflow') {
+    throw new FinanceTagError(`"${category.name}" is an expense category and cannot be used for money coming in`);
+  }
+  if (category.categoryType === 'transfer') {
+    throw new FinanceTagError('Use an internal transfer to move money between accounts');
+  }
+  return category as typeof financeCategories.$inferSelect;
+}
+
+/**
+ * Supplier payments are tagged by what was bought: explicit tags win; otherwise the payment is split
+ * across the linked PO lines by item-type category into the PO's cost centre; otherwise the supplier's
+ * default category (or "uncategorized") against Admin.
+ */
+async function buildSupplierPaymentEntries(params: {
+  financeAccountId: number;
+  amount: number;
+  valueDate: string;
+  notes: string;
+  explicitTags: EntryTagInput | null;
+  purchaseOrderIds: number[];
+  supplierDefaultCategoryId: number | null;
+  executor: typeof db | any;
+}): Promise<TreasuryEntryInput[]> {
+  const base = {
+    financeAccountId: params.financeAccountId,
+    entryDirection: 'outflow' as const,
+    valueDate: params.valueDate,
+    notes: params.notes,
+  };
+
+  if (params.explicitTags && (params.explicitTags.categoryId || params.explicitTags.categoryCode)) {
+    return [{ ...base, amount: params.amount, tags: params.explicitTags }];
+  }
+
+  if (params.purchaseOrderIds.length > 0) {
+    const lines = await params.executor
+      .select({
+        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        lineValue: sql<number>`(${purchaseOrderItems.orderedQuantity}::numeric * ${purchaseOrderItems.unitPrice}::numeric)::float`,
+        categoryId: inventoryItemTypes.financeCategoryId,
+        costCentreId: purchaseOrders.costCentreId,
+      })
+      .from(purchaseOrderItems)
+      .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .innerJoin(feedInventory, eq(purchaseOrderItems.inventoryItemId, feedInventory.id))
+      .leftJoin(inventoryItemTypes, eq(feedInventory.itemTypeId, inventoryItemTypes.id))
+      .where(inArray(purchaseOrderItems.purchaseOrderId, params.purchaseOrderIds));
+
+    const admin = await getCostCentreByCode('ADMIN', params.executor);
+    const groups = new Map<string, { categoryId: number | null; costCentreId: number; weight: number }>();
+    for (const line of lines as Array<{ lineValue: number; categoryId: number | null; costCentreId: number | null }>) {
+      const categoryId = line.categoryId ?? params.supplierDefaultCategoryId;
+      const costCentreId = line.costCentreId ?? admin.id;
+      const key = `${categoryId ?? 'x'}:${costCentreId}`;
+      const group = groups.get(key) ?? { categoryId, costCentreId, weight: 0 };
+      group.weight += Number(line.lineValue) || 0;
+      groups.set(key, group);
+    }
+
+    const parts = splitAmountByWeights(params.amount, [...groups.values()]);
+    if (parts.length > 0) {
+      return parts.map((part) => ({
+        ...base,
+        amount: part.amount,
+        tags: part.categoryId
+          ? { categoryId: part.categoryId, costCentreId: part.costCentreId }
+          : { categoryCode: 'uncategorized', costCentreId: part.costCentreId },
+      }));
+    }
+  }
+
+  return [{
+    ...base,
+    amount: params.amount,
+    tags: {
+      ...(params.supplierDefaultCategoryId ? { categoryId: params.supplierDefaultCategoryId } : { categoryCode: 'uncategorized' }),
+      costCentreId: params.explicitTags?.costCentreId ?? null,
+      batchId: params.explicitTags?.batchId ?? null,
+      costCentreCode: params.explicitTags?.costCentreId || params.explicitTags?.batchId ? null : 'ADMIN',
+    },
+  }];
+}
+
 export async function createManualTreasuryTransaction(params: {
   transactionDate: string;
   transactionType: 'manual_inflow' | 'manual_outflow' | 'internal_transfer';
@@ -737,6 +967,9 @@ export async function createManualTreasuryTransaction(params: {
   narrative: string;
   postedBy: number;
   sourceLink?: Omit<TreasuryLinkInput, 'allocatedAmount'> | null;
+  categoryId?: number | null;
+  costCentreId?: number | null;
+  batchId?: number | null;
 }) {
   return db.transaction(async (tx) => {
     await assertPeriodOpen(params.transactionDate, 'financial');
@@ -769,6 +1002,7 @@ export async function createManualTreasuryTransaction(params: {
             amount: params.amount,
             valueDate: params.transactionDate,
             notes: params.narrative,
+            tags: TRANSFER_TAGS,
           },
           {
             financeAccountId: params.destinationFinanceAccountId,
@@ -776,6 +1010,7 @@ export async function createManualTreasuryTransaction(params: {
             amount: params.amount,
             valueDate: params.transactionDate,
             notes: params.narrative,
+            tags: TRANSFER_TAGS,
           },
         ],
         links: manualLinks,
@@ -802,6 +1037,7 @@ export async function createManualTreasuryTransaction(params: {
     await ensureActiveFinanceAccount(params.financeAccountId, tx);
 
     const direction = params.transactionType === 'manual_inflow' ? 'inflow' : 'outflow';
+    await assertCategoryFitsDirection(params.categoryId ?? null, direction, tx);
     const transaction = await createTreasuryTransactionRecord({
       transactionType: params.transactionType,
       transactionDate: params.transactionDate,
@@ -817,6 +1053,11 @@ export async function createManualTreasuryTransaction(params: {
           amount: params.amount,
           valueDate: params.transactionDate,
           notes: params.narrative,
+          tags: {
+            categoryId: params.categoryId,
+            costCentreId: params.costCentreId,
+            batchId: params.batchId,
+          },
         },
       ],
       links: manualLinks,
@@ -982,6 +1223,8 @@ export async function createSupplierPayment(params: {
   chequeLeafId?: number | null;
   notes?: string | null;
   recordedBy: number;
+  /** Explicit tags (e.g. from a service work order or the payment form). Otherwise derived from the PO lines. */
+  tags?: EntryTagInput | null;
 }) {
   return db.transaction(async (tx) => {
     await assertPeriodOpen(params.paymentDate, 'financial');
@@ -991,6 +1234,7 @@ export async function createSupplierPayment(params: {
     }
 
     let purchaseOrderCode: string | null = null;
+    const taggingPurchaseOrderIds = new Set<number>();
     let contractCode: string | null = null;
     let contractId: number | null = null;
     if (params.purchaseOrderId) {
@@ -1009,6 +1253,7 @@ export async function createSupplierPayment(params: {
         throw new Error('Purchase order does not belong to the selected supplier');
       }
       purchaseOrderCode = purchaseOrder.orderCode;
+      taggingPurchaseOrderIds.add(purchaseOrder.id);
       if (purchaseOrder.contractId) {
         const [contract] = await tx
           .select({ contractCode: supplierContracts.contractCode })
@@ -1052,6 +1297,9 @@ export async function createSupplierPayment(params: {
 
         if (params.purchaseOrderId && invoice.purchaseOrderId && invoice.purchaseOrderId !== params.purchaseOrderId) {
           throw new Error(`Supplier invoice ${allocation.supplierInvoiceId} does not belong to the selected purchase order`);
+        }
+        if (invoice.purchaseOrderId) {
+          taggingPurchaseOrderIds.add(invoice.purchaseOrderId);
         }
 
         const [paid] = await tx
@@ -1097,15 +1345,16 @@ export async function createSupplierPayment(params: {
       sourceModule: 'inventory',
       narrative: params.notes?.trim() || `Supplier payment ${paymentCode}`,
       createdBy: params.recordedBy,
-      entries: [
-        {
-          financeAccountId: account.id,
-          entryDirection: 'outflow',
-          amount: params.amount,
-          valueDate: params.paymentDate,
-          notes: `Supplier payment to ${supplier.supplierName}`,
-        },
-      ],
+      entries: await buildSupplierPaymentEntries({
+        financeAccountId: account.id,
+        amount: params.amount,
+        valueDate: params.paymentDate,
+        notes: `Supplier payment to ${supplier.supplierName}`,
+        explicitTags: params.tags ?? null,
+        purchaseOrderIds: [...taggingPurchaseOrderIds],
+        supplierDefaultCategoryId: supplier.defaultCategoryId ?? null,
+        executor: tx,
+      }),
       executor: tx,
     });
 
@@ -1316,6 +1565,7 @@ export async function createPettyCashAllocation(params: {
           amount: params.amount,
           valueDate: params.allocationDate,
           notes: `Petty cash allocation to ${manager.fullName}`,
+          tags: TRANSFER_TAGS,
         },
         {
           financeAccountId: pettyCashAccount.id,
@@ -1323,6 +1573,7 @@ export async function createPettyCashAllocation(params: {
           amount: params.amount,
           valueDate: params.allocationDate,
           notes: `Petty cash funded for ${manager.fullName}`,
+          tags: TRANSFER_TAGS,
         },
       ],
       executor: tx,
@@ -1361,7 +1612,8 @@ export async function createPettyCashAllocation(params: {
 export async function submitPettyCashExpense(params: {
   allocationId: number;
   expenseDate: string;
-  expenseCategory: string;
+  categoryId: number;
+  costCentreId?: number | null;
   amount: number;
   justification: string;
   createdBy: number;
@@ -1410,12 +1662,19 @@ export async function submitPettyCashExpense(params: {
       throw new Error('Expense exceeds remaining petty cash allocation balance');
     }
 
+    const costCentreId = params.costCentreId
+      ?? (allocation.siteId ? (await ensureSiteCostCentre(allocation.siteId, tx)).id : (await getCostCentreByCode('ADMIN', tx)).id);
+    const tags = await resolveEntryTags({ categoryId: params.categoryId, costCentreId }, tx);
+    const category = await assertCategoryFitsDirection(tags.categoryId, 'outflow', tx);
+
     const [expense] = await tx
       .insert(pettyCashExpenses)
       .values({
         allocationId: allocation.id,
         expenseDate: params.expenseDate,
-        expenseCategory: params.expenseCategory,
+        expenseCategory: category.name,
+        categoryId: tags.categoryId,
+        costCentreId: tags.costCentreId,
         amount: Number(params.amount).toFixed(2),
         justification: params.justification,
         status: 'submitted',
@@ -1442,6 +1701,8 @@ export async function reviewPettyCashExpense(params: {
         amount: pettyCashExpenses.amount,
         expenseDate: pettyCashExpenses.expenseDate,
         expenseCategory: pettyCashExpenses.expenseCategory,
+        categoryId: pettyCashExpenses.categoryId,
+        costCentreId: pettyCashExpenses.costCentreId,
         justification: pettyCashExpenses.justification,
         status: pettyCashExpenses.status,
         treasuryTransactionId: pettyCashExpenses.treasuryTransactionId,
@@ -1479,6 +1740,7 @@ export async function reviewPettyCashExpense(params: {
             amount: Number(expense.amount),
             valueDate: expense.expenseDate,
             notes: expense.justification,
+            tags: { categoryId: expense.categoryId, costCentreId: expense.costCentreId },
           },
         ],
         executor: tx,
@@ -1515,9 +1777,9 @@ export async function reviewPettyCashExpense(params: {
 
 export async function createOperationalExpense(params: {
   expenseDate: string;
-  expenseCategory: string;
+  categoryId: number;
   counterpartyName?: string | null;
-  allocationType: 'batch' | 'site' | 'shared_overhead';
+  costCentreId?: number | null;
   siteId?: number | null;
   batchId?: number | null;
   amount: number;
@@ -1526,19 +1788,19 @@ export async function createOperationalExpense(params: {
 }) {
   return db.transaction(async (tx) => {
     await assertPeriodOpen(params.expenseDate, 'financial');
-    if (params.siteId) {
-      const [site] = await tx.select({ id: sites.id }).from(sites).where(eq(sites.id, params.siteId)).limit(1);
-      if (!site) {
-        throw new Error('Site not found');
-      }
-    }
-
-    if (params.batchId) {
-      const [batch] = await tx.select({ id: batches.id }).from(batches).where(eq(batches.id, params.batchId)).limit(1);
-      if (!batch) {
-        throw new Error('Batch not found');
-      }
-    }
+    const tags = await resolveEntryTags({
+      categoryId: params.categoryId,
+      costCentreId: params.costCentreId,
+      siteId: params.siteId,
+      batchId: params.batchId,
+    }, tx);
+    const category = await assertCategoryFitsDirection(tags.categoryId, 'outflow', tx);
+    const centre = await getCostCentreById(tags.costCentreId!, tx);
+    // allocationType drives batch costing: batch = direct, site = split across the site's batches,
+    // shared_overhead = split across all farm batches, mill = absorbed into feed cost (Phase 2).
+    const allocationType = tags.batchId
+      ? 'batch'
+      : centre.centreType === 'site' ? 'site' : centre.centreType === 'mill' ? 'mill' : 'shared_overhead';
 
     const expenseCode = await getNextOperationalExpenseCode(params.expenseDate, tx);
     const [expense] = await tx
@@ -1546,11 +1808,13 @@ export async function createOperationalExpense(params: {
       .values({
         expenseCode,
         expenseDate: params.expenseDate,
-        expenseCategory: params.expenseCategory,
+        expenseCategory: category.name,
+        categoryId: tags.categoryId,
+        costCentreId: tags.costCentreId,
         counterpartyName: params.counterpartyName ?? null,
-        allocationType: params.allocationType,
-        siteId: params.siteId ?? null,
-        batchId: params.batchId ?? null,
+        allocationType,
+        siteId: centre.siteId ?? null,
+        batchId: tags.batchId,
         amount: Number(params.amount).toFixed(2),
         status: 'pending_approval',
         requestedBy: params.requestedBy,
@@ -1612,6 +1876,9 @@ export async function settleOperationalExpense(params: {
         expenseCode: operationalExpenses.expenseCode,
         expenseDate: operationalExpenses.expenseDate,
         expenseCategory: operationalExpenses.expenseCategory,
+        categoryId: operationalExpenses.categoryId,
+        costCentreId: operationalExpenses.costCentreId,
+        batchId: operationalExpenses.batchId,
         counterpartyName: operationalExpenses.counterpartyName,
         amount: operationalExpenses.amount,
         status: operationalExpenses.status,
@@ -1653,6 +1920,11 @@ export async function settleOperationalExpense(params: {
           amount: Number(expense.amount),
           valueDate: paymentDate,
           notes: expense.notes ?? expense.expenseCategory,
+          tags: {
+            categoryId: expense.categoryId,
+            costCentreId: expense.costCentreId,
+            batchId: expense.batchId,
+          },
         },
       ],
       executor: tx,

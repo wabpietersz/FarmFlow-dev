@@ -37,7 +37,7 @@ export default function OfflineBanner() {
         icon: WifiOff,
         badge: 'Offline',
         badgeVariant: 'destructive' as const,
-        iconClass: 'border-amber-200 bg-amber-50 text-amber-700',
+        iconClass: 'border-warning/30 bg-warning-soft text-warning',
       }
     : hasFailed
       ? {
@@ -46,7 +46,7 @@ export default function OfflineBanner() {
           icon: CloudOff,
           badge: 'Action needed',
           badgeVariant: 'destructive' as const,
-          iconClass: 'border-red-200 bg-red-50 text-red-700',
+          iconClass: 'border-danger/30 bg-danger-soft text-danger',
         }
       : count > 0
         ? {

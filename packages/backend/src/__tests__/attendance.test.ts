@@ -558,9 +558,9 @@ describe('Attendance Module Routes', () => {
       expect(res.status).toBe(200);
     });
 
-    it('POST /api/attendance should return 403 for farm_manager (no create)', async () => {
-      setupAuth(farmManager);
-      setChains([farmManager]);
+    it('POST /api/attendance should return 403 for farm_worker (no attendance access by default)', async () => {
+      setupAuth(farmWorker);
+      setChains([farmWorker]);
 
       const res = await authedRequest('post', '/api/attendance').send({
         employeeId: 1,
@@ -570,12 +570,12 @@ describe('Attendance Module Routes', () => {
       expect(res.status).toBe(403);
     });
 
-    it('GET /api/attendance should allow farm_worker (read_own)', async () => {
+    it('GET /api/attendance should return 403 for farm_worker by default', async () => {
       setupAuth(farmWorker);
-      setChains([farmWorker], [mockAttendance], [{ total: 1 }]);
+      setChains([farmWorker]);
 
       const res = await authedRequest('get', '/api/attendance');
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
     });
   });
 });

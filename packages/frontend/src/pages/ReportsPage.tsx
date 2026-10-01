@@ -22,6 +22,7 @@ import BatchProfitabilityTab from '@/components/reports/BatchProfitabilityTab';
 import HRAnalyticsTab from '@/components/reports/HRAnalyticsTab';
 import FeedAnalyticsTab from '@/components/reports/FeedAnalyticsTab';
 import InventoryConsumptionTab from '@/components/reports/InventoryConsumptionTab';
+import CostAllocationTab from '@/components/reports/CostAllocationTab';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -73,17 +74,17 @@ import {
 import { toast } from 'sonner';
 import { formatCurrency, formatCurrencyCompact } from '@/lib/utils';
 
-const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#ca8a04', '#7c3aed', '#06b6d4'];
+const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)', 'var(--chart-5)', 'var(--danger)'];
 
 const STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-blue-100 text-blue-800',
-  growing: 'bg-green-100 text-green-800',
-  ready_for_sale: 'bg-yellow-100 text-yellow-800',
-  sold: 'bg-gray-100 text-gray-800',
-  culled: 'bg-red-100 text-red-800',
-  completed: 'bg-green-100 text-green-800',
-  pending: 'bg-blue-100 text-blue-800',
-  cancelled: 'bg-red-100 text-red-800',
+  placement: 'bg-info-soft text-info',
+  growing: 'bg-success-soft text-success',
+  ready_for_sale: 'bg-warning-soft text-warning',
+  sold: 'bg-muted text-foreground',
+  culled: 'bg-danger-soft text-danger',
+  completed: 'bg-success-soft text-success',
+  pending: 'bg-info-soft text-info',
+  cancelled: 'bg-danger-soft text-danger',
 };
 
 function getDefaultDateRange() {
@@ -135,8 +136,8 @@ function MetricCard({
             <p className="text-2xl font-bold text-foreground">{value}</p>
           </div>
           <div className="flex items-center gap-1">
-            {trend === 'up' && <TrendingUp className="h-4 w-4 text-green-600" />}
-            {trend === 'down' && <TrendingDown className="h-4 w-4 text-red-600" />}
+            {trend === 'up' && <TrendingUp className="h-4 w-4 text-success" />}
+            {trend === 'down' && <TrendingDown className="h-4 w-4 text-danger" />}
             <Icon className="h-8 w-8 text-muted-foreground" />
           </div>
         </div>
@@ -300,7 +301,7 @@ function BatchPerformanceTab() {
                       <TableCell className="text-right">{formatPercent(batch.mortalityRate)}</TableCell>
                       <TableCell className="text-right">{batch.fcr > 0 ? batch.fcr.toFixed(2) : '--'}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[batch.status] ?? 'bg-gray-100 text-gray-800'}`}>
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[batch.status] ?? 'bg-muted text-foreground'}`}>
                           {batch.status.replace(/_/g, ' ')}
                         </span>
                       </TableCell>
@@ -609,7 +610,7 @@ function FinancialOverviewTab() {
                     </div>
                     <div className="text-right">
                       <p className="font-medium text-sm">{formatCurrency(tx.netAmount)}</p>
-                      <p className={`text-xs capitalize ${tx.status === 'cleared' ? 'text-green-600' : tx.status === 'bounced' ? 'text-red-600' : 'text-blue-600'}`}>{tx.status}</p>
+                      <p className={`text-xs capitalize ${tx.status === 'cleared' ? 'text-success' : tx.status === 'bounced' ? 'text-danger' : 'text-info'}`}>{tx.status}</p>
                     </div>
                   </div>
                 ))}
@@ -631,7 +632,7 @@ function FinancialOverviewTab() {
                   </div>
                   <div className="rounded-lg border p-4">
                     <p className="text-sm text-muted-foreground">Net Treasury Cash</p>
-                    <p className={`mt-2 text-xl font-bold ${(fin?.netCashMovement ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    <p className={`mt-2 text-xl font-bold ${(fin?.netCashMovement ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
                       {formatCurrency(fin?.netCashMovement ?? 0)}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -671,11 +672,11 @@ function FinancialOverviewTab() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-lg bg-muted p-4">
                   <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="mt-2 text-xl font-bold text-red-600">{formatCurrency(buyerSummary.totals.outstandingBalance)}</p>
+                  <p className="mt-2 text-xl font-bold text-danger">{formatCurrency(buyerSummary.totals.outstandingBalance)}</p>
                 </div>
                 <div className="rounded-lg bg-muted p-4">
                   <p className="text-sm text-muted-foreground">Advance Credit</p>
-                  <p className="mt-2 text-xl font-bold text-green-600">{formatCurrency(buyerSummary.totals.advanceCredit)}</p>
+                  <p className="mt-2 text-xl font-bold text-success">{formatCurrency(buyerSummary.totals.advanceCredit)}</p>
                 </div>
                 <div className="rounded-lg bg-muted p-4">
                   <p className="text-sm text-muted-foreground">Applied Receipts</p>
@@ -866,7 +867,7 @@ export default function ReportsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Reports & Analytics</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Reports</h1>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -886,6 +887,9 @@ export default function ReportsPage() {
               )}
               {hasPermission('reports:financial:read') && (
                 <SelectItem value="inventory-consumption">Inventory Usage</SelectItem>
+              )}
+              {hasPermission('reports:financial:read') && (
+                <SelectItem value="cost-allocation">Cost Allocation</SelectItem>
               )}
               <SelectItem value="hr-analytics">HR & Attendance</SelectItem>
               <SelectItem value="feed-analytics">Feed Analytics</SelectItem>
@@ -924,6 +928,12 @@ export default function ReportsPage() {
               <TabsTrigger value="inventory-consumption" className="gap-2">
                 <Package2 className="h-4 w-4" />
                 Inventory Usage
+              </TabsTrigger>
+            )}
+            {hasPermission('reports:financial:read') && (
+              <TabsTrigger value="cost-allocation" className="gap-2">
+                <Layers className="h-4 w-4" />
+                Cost Allocation
               </TabsTrigger>
             )}
             <TabsTrigger value="hr-analytics" className="gap-2">
@@ -966,6 +976,12 @@ export default function ReportsPage() {
         {hasPermission('reports:financial:read') && (
           <TabsContent value="inventory-consumption">
             <InventoryConsumptionTab />
+          </TabsContent>
+        )}
+
+        {hasPermission('reports:financial:read') && (
+          <TabsContent value="cost-allocation">
+            <CostAllocationTab />
           </TabsContent>
         )}
 

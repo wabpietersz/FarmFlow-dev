@@ -1,329 +1,190 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { useDashboardExceptions, useEnhancedDashboard, useExecutiveDashboard, useRecentActivity } from '@/hooks/useDashboard';
-import EnhancedMetricCard from '@/components/dashboard/EnhancedMetricCard';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import type { DashboardPeriod } from '@farmflow/shared';
-import {
-  Egg,
-  TrendingDown,
-  DollarSign,
-  Users,
-  ShoppingCart,
-  Activity,
-  Plus,
-  ClipboardList,
-  Wheat,
-  Clock,
-  CalendarCheck,
-  Landmark,
-} from 'lucide-react';
+import { useHomeDashboard, type HomeBatchCard } from '@/hooks/useDashboard';
+import { getApiErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 
-const PERIODS: { label: string; value: DashboardPeriod }[] = [
-  { label: '7d', value: '7d' },
-  { label: '30d', value: '30d' },
-  { label: '90d', value: '90d' },
-  { label: 'YTD', value: 'ytd' },
-];
+const SPEND_COLORS = ['bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-chart-5'];
 
-function getTimeAgo(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function compactRs(value: number) {
+  if (Math.abs(value) >= 100_000) return `Rs ${(value / 100_000).toFixed(1)} L`;
+  return formatCurrency(value);
+}
+
+function changeNote(current: number, previous: number, label: string) {
+  if (previous <= 0) return label;
+  const change = ((current - previous) / previous) * 100;
+  return `${change >= 0 ? '+' : ''}${change.toFixed(0)}% vs last month`;
 }
 
 export default function DashboardPage() {
-  const { hasPermission } = useAuthStore();
-  const [period, setPeriod] = useState<DashboardPeriod>('7d');
+  const { currentUser } = useAuthStore();
+  const { data, isLoading, error } = useHomeDashboard();
+  const home = data?.data;
+  const firstName = currentUser?.fullName?.split(/\s+/)[0] ?? '';
+  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
 
-  const { data, isLoading } = useEnhancedDashboard(period);
-  const summary = data?.data;
-  const executiveQuery = useExecutiveDashboard();
-  const exceptionsQuery = useDashboardExceptions();
-  const executive = executiveQuery.data?.data;
-  const exceptions = exceptionsQuery.data?.data;
-  const { data: activityData } = useRecentActivity(10);
-  const activities = (activityData as unknown as { data?: { id: number; type: string; action: string; description: string; timestamp: string }[] })?.data ?? [];
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-72 rounded-full" />
+        <Skeleton className="h-48 rounded-3xl" />
+        <div className="grid gap-5 lg:grid-cols-3">
+          <Skeleton className="h-64 rounded-3xl" />
+          <Skeleton className="h-64 rounded-3xl" />
+          <Skeleton className="h-64 rounded-3xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !home) {
+    return <p className="rounded-2xl bg-danger-soft p-4 text-sm font-medium text-danger">{getApiErrorMessage(error, 'Could not load your home screen.')}</p>;
+  }
+
+  const money = home.money;
+  const spendTotal = money?.spendByGroup.reduce((sum, row) => sum + row.amount, 0) ?? 0;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+      <header>
+        <p className="text-sm font-semibold text-muted-foreground">{today}</p>
+        <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-foreground">
+          {greeting()}{firstName ? `, ${firstName}` : ''}
+        </h1>
+      </header>
 
-        {/* Period Selector */}
-        <div className="flex gap-1 bg-muted rounded-lg p-1">
-          {PERIODS.map((p) => (
-            <Button
-              key={p.value}
-              variant={period === p.value ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setPeriod(p.value)}
-              className="h-7 px-3 text-xs"
-            >
-              {p.label}
-            </Button>
-          ))}
-        </div>
-      </div>
+      {money ? (
+        <section aria-label="Money at a glance" className="grid gap-4 rounded-3xl bg-panel p-5 sm:p-7 lg:grid-cols-[1.3fr_repeat(3,minmax(0,1fr))] lg:items-end">
+          <div>
+            <p className="text-[15px] font-semibold text-muted-foreground">Cash on hand today</p>
+            <p className="mt-1.5 text-4xl font-extrabold tracking-tight text-foreground tabular-nums sm:text-5xl">{formatCurrency(money.cashOnHand)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Across {money.accountCount} account{money.accountCount === 1 ? '' : 's'}</p>
+          </div>
+          <StatCard label={`Money in · ${monthName}`} value={compactRs(money.moneyInThisMonth)} note={changeNote(money.moneyInThisMonth, money.moneyInLastMonth, 'Nothing last month')} tone={money.moneyInThisMonth >= money.moneyInLastMonth ? 'success' : 'muted'} />
+          <StatCard label={`Money out · ${monthName}`} value={compactRs(money.moneyOutThisMonth)} note={money.spendByGroup[0] ? `${money.spendByGroup[0].group} is ${spendTotal > 0 ? Math.round((money.spendByGroup[0].amount / spendTotal) * 100) : 0}%` : 'No spending yet'} tone="muted" />
+          <StatCard label="Live birds" value={home.liveBirds == null ? '—' : home.liveBirds.toLocaleString()} note={home.batches ? `${home.batches.length} batch${home.batches.length === 1 ? '' : 'es'} growing` : ''} tone="muted" />
+        </section>
+      ) : null}
 
-      {/* Enhanced Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <EnhancedMetricCard
-          title="Active Batches"
-          value={String(summary?.activeBatches ?? 0)}
-          description="across all sites"
-          icon={Egg}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Avg FCR"
-          value={summary?.averageFcr ? summary.averageFcr.toFixed(2) : '--'}
-          icon={Activity}
-          loading={isLoading}
-          trend={summary?.averageFcrTrend}
-          sparklineColor="#404040"
-          invertTrend // lower FCR is better
-        />
-        <EnhancedMetricCard
-          title="Mortality"
-          value={String(summary?.mortalityLast7Days ?? 0)}
-          description={`last ${period === 'ytd' ? 'YTD' : period}`}
-          icon={TrendingDown}
-          loading={isLoading}
-          trend={summary?.mortalityTrend}
-          sparklineColor="#dc2626"
-          invertTrend // lower mortality is better
-        />
-        <EnhancedMetricCard
-          title="Outstanding"
-          value={formatCurrency(summary?.outstandingPayments ?? 0)}
-          description="pending payments"
-          icon={DollarSign}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Employees"
-          value={String(summary?.totalEmployees ?? 0)}
-          description="active"
-          icon={Users}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Recent Sales"
-          value={String(summary?.recentSales?.count ?? 0)}
-          description={
-            summary?.recentSales
-              ? formatCurrency(summary.recentSales.totalAmount)
-              : undefined
-          }
-          icon={ShoppingCart}
-          loading={isLoading}
-          trend={summary?.salesTrend}
-          sparklineColor="#525252"
-        />
-        <EnhancedMetricCard
-          title="Feed Inventory"
-          value={`${summary?.feedInventoryStatus?.lowStockItems ?? 0} low`}
-          description={`of ${summary?.feedInventoryStatus?.totalItems ?? 0} items`}
-          icon={Wheat}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Pending Payroll"
-          value={String(summary?.pendingPayroll?.count ?? 0)}
-          description={
-            summary?.pendingPayroll
-              ? formatCurrency(summary.pendingPayroll.totalAmount)
-              : undefined
-          }
-          icon={Clock}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Attendance Rate"
-          value={`${summary?.attendanceRate?.rate ?? 0}%`}
-          description={
-            summary?.attendanceRate
-              ? `${summary.attendanceRate.presentToday}/${summary.attendanceRate.totalActive} today`
-              : undefined
-          }
-          icon={CalendarCheck}
-          loading={isLoading}
-        />
-        <EnhancedMetricCard
-          title="Cash Position"
-          value={formatCurrency(executive?.cash.totalBookBalance ?? 0)}
-          description={`Bank ${formatCurrency(executive?.cash.bankBalance ?? 0)}`}
-          icon={Landmark}
-          loading={executiveQuery.isLoading}
-        />
-        <EnhancedMetricCard
-          title="Exception Load"
-          value={String(
-            (exceptions?.summary.negativeStockRisk ?? 0)
-            + (exceptions?.summary.paymentWithoutTreasuryLink ?? 0)
-            + (exceptions?.summary.chequeAgeing ?? 0)
-            + (exceptions?.summary.overduePayables ?? 0),
-          )}
-          description="tracked control exceptions"
-          icon={Clock}
-          loading={exceptionsQuery.isLoading}
-        />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Executive Snapshot</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Overdue payables</span>
-              <span className="font-medium">{formatCurrency(executive?.payables.overdueAmount ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Outstanding receivables</span>
-              <span className="font-medium">{formatCurrency(executive?.receivables.outstandingAmount ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Active batch revenue</span>
-              <span className="font-medium">{formatCurrency(executive?.profitability.totalRevenue ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Gross margin</span>
-              <span className="font-medium">{formatCurrency(executive?.profitability.grossMargin ?? 0)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Pending approvals</span>
-              <span className="font-medium">{executive?.payables.pendingApprovalCount ?? 0}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Control Exceptions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Negative stock risk</span>
-              <span className="font-medium">{exceptions?.summary.negativeStockRisk ?? 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Missing treasury link</span>
-              <span className="font-medium">{exceptions?.summary.paymentWithoutTreasuryLink ?? 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Cheque ageing</span>
-              <span className="font-medium">{exceptions?.summary.chequeAgeing ?? 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Overdue receivables</span>
-              <span className="font-medium">{exceptions?.summary.overdueReceivables ?? 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Missing cost components</span>
-              <span className="font-medium">{exceptions?.summary.missingCostComponents ?? 0}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Quick Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-3">
-          {hasPermission('employees:create') && (
-            <Button variant="outline" asChild>
-              <Link to="/employees/new">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Employee
-              </Link>
-            </Button>
-          )}
-          {hasPermission('employees:read') && (
-            <Button variant="outline" asChild>
-              <Link to="/employees">
-                <Users className="h-4 w-4 mr-2" />
-                View Employees
-              </Link>
-            </Button>
-          )}
-          {hasPermission('batches:read') && (
-            <Button variant="outline" asChild>
-              <Link to="/batches">
-                <ClipboardList className="h-4 w-4 mr-2" />
-                View Batches
-              </Link>
-            </Button>
-          )}
-          {hasPermission('sales:read') && (
-            <Button variant="outline" asChild>
-              <Link to="/sales">
-                <ShoppingCart className="h-4 w-4 mr-2" />
-                View Sales
-              </Link>
-            </Button>
-          )}
-          {hasPermission('reports:read') && (
-            <Button variant="outline" asChild>
-              <Link to="/reports">
-                <Activity className="h-4 w-4 mr-2" />
-                View Reports
-              </Link>
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent Activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {activities.length > 0 ? (
-            <div className="space-y-3">
-              {activities.map((activity) => {
-                const typeVariant: Record<string, 'secondary' | 'outline' | 'destructive'> = {
-                  batch: 'secondary',
-                  sale: 'secondary',
-                  employee: 'outline',
-                  feed: 'outline',
-                  payroll: 'destructive',
-                  attendance: 'outline',
-                };
-                const timeAgo = getTimeAgo(activity.timestamp);
-                return (
-                  <div key={activity.id} className="flex items-center gap-3 text-sm">
-                    <Badge variant={typeVariant[activity.type] || 'outline'} className="capitalize">
-                      {activity.type}
-                    </Badge>
-                    <span className="text-foreground flex-1">{activity.description}</span>
-                    <span className="text-muted-foreground text-xs whitespace-nowrap">{timeAgo}</span>
-                  </div>
-                );
-              })}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,0.9fr)]">
+        <section aria-labelledby="live-batches" className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h2 id="live-batches" className="text-lg font-bold">Growing now</h2>
+            <Link to="/batches" className="text-sm font-semibold text-primary hover:underline">All batches</Link>
+          </div>
+          {home.batches && home.batches.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {home.batches.map((batch) => <BatchCard key={batch.id} batch={batch} />)}
             </div>
           ) : (
-            <p className="text-muted-foreground text-sm">
-              No recent activity to display.
-            </p>
+            <div className="rounded-3xl border border-dashed border-border p-8 text-center">
+              <p className="font-semibold">No batches growing</p>
+              <p className="mt-1 text-sm text-muted-foreground">Start a batch when chicks arrive.</p>
+              <Button asChild className="mt-4"><Link to="/batches">Go to batches</Link></Button>
+            </div>
           )}
-        </CardContent>
-      </Card>
+        </section>
+
+        <section aria-labelledby="todo" className="h-fit space-y-2.5 rounded-3xl bg-panel-warm p-5">
+          <h2 id="todo" className="text-lg font-bold">To do today</h2>
+          {home.todos.length === 0 ? (
+            <div className="flex items-center gap-3 rounded-2xl bg-card p-4">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              <p className="text-sm font-semibold">All caught up</p>
+            </div>
+          ) : home.todos.map((todo) => (
+            <Link
+              key={todo.key}
+              to={todo.href}
+              className="group flex min-h-14 items-center gap-3 rounded-2xl bg-card p-3.5 transition-colors hover:bg-card/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${todo.tone === 'info' ? 'bg-info' : todo.tone === 'danger' ? 'bg-danger' : 'bg-warning'}`} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px] font-bold leading-snug">{todo.title}</span>
+                <span className="block truncate text-[13px] text-muted-foreground">{todo.detail}</span>
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </Link>
+          ))}
+        </section>
+      </div>
+
+      {money && money.spendByGroup.length > 0 ? (
+        <section aria-labelledby="money-went" className="space-y-4 rounded-3xl border border-border p-5 sm:p-6">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="money-went" className="text-lg font-bold">Where the money went · {monthName}</h2>
+            <Link to="/treasury?tab=ledger" className="text-sm font-semibold text-primary hover:underline">Open ledger</Link>
+          </div>
+          <div className="flex h-5 overflow-hidden rounded-full bg-muted" role="img" aria-label="Spending by group this month">
+            {money.spendByGroup.map((row, index) => (
+              <div key={row.group} className={SPEND_COLORS[index % SPEND_COLORS.length]} style={{ width: `${(row.amount / spendTotal) * 100}%` }} />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {money.spendByGroup.map((row, index) => (
+              <div key={row.group} className="flex items-center gap-2 text-sm">
+                <span className={`h-3 w-3 rounded-[4px] ${SPEND_COLORS[index % SPEND_COLORS.length]}`} />
+                <span className="font-semibold">{row.group}</span>
+                <span className="text-muted-foreground tabular-nums">{compactRs(row.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function StatCard({ label, value, note, tone }: { label: string; value: string; note: string; tone: 'success' | 'muted' }) {
+  return (
+    <div className="rounded-2xl bg-card p-4">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="mt-1 text-2xl font-bold tabular-nums">{value}</p>
+      <p className={`mt-0.5 text-[13px] font-semibold ${tone === 'success' ? 'text-success' : 'text-muted-foreground'}`}>{note}</p>
+    </div>
+  );
+}
+
+function BatchCard({ batch }: { batch: HomeBatchCard }) {
+  const stats = [
+    { label: 'Live birds', value: batch.liveBirds.toLocaleString() },
+    { label: 'Mortality', value: `${batch.mortalityPct.toFixed(1)}%`, warn: batch.mortalityPct >= 5 },
+    { label: 'Avg weight', value: batch.averageWeightKg == null ? '—' : `${batch.averageWeightKg.toFixed(2)} kg` },
+    { label: 'Cost per kg', value: batch.costPerKgLive == null ? '—' : formatCurrency(batch.costPerKgLive) },
+  ];
+  return (
+    <Link
+      to={`/batches/${batch.id}`}
+      className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-lg font-bold">{batch.batchCode}</p>
+          <p className="truncate text-sm text-muted-foreground">{batch.siteName}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-secondary px-3 py-1 text-sm font-bold text-secondary-foreground">Day {batch.ageDays}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3.5">
+        {stats.map((stat) => (
+          <div key={stat.label}>
+            <p className="text-[13px] text-muted-foreground">{stat.label}</p>
+            <p className={`mt-0.5 text-xl font-bold tabular-nums ${stat.warn ? 'text-warning' : ''}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+      <p className={`border-t border-border pt-3 text-sm font-semibold ${batch.tone === 'warning' ? 'text-warning' : 'text-success'}`}>{batch.note}</p>
+    </Link>
   );
 }

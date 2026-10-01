@@ -191,6 +191,8 @@ describe('Treasury Routes', () => {
       financeAccountId: 3,
       amount: 2500,
       narrative: 'Cash top-up',
+      categoryId: 28,
+      costCentreId: 4,
     });
 
     expect(res.status).toBe(201);
@@ -198,7 +200,25 @@ describe('Treasury Routes', () => {
       transactionType: 'manual_inflow',
       financeAccountId: 3,
       amount: 2500,
+      categoryId: 28,
+      costCentreId: 4,
     }));
+  });
+
+  it('POST /api/treasury/transactions/manual should reject an uncategorized manual entry', async () => {
+    setupAuth();
+    setChains([accountant]);
+
+    const res = await authedRequest('post', '/api/treasury/transactions/manual').send({
+      transactionDate: '2026-04-04',
+      transactionType: 'manual_outflow',
+      financeAccountId: 3,
+      amount: 900,
+      narrative: 'Untagged spend',
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockCreateManualTreasuryTransaction).not.toHaveBeenCalled();
   });
 
   it('POST /api/treasury/expenses/operational should create an operational expense request', async () => {
@@ -212,8 +232,7 @@ describe('Treasury Routes', () => {
 
     const res = await authedRequest('post', '/api/treasury/expenses/operational').send({
       expenseDate: '2026-04-04',
-      expenseCategory: 'Repairs',
-      allocationType: 'site',
+      categoryId: 14,
       siteId: 1,
       amount: 3200,
       notes: 'Water line repair',
@@ -221,7 +240,7 @@ describe('Treasury Routes', () => {
 
     expect(res.status).toBe(201);
     expect(mockCreateOperationalExpense).toHaveBeenCalledWith(expect.objectContaining({
-      expenseCategory: 'Repairs',
+      categoryId: 14,
       siteId: 1,
       amount: 3200,
     }));

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import {
@@ -449,6 +450,7 @@ router.get('/', authenticate, requirePermission('payroll:read'), async (req: Req
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to list payroll', { error });
     res.status(500).json({
       success: false,
@@ -603,6 +605,7 @@ router.post('/preview', authenticate, requirePermission('payroll:create'), valid
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to build payroll preview', { error });
     res.status(500).json({
       success: false,
@@ -691,6 +694,7 @@ router.get('/:id', authenticate, requirePermission('payroll:read'), async (req: 
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to get payroll detail', { error });
     res.status(500).json({
       success: false,
@@ -894,6 +898,7 @@ router.post('/', authenticate, requirePermission('payroll:create'), validate(cre
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to create payroll', { error });
     res.status(500).json({
       success: false,
@@ -995,6 +1000,7 @@ router.post('/generate/precheck', authenticate, requirePermission('payroll:creat
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to run payroll precheck', { error });
     res.status(500).json({
       success: false,
@@ -1263,6 +1269,7 @@ router.post('/generate', authenticate, requirePermission('payroll:create'), vali
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to generate payroll', { error });
     res.status(500).json({
       success: false,
@@ -1344,6 +1351,7 @@ router.put('/:id', authenticate, requirePermission('payroll:update'), validate(u
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to update payroll', { error });
     res.status(500).json({
       success: false,
@@ -1459,6 +1467,7 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     if (isMissingTreasuryTable(error) || isMissingTreasuryColumn(error)) {
       sendTreasurySchemaNotReady(res);
       return;
@@ -1534,6 +1543,7 @@ router.delete('/:id', authenticate, requirePermission('payroll:delete'), async (
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to delete payroll', { error });
     res.status(500).json({
       success: false,
@@ -1608,6 +1618,7 @@ router.post('/:id/deductions', authenticate, requirePermission('payroll:update')
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to add deduction', { error });
     res.status(500).json({
       success: false,
@@ -1666,6 +1677,7 @@ router.delete('/:id/deductions/:deductionId', authenticate, requirePermission('p
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to remove deduction', { error });
     res.status(500).json({
       success: false,
@@ -1740,6 +1752,7 @@ router.post('/:id/allowances', authenticate, requirePermission('payroll:update')
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to add allowance', { error });
     res.status(500).json({
       success: false,
@@ -1798,6 +1811,7 @@ router.delete('/:id/allowances/:allowanceId', authenticate, requirePermission('p
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (isFinanceTagError(error)) { sendFinanceTagError(res, error); return; }
     logger.error('Failed to remove allowance', { error });
     res.status(500).json({
       success: false,

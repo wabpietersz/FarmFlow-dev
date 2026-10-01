@@ -4,6 +4,7 @@ export enum BatchStatus {
   ReadyForSale = 'ready_for_sale',
   Sold = 'sold',
   Culled = 'culled',
+  Closed = 'closed',
 }
 
 export enum CageStatus {

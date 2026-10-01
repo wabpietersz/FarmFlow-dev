@@ -5,6 +5,8 @@ export const employeeFormSchema = z.object({
   lastName: z.string().min(1, 'Last name is required').max(100),
   designation: z.string().min(1, 'Designation is required').max(100),
   siteId: z.coerce.number({ required_error: 'Site is required' }).int().positive('Site is required'),
+  /** Blank = the site's cost centre. Set to Feed Mill / Admin for staff whose wages belong there. */
+  costCentreId: z.string().optional(),
   employmentType: z.enum(['permanent', 'contract', 'seasonal'], {
     required_error: 'Employment type is required',
   }),

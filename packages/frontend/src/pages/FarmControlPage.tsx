@@ -14,6 +14,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useSites } from '@/hooks/useSites';
 import { useBatches } from '@/hooks/useBatches';
+import { CategorySelect } from '@/components/finance/FinanceTagFields';
+import { InvoiceMatchBadge } from '@/components/stock/InvoiceMatchBadge';
 import {
   useConsumeInventoryItemToSite,
   useCreateServiceWorkOrder,
@@ -43,7 +45,8 @@ type ServiceWorkOrderForm = {
   title: string;
   supplierId: string;
   contractId: string;
-  allocationType: 'batch' | 'site' | 'shared_overhead';
+  allocationType: 'batch' | 'site' | 'shared_overhead' | 'mill';
+  categoryId: string;
   siteId: string;
   batchId: string;
   serviceDate: string;
@@ -86,6 +89,7 @@ const EMPTY_SERVICE_WORK_ORDER_FORM: ServiceWorkOrderForm = {
   supplierId: '',
   contractId: '',
   allocationType: 'site',
+  categoryId: '',
   siteId: '',
   batchId: '',
   serviceDate: today,
@@ -137,6 +141,8 @@ export default function FarmControlPage() {
 
   const reviewContractMutation = useReviewSupplierContract();
   const reviewInvoiceMutation = useReviewSupplierInvoice();
+  const [overrideInvoiceId, setOverrideInvoiceId] = useState<number | null>(null);
+  const [overrideNote, setOverrideNote] = useState('');
   const createServiceWorkOrderMutation = useCreateServiceWorkOrder();
   const reviewServiceWorkOrderMutation = useReviewServiceWorkOrder();
   const settleServiceWorkOrderMutation = useSettleServiceWorkOrder();
@@ -170,11 +176,28 @@ export default function FarmControlPage() {
   };
 
   const handleReviewInvoice = async (id: number, status: 'approved' | 'rejected') => {
+    const invoice = supplierInvoices.find((row) => row.id === id);
+    if (status === 'approved' && invoice?.matchStatus === 'over_billed') {
+      setOverrideInvoiceId(id);
+      setOverrideNote('');
+      return;
+    }
     try {
       await reviewInvoiceMutation.mutateAsync({ id, data: { status, approvalNotes: status === 'approved' ? 'Approved from farm control' : 'Rejected from farm control' } });
       toast.success(`Invoice ${status}`);
     } catch (error) {
       parseApiError(error, 'Failed to review invoice');
+    }
+  };
+
+  const handleApproveOverBilled = async () => {
+    if (!overrideInvoiceId || !overrideNote.trim()) return;
+    try {
+      await reviewInvoiceMutation.mutateAsync({ id: overrideInvoiceId, data: { status: 'approved', approvalNotes: 'Approved over goods received', overrideNote: overrideNote.trim() } });
+      toast.success('Invoice approved');
+      setOverrideInvoiceId(null);
+    } catch (error) {
+      parseApiError(error, 'Failed to approve invoice');
     }
   };
 
@@ -215,6 +238,7 @@ export default function FarmControlPage() {
         supplierId: Number(serviceWorkOrderForm.supplierId),
         contractId: serviceWorkOrderForm.contractId ? Number(serviceWorkOrderForm.contractId) : null,
         allocationType: serviceWorkOrderForm.allocationType,
+        categoryId: serviceWorkOrderForm.categoryId ? Number(serviceWorkOrderForm.categoryId) : null,
         siteId: serviceWorkOrderForm.siteId ? Number(serviceWorkOrderForm.siteId) : null,
         batchId: serviceWorkOrderForm.batchId ? Number(serviceWorkOrderForm.batchId) : null,
         serviceDate: serviceWorkOrderForm.serviceDate,
@@ -278,7 +302,7 @@ export default function FarmControlPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Farm Control</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Farm Control</h1>
         <p className="text-sm text-muted-foreground">Approvals, service workflows, site consumptions, and close controls.</p>
       </div>
 
@@ -321,15 +345,16 @@ export default function FarmControlPage() {
             <CardHeader><CardTitle>Pending Supplier Invoices</CardTitle></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Supplier</TableHead><TableHead>Due Date</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Supplier</TableHead><TableHead>Due Date</TableHead><TableHead>Match</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {supplierInvoices.length === 0 ? (
-                    <TableRow><TableCell colSpan={4} className="h-20 text-center text-sm text-muted-foreground">No pending invoices.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="h-20 text-center text-sm text-muted-foreground">No pending invoices.</TableCell></TableRow>
                   ) : supplierInvoices.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell>{invoice.invoiceCode} - {invoice.invoiceReference}</TableCell>
                       <TableCell>{invoice.supplierName}</TableCell>
                       <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
+                      <TableCell><InvoiceMatchBadge invoice={invoice} /></TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => handleReviewInvoice(invoice.id, 'approved')}>Approve</Button>
@@ -512,7 +537,8 @@ export default function FarmControlPage() {
             <div className="grid gap-2"><Label>Supplier</Label><Select value={serviceWorkOrderForm.supplierId} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, supplierId: value }))}><SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger><SelectContent>{suppliers.map((supplier) => <SelectItem key={supplier.id} value={String(supplier.id)}>{supplier.supplierName}</SelectItem>)}</SelectContent></Select></div>
             <div className="grid gap-2 md:col-span-2"><Label>Title</Label><Input value={serviceWorkOrderForm.title} onChange={(e) => setServiceWorkOrderForm((prev) => ({ ...prev, title: e.target.value }))} /></div>
             <div className="grid gap-2"><Label>Contract</Label><Select value={serviceWorkOrderForm.contractId || 'none'} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, contractId: value === 'none' ? '' : value }))}><SelectTrigger><SelectValue placeholder="Optional contract" /></SelectTrigger><SelectContent><SelectItem value="none">No contract</SelectItem>{contractsQuery.data?.data?.map((contract) => <SelectItem key={contract.id} value={String(contract.id)}>{contract.contractCode}</SelectItem>)}</SelectContent></Select></div>
-            <div className="grid gap-2"><Label>Allocation</Label><Select value={serviceWorkOrderForm.allocationType} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, allocationType: value as ServiceWorkOrderForm['allocationType'] }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="site">Site</SelectItem><SelectItem value="batch">Batch</SelectItem><SelectItem value="shared_overhead">Shared Overhead</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label>Allocation</Label><Select value={serviceWorkOrderForm.allocationType} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, allocationType: value as ServiceWorkOrderForm['allocationType'] }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="site">Site</SelectItem><SelectItem value="batch">Batch</SelectItem><SelectItem value="shared_overhead">Shared overhead (Admin)</SelectItem><SelectItem value="mill">Feed Mill</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label>Finance category</Label><CategorySelect value={serviceWorkOrderForm.categoryId} onChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, categoryId: value }))} placeholder="Automatic from type" /></div>
             <div className="grid gap-2"><Label>Site</Label><Select value={serviceWorkOrderForm.siteId || 'none'} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, siteId: value === 'none' ? '' : value }))}><SelectTrigger><SelectValue placeholder="Optional site" /></SelectTrigger><SelectContent><SelectItem value="none">No site</SelectItem>{sites.map((site) => <SelectItem key={site.id} value={String(site.id)}>{site.siteName}</SelectItem>)}</SelectContent></Select></div>
             <div className="grid gap-2"><Label>Batch</Label><Select value={serviceWorkOrderForm.batchId || 'none'} onValueChange={(value) => setServiceWorkOrderForm((prev) => ({ ...prev, batchId: value === 'none' ? '' : value }))}><SelectTrigger><SelectValue placeholder="Optional batch" /></SelectTrigger><SelectContent><SelectItem value="none">No batch</SelectItem>{batches.map((batch) => <SelectItem key={batch.id} value={String(batch.id)}>{batch.batchCode}</SelectItem>)}</SelectContent></Select></div>
             <div className="grid gap-2"><Label>Service Date</Label><Input type="date" value={serviceWorkOrderForm.serviceDate} onChange={(e) => setServiceWorkOrderForm((prev) => ({ ...prev, serviceDate: e.target.value }))} /></div>
@@ -563,6 +589,23 @@ export default function FarmControlPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPeriodLockDialog(false)}>Cancel</Button>
             <Button onClick={handleCreatePeriodLock} disabled={createPeriodLockMutation.isPending}>Lock Period</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={overrideInvoiceId !== null} onOpenChange={(open) => { if (!open) setOverrideInvoiceId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve over-billed invoice?</DialogTitle>
+            <DialogDescription>This invoice is for more than the goods received on its order. Receive the rest of the goods first, or give a reason to approve it anyway.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="override-note">Reason</Label>
+            <Textarea id="override-note" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="e.g. Transport charge agreed with supplier" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOverrideInvoiceId(null)}>Cancel</Button>
+            <Button onClick={handleApproveOverBilled} disabled={!overrideNote.trim() || reviewInvoiceMutation.isPending}>Approve anyway</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

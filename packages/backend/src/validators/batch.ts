@@ -80,3 +80,9 @@ export const createChickPlacementSchema = z.object({
   unitCost: z.number().nonnegative('Unit cost cannot be negative'),
   notes: z.string().max(1000).optional(),
 });
+
+export const closeBatchSchema = z.object({
+  notes: z.string().max(1000).optional().or(z.literal('')),
+  /** Close even though placed ≠ deaths + sold; the difference is recorded as unaccounted birds. */
+  acceptVariance: z.boolean().optional(),
+});

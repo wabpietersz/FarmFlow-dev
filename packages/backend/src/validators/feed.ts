@@ -7,6 +7,7 @@ export const createSupplierSchema = z.object({
   phoneNumber: z.string().max(20).nullable().optional(),
   email: z.string().email('Invalid email').max(100).nullable().optional().or(z.literal('')),
   address: z.string().max(500).nullable().optional(),
+  defaultCategoryId: z.number().int().positive().nullable().optional(),
 });
 
 export const updateSupplierSchema = z.object({
@@ -15,6 +16,7 @@ export const updateSupplierSchema = z.object({
   phoneNumber: z.string().max(20).nullable().optional(),
   email: z.string().email().max(100).nullable().optional(),
   address: z.string().max(500).nullable().optional(),
+  defaultCategoryId: z.number().int().positive().nullable().optional(),
   status: z.enum(['active', 'inactive']).optional(),
 });
 
@@ -150,6 +152,7 @@ export const inventoryAdjustmentSchema = z.object({
 export const createPurchaseOrderSchema = z.object({
   supplierId: z.number().int().positive('Supplier is required'),
   contractId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
   orderDate: z.string().min(1, 'Order date is required'),
   expectedDeliveryDate: z.string().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
@@ -168,6 +171,7 @@ export const createPurchaseOrderSchema = z.object({
 
 export const updatePurchaseOrderSchema = z.object({
   contractId: z.number().int().positive().nullable().optional(),
+  costCentreId: z.number().int().positive().nullable().optional(),
   expectedDeliveryDate: z.string().nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
   items: z

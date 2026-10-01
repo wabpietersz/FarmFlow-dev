@@ -35,10 +35,10 @@ import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
 
 const PAYROLL_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-800',
-  reviewed: 'bg-blue-100 text-blue-800',
-  approved: 'bg-yellow-100 text-yellow-800',
-  paid: 'bg-green-100 text-green-800',
+  draft: 'bg-muted text-foreground',
+  reviewed: 'bg-info-soft text-info',
+  approved: 'bg-warning-soft text-warning',
+  paid: 'bg-success-soft text-success',
 };
 
 type EditableAllowance = PayrollAllowanceInput & { included: boolean };
@@ -378,7 +378,7 @@ export default function PayrollPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Payroll</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Payroll</h1>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <div className="flex w-full items-center gap-2 sm:w-auto">
             <span className="text-sm text-muted-foreground">Period</span>
@@ -456,7 +456,7 @@ export default function PayrollPage() {
                 </div>
               ) : payrollError ? (
                 <div className="text-center py-12 space-y-3">
-                  <Banknote className="h-12 w-12 text-red-400 mx-auto" />
+                  <Banknote className="h-12 w-12 text-danger mx-auto" />
                   <h3 className="text-lg font-medium text-foreground mb-1">Failed to load payroll records</h3>
                   <p className="text-sm text-muted-foreground">Please retry. If this persists, check API permissions and server logs.</p>
                   <Button variant="outline" onClick={() => { void refetchPayroll(); }}>
@@ -527,7 +527,7 @@ export default function PayrollPage() {
                                     })}
                                     disabled={deletePayrollMutation.isPending && deletingPayrollId === record.id}
                                   >
-                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                    <Trash2 className="h-4 w-4 text-danger" />
                                   </Button>
                                 )}
                               </div>
@@ -662,10 +662,10 @@ export default function PayrollPage() {
                         <TableCell>
                           <div className="font-medium">{row.employeeName}</div>
                           {hasExistingPayrollWarning(row) && (
-                            <p className="text-xs text-red-700">Payroll already exists for this period.</p>
+                            <p className="text-xs text-danger">Payroll already exists for this period.</p>
                           )}
                           {!row.hasCompensation && (
-                            <p className="text-xs text-amber-700">Compensation not setup; manual values required.</p>
+                            <p className="text-xs text-warning">Compensation not setup; manual values required.</p>
                           )}
                         </TableCell>
                         <TableCell>
@@ -871,12 +871,12 @@ export default function PayrollPage() {
           ) : (
             <div className="space-y-4">
               {!singleRow.hasCompensation && (
-                <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <div className="rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning">
                   Compensation is not setup for this employee. You can still create payroll with manual values.
                 </div>
               )}
               {hasExistingPayrollWarning(singleRow) && (
-                <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+                <div className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
                   Payroll already exists for this employee in the selected pay period.
                 </div>
               )}

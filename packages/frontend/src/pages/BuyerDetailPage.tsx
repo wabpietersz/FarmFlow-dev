@@ -8,9 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatCurrency } from '@/lib/utils';
 
 const RECEIPT_STATUS_COLORS: Record<string, string> = {
-  completed: 'bg-green-100 text-green-800',
-  pending: 'bg-amber-100 text-amber-800',
-  bounced: 'bg-red-100 text-red-800',
+  completed: 'bg-success-soft text-success',
+  pending: 'bg-warning-soft text-warning',
+  bounced: 'bg-danger-soft text-danger',
 };
 
 function formatReceiptStatus(status: string) {
@@ -64,7 +64,7 @@ export default function BuyerDetailPage() {
       <div className="flex items-center gap-4">
         <Button asChild variant="ghost" size="icon"><Link to="/sales"><ArrowLeft className="h-4 w-4" /></Link></Button>
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{buyer.buyerName}</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">{buyer.buyerName}</h1>
           <p className="text-sm text-muted-foreground">{buyer.contactPerson ?? 'No contact person'} | {buyer.phoneNumber ?? 'No phone'}</p>
         </div>
       </div>
@@ -73,7 +73,7 @@ export default function BuyerDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-blue-600" />
+              <DollarSign className="h-5 w-5 text-info" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(summary.totalSales)}</p>
                 <p className="text-xs text-muted-foreground">Total Sales</p>
@@ -84,7 +84,7 @@ export default function BuyerDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-green-600" />
+              <CreditCard className="h-5 w-5 text-success" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(summary.totalReceiptsCompleted)}</p>
                 <p className="text-xs text-muted-foreground">Receipts</p>
@@ -95,7 +95,7 @@ export default function BuyerDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-red-600" />
+              <FileText className="h-5 w-5 text-danger" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(summary.outstandingBalance)}</p>
                 <p className="text-xs text-muted-foreground">Outstanding</p>
@@ -106,7 +106,7 @@ export default function BuyerDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <Wallet className="h-5 w-5 text-violet-600" />
+              <Wallet className="h-5 w-5 text-primary" />
               <div>
                 <p className="text-2xl font-bold">{formatCurrency(summary.advanceCredit)}</p>
                 <p className="text-xs text-muted-foreground">Advance Credit</p>
@@ -142,7 +142,7 @@ export default function BuyerDetailPage() {
                     <TableCell className="capitalize">{entry.entryType}</TableCell>
                     <TableCell>{entry.debit > 0 ? formatCurrency(entry.debit) : '--'}</TableCell>
                     <TableCell>{entry.credit > 0 ? formatCurrency(entry.credit) : '--'}</TableCell>
-                    <TableCell className={entry.runningBalance > 0 ? 'text-red-600 font-medium' : 'text-green-700 font-medium'}>
+                    <TableCell className={entry.runningBalance > 0 ? 'text-danger font-medium' : 'text-success font-medium'}>
                       {formatCurrency(Math.abs(entry.runningBalance))} {entry.runningBalance > 0 ? 'due' : 'credit'}
                     </TableCell>
                     <TableCell className="capitalize">{entry.status}</TableCell>
@@ -225,7 +225,7 @@ export default function BuyerDetailPage() {
                       <TableCell>{formatCurrency(receipt.appliedAmount)}</TableCell>
                       <TableCell>{formatCurrency(receipt.unappliedAmount)}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${RECEIPT_STATUS_COLORS[receipt.paymentStatus] ?? 'bg-slate-100 text-slate-800'}`}>
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${RECEIPT_STATUS_COLORS[receipt.paymentStatus] ?? 'bg-muted text-foreground'}`}>
                           {formatReceiptStatus(receipt.paymentStatus)}
                         </span>
                       </TableCell>

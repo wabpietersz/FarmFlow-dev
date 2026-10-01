@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { ensureSiteCostCentre } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import {
@@ -518,6 +519,7 @@ router.get(
           designation: employees.designation,
           siteId: employees.siteId,
           siteName: sites.siteName,
+          costCentreId: employees.costCentreId,
           employmentType: employees.employmentType,
           joinDate: employees.joinDate,
           status: employees.status,
@@ -642,6 +644,8 @@ router.post(
           lastName: data.lastName,
           designation: data.designation,
           siteId: data.siteId,
+          // Labour cost follows the employee's cost centre; default is their site (mill staff → Feed Mill).
+          costCentreId: data.costCentreId ?? (await ensureSiteCostCentre(data.siteId)).id,
           employmentType: data.employmentType,
           joinDate: data.joinDate,
           phone: data.phone ?? null,
@@ -748,6 +752,22 @@ router.put(
         if (value !== undefined) {
           changes[key] = { from: (existing as Record<string, unknown>)[key], to: value };
           updateData[key] = value;
+        }
+      }
+
+      if (req.body.costCentreId === null) {
+        const siteCentreId = (await ensureSiteCostCentre(req.body.siteId ?? existing.siteId)).id;
+        changes.costCentreId = { from: existing.costCentreId, to: siteCentreId };
+        updateData.costCentreId = siteCentreId;
+      }
+
+      // Moving site moves the cost centre too, unless the employee was deliberately on a non-site centre.
+      if (req.body.siteId && req.body.siteId !== existing.siteId && req.body.costCentreId === undefined) {
+        const oldSiteCentre = await ensureSiteCostCentre(existing.siteId);
+        if (!existing.costCentreId || existing.costCentreId === oldSiteCentre.id) {
+          const newCentreId = (await ensureSiteCostCentre(req.body.siteId)).id;
+          changes.costCentreId = { from: existing.costCentreId, to: newCentreId };
+          updateData.costCentreId = newCentreId;
         }
       }
 

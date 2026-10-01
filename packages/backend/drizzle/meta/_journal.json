@@ -5,127 +5,50 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1770494488208,
-      "tag": "0000_harsh_screwball",
+      "when": 1790803359469,
+      "tag": "0000_baseline",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1770594000000,
-      "tag": "0001_sales_weight_pricing",
+      "when": 1790803531703,
+      "tag": "0001_finance_foundations",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1770854400000,
-      "tag": "0002_feed_production_distribution",
+      "when": 1790805389306,
+      "tag": "0002_batch_close_snapshots",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1770785164645,
-      "tag": "0003_odd_sage",
+      "when": 1790806520921,
+      "tag": "0003_farm_operations",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "7",
-      "when": 1770921072297,
-      "tag": "0004_motionless_captain_universe",
+      "when": 1790807576034,
+      "tag": "0004_stores_requisitions_matching",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
-      "when": 1770981865956,
-      "tag": "0005_early_khan",
+      "when": 1790828823218,
+      "tag": "0005_role_module_access",
       "breakpoints": true
     },
     {
       "idx": 6,
       "version": "7",
-      "when": 1771052482795,
-      "tag": "0006_soft_wraith",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1771056781413,
-      "tag": "0007_parallel_the_professor",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1771070400000,
-      "tag": "0008_steady_vermin",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1771071000000,
-      "tag": "0009_solid_captain_britain",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1773619200000,
-      "tag": "0010_complete_inventory_module",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1773626400000,
-      "tag": "0011_sales_receipts_lorries",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1773630000000,
-      "tag": "0012_treasury_foundation",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1773633600000,
-      "tag": "0013_treasury_expansion",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1775260800000,
-      "tag": "0014_treasury_cheques_supplier_payments",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1775264400000,
-      "tag": "0015_treasury_reconciliation_operational_expenses",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1775271600000,
-      "tag": "0016_procurement_contracts_inventory_movements",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1775275200000,
-      "tag": "0017_phase5_phase6_controls",
+      "when": 1790830229416,
+      "tag": "0006_user_first_last_name",
       "breakpoints": true
     }
   ]

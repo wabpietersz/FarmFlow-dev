@@ -46,3 +46,49 @@ export function useDashboardExceptions() {
     refetchInterval: 5 * 60 * 1000,
   });
 }
+
+export interface HomeTodo {
+  key: string;
+  title: string;
+  detail: string;
+  href: string;
+  tone: 'warning' | 'danger' | 'info';
+}
+
+export interface HomeBatchCard {
+  id: number;
+  batchCode: string;
+  siteName: string;
+  ageDays: number;
+  liveBirds: number;
+  mortalityPct: number;
+  averageWeightKg: number | null;
+  costSoFar: number;
+  costPerKgLive: number | null;
+  note: string;
+  tone: 'ok' | 'warning';
+}
+
+export interface HomeDashboard {
+  money: null | {
+    cashOnHand: number;
+    accountCount: number;
+    moneyInThisMonth: number;
+    moneyOutThisMonth: number;
+    moneyInLastMonth: number;
+    moneyOutLastMonth: number;
+    spendByGroup: Array<{ group: string; amount: number }>;
+  };
+  liveBirds: number | null;
+  batches: HomeBatchCard[] | null;
+  todos: HomeTodo[];
+}
+
+export function useHomeDashboard() {
+  return useQuery({
+    queryKey: ['dashboard', 'home'],
+    queryFn: () => apiGet<HomeDashboard>('/dashboard/home'),
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
