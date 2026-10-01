@@ -6,6 +6,8 @@ module.exports = {
   testMatch: ['**/__tests__/**/*.test.ts'],
   moduleNameMapper: {
     '@farmflow/shared': '<rootDir>/../shared/src',
+    // shared uses Node ESM imports ('./x.js') that point at .ts sources
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   clearMocks: true,
 };

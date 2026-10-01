@@ -28,7 +28,7 @@
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "npm": ">=10.0.0"
   },
   "devDependencies": {

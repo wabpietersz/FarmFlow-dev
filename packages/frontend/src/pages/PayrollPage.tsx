@@ -32,6 +32,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Eye, Banknote, AlertTriangle, Trash2, CalendarDays, HandCoins, Landmark, ListChecks, type LucideIcon } from 'lucide-react';
 import { PayMonthPanel } from '@/components/payroll/PayMonthPanel';
+import { calculateRowTotals } from '@/lib/payrollPreview';
 import { LoansPanel } from '@/components/payroll/LoansPanel';
 import { StatutoryPanel } from '@/components/payroll/StatutoryPanel';
 import { cn } from '@/lib/utils';
@@ -94,43 +95,6 @@ function toEditableRow(row: PayrollPreviewRow): EditablePayrollRow {
       amount: Number(deduction.amount ?? 0),
       included: deduction.included !== false,
     })),
-  };
-}
-
-/** Live totals while editing; EPF and loan recovery follow the server's preview for this employee. */
-function calculateRowTotals(row: EditablePayrollRow, epfRate = 8) {
-  const workingDays = Number(row.workingDays);
-  const attendedDays = Number(row.attendedDays);
-  const baseSalary = Number(row.baseSalary);
-  const overtimeHours = Number(row.overtimeHours);
-  const overtimeRate = Number(row.overtimeRate);
-
-  const allowanceTotal = row.allowances
-    .filter((allowance) => allowance.included !== false)
-    .reduce((sum, allowance) => sum + Number(allowance.amount), 0);
-  const deductionTotal = row.deductions
-    .filter((deduction) => deduction.included !== false)
-    .reduce((sum, deduction) => sum + Number(deduction.amount), 0);
-
-  const proRatedBase = workingDays > 0 ? (baseSalary / workingDays) * attendedDays : 0;
-  const overtimePay = overtimeHours * overtimeRate;
-  const gross = proRatedBase + overtimePay + allowanceTotal;
-
-  const epfEligible = row.epfEmployeePreview === undefined || row.epfEmployeePreview > 0 || row.grossSalaryPreview === 0;
-  const epfAllowances = row.allowances
-    .filter((allowance) => allowance.included !== false && allowance.countsForEpf)
-    .reduce((sum, allowance) => sum + Number(allowance.amount), 0);
-  const epf = epfEligible ? Math.round((proRatedBase + epfAllowances) * epfRate) / 100 : 0;
-  const loan = Math.min(row.loanRecoveryPreview ?? 0, Math.max(0, gross - epf - deductionTotal));
-  const net = Math.max(0, gross - epf - deductionTotal - loan);
-
-  return {
-    allowanceTotal,
-    deductionTotal: deductionTotal + epf + loan,
-    epf,
-    loan,
-    gross,
-    net,
   };
 }
 

@@ -10,6 +10,8 @@ module.exports = {
   testMatch: ['**/__integration__/**/*.int.test.ts'],
   moduleNameMapper: {
     '@farmflow/shared': '<rootDir>/../shared/src',
+    // shared uses Node ESM imports ('./x.js') that point at .ts sources
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   globalSetup: '<rootDir>/src/__integration__/globalSetup.ts',
   setupFiles: ['<rootDir>/src/__integration__/env.ts'],

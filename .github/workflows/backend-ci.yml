@@ -39,7 +39,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -48,8 +48,8 @@ jobs:
       - name: Build shared package
         run: npm run build:shared
 
-      - name: Lint backend
-        run: npm run lint -w packages/backend
+      - name: Lint shared and backend
+        run: npm run lint -w packages/shared && npm run lint -w packages/backend
 
       - name: Build backend
         run: npm run build:backend

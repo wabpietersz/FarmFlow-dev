@@ -110,14 +110,18 @@ export function generatePayslipsPDF(period: string, rows: PayrollRegisterRow[]) 
   doc.save(`${name}-${period.slice(0, 7)}.pdf`);
 }
 
-/** CSV download helper (Excel-friendly). */
-export function downloadCsv(filename: string, header: string[], rows: Array<Array<string | number | null | undefined>>) {
+/** CSV text: values with commas, quotes or new lines are quoted, quotes doubled. */
+export function toCsv(header: string[], rows: Array<Array<string | number | null | undefined>>) {
   const escape = (value: string | number | null | undefined) => {
     const text = value == null ? '' : String(value);
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
-  const csv = [header, ...rows].map((line) => line.map(escape).join(',')).join('\r\n');
-  const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+  return [header, ...rows].map((line) => line.map(escape).join(',')).join('\r\n');
+}
+
+/** CSV download helper (Excel-friendly: UTF-8 with BOM so Sinhala/Tamil names open correctly). */
+export function downloadCsv(filename: string, header: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const url = URL.createObjectURL(new Blob(['\uFEFF', toCsv(header, rows)], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
