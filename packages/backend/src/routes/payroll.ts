@@ -1,3 +1,4 @@
+import { requireSiteAccess, siteOf } from '../lib/site-scope';
 import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
@@ -596,7 +597,7 @@ router.post('/preview', authenticate, requirePermission('payroll:create'), valid
 });
 
 // GET /api/payroll/:id — payroll detail with deductions and allowances
-router.get('/:id', authenticate, requirePermission('payroll:read'), async (req: Request, res: Response) => {
+router.get('/:id', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:read'), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id as string);
 
@@ -685,7 +686,7 @@ router.get('/:id', authenticate, requirePermission('payroll:read'), async (req: 
 });
 
 // POST /api/payroll — create individual payroll (draft)
-router.post('/', authenticate, requirePermission('payroll:create'), validate(createPayrollSchema), async (req: Request, res: Response) => {
+router.post('/', authenticate, requireSiteAccess(siteOf.bodyEmployee()), requirePermission('payroll:create'), validate(createPayrollSchema), async (req: Request, res: Response) => {
   try {
     const {
       employeeId,
@@ -1265,7 +1266,7 @@ router.post('/generate', authenticate, requirePermission('payroll:create'), vali
 });
 
 // PUT /api/payroll/:id — update payroll (draft only)
-router.put('/:id', authenticate, requirePermission('payroll:update'), validate(updatePayrollSchema), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), validate(updatePayrollSchema), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id as string);
 
@@ -1347,7 +1348,7 @@ router.put('/:id', authenticate, requirePermission('payroll:update'), validate(u
 });
 
 // PUT /api/payroll/:id/status — advance payroll status
-router.put('/:id/status', authenticate, requirePermission('payroll:update'), validate(updatePayrollStatusSchema), async (req: Request, res: Response) => {
+router.put('/:id/status', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), validate(updatePayrollStatusSchema), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id as string);
     const { status: newStatus, financeAccountId, paymentMethod, chequeLeafId } = req.body as {
@@ -1463,7 +1464,7 @@ router.put('/:id/status', authenticate, requirePermission('payroll:update'), val
 });
 
 // DELETE /api/payroll/:id — delete payroll (draft only)
-router.delete('/:id', authenticate, requirePermission('payroll:delete'), async (req: Request, res: Response) => {
+router.delete('/:id', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:delete'), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id as string);
     const conditions = [eq(payroll.id, id)];
@@ -1535,7 +1536,7 @@ router.delete('/:id', authenticate, requirePermission('payroll:delete'), async (
 });
 
 // POST /api/payroll/:id/deductions — add deduction
-router.post('/:id/deductions', authenticate, requirePermission('payroll:update'), validate(createDeductionSchema), async (req: Request, res: Response) => {
+router.post('/:id/deductions', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), validate(createDeductionSchema), async (req: Request, res: Response) => {
   try {
     const payrollId = Number(req.params.id as string);
 
@@ -1610,7 +1611,7 @@ router.post('/:id/deductions', authenticate, requirePermission('payroll:update')
 });
 
 // DELETE /api/payroll/:id/deductions/:deductionId — remove deduction
-router.delete('/:id/deductions/:deductionId', authenticate, requirePermission('payroll:update'), async (req: Request, res: Response) => {
+router.delete('/:id/deductions/:deductionId', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), async (req: Request, res: Response) => {
   try {
     const payrollId = Number(req.params.id as string);
     const deductionId = Number(req.params.deductionId as string);
@@ -1669,7 +1670,7 @@ router.delete('/:id/deductions/:deductionId', authenticate, requirePermission('p
 });
 
 // POST /api/payroll/:id/allowances — add allowance
-router.post('/:id/allowances', authenticate, requirePermission('payroll:update'), validate(createAllowanceSchema), async (req: Request, res: Response) => {
+router.post('/:id/allowances', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), validate(createAllowanceSchema), async (req: Request, res: Response) => {
   try {
     const payrollId = Number(req.params.id as string);
 
@@ -1745,7 +1746,7 @@ router.post('/:id/allowances', authenticate, requirePermission('payroll:update')
 });
 
 // DELETE /api/payroll/:id/allowances/:allowanceId — remove allowance
-router.delete('/:id/allowances/:allowanceId', authenticate, requirePermission('payroll:update'), async (req: Request, res: Response) => {
+router.delete('/:id/allowances/:allowanceId', authenticate, requireSiteAccess(siteOf.payroll()), requirePermission('payroll:update'), async (req: Request, res: Response) => {
   try {
     const payrollId = Number(req.params.id as string);
     const allowanceId = Number(req.params.allowanceId as string);

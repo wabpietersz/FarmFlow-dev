@@ -1,3 +1,4 @@
+import { requireSiteAccess, siteOf, siteScope } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
@@ -20,7 +21,9 @@ const router = Router();
 // GET /api/batches — list all batches
 router.get('/', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
-    const { status, siteId, page = '1', limit = '20' } = req.query;
+    const { status, siteId: requestedSiteId, page = '1', limit = '20' } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
     const pageNum = Math.max(1, Number(page));
     const limitNum = Math.min(100, Math.max(1, Number(limit)));
     const offset = (pageNum - 1) * limitNum;
@@ -104,7 +107,8 @@ router.get('/costing/overview', authenticate, requirePermission('batches:read'),
     res.json({
       success: true,
       data: {
-        pools: model.pools.filter((pool) => inRange(pool.month)).map((pool) => ({
+        // Farm-scoped users see their farm's pool only (not mill/admin overheads)
+        pools: model.pools.filter((pool) => inRange(pool.month) && (!siteScope(req) || (pool.kind === 'site' && pool.siteId === siteScope(req)))).map((pool) => ({
           ...pool,
           label: pool.kind === 'site' ? siteNames.get(pool.siteId ?? 0) ?? `Site ${pool.siteId}` : pool.kind === 'mill' ? 'Feed Mill' : 'Admin / shared',
         })),
@@ -118,7 +122,7 @@ router.get('/costing/overview', authenticate, requirePermission('batches:read'),
   }
 });
 
-router.get('/:id', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+router.get('/:id', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
 
@@ -265,7 +269,7 @@ router.get('/:id', authenticate, requirePermission('batches:read'), async (req: 
   }
 });
 
-router.get('/:id/costs', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+router.get('/:id/costs', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const costSummary = await buildSingleBatchCostSummary(batchId);
@@ -292,7 +296,7 @@ router.get('/:id/costs', authenticate, requirePermission('batches:read'), async 
   }
 });
 
-router.get('/:id/cost-ledger', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+router.get('/:id/cost-ledger', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const costSummary = await buildSingleBatchCostSummary(batchId);
@@ -327,7 +331,7 @@ router.get('/:id/cost-ledger', authenticate, requirePermission('batches:read'), 
 });
 
 // GET /api/batches/:id/performance — KPIs, full cost build-up and P&L (frozen once closed)
-router.get('/:id/performance', authenticate, requirePermission('batches:read'), async (req: Request, res: Response) => {
+router.get('/:id/performance', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req: Request, res: Response) => {
   try {
     const performance = await getBatchPerformance(Number(req.params.id as string));
     if (!performance) {
@@ -342,7 +346,7 @@ router.get('/:id/performance', authenticate, requirePermission('batches:read'), 
 });
 
 // POST /api/batches/:id/close — freeze the batch's final costs, revenue and KPIs
-router.post('/:id/close', authenticate, requirePermission('batches:update'), validate(closeBatchSchema), async (req: Request, res: Response) => {
+router.post('/:id/close', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:update'), validate(closeBatchSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const snapshot = await closeBatch({
@@ -370,7 +374,7 @@ router.post('/:id/close', authenticate, requirePermission('batches:update'), val
 });
 
 // POST /api/batches/:id/reopen — discard the frozen close-out so the batch can be corrected
-router.post('/:id/reopen', authenticate, requirePermission('batches:update'), async (req: Request, res: Response) => {
+router.post('/:id/reopen', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:update'), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const snapshot = await reopenBatch(batchId);
@@ -393,7 +397,7 @@ router.post('/:id/reopen', authenticate, requirePermission('batches:update'), as
 });
 
 // POST /api/batches — create a new batch
-router.post('/', authenticate, requirePermission('batches:create'), validate(createBatchSchema), async (req: Request, res: Response) => {
+router.post('/', authenticate, requireSiteAccess(siteOf.bodySite()), requirePermission('batches:create'), validate(createBatchSchema), async (req: Request, res: Response) => {
   try {
     const { batchCode, siteId, cageId, chicksPlaced, placementDate, expectedDeliveryDate, notes } = req.body;
 
@@ -458,7 +462,7 @@ router.post('/', authenticate, requirePermission('batches:create'), validate(cre
 });
 
 // PUT /api/batches/:id — update batch status/details
-router.put('/:id', authenticate, requirePermission('batches:update'), validate(updateBatchSchema), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:update'), validate(updateBatchSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const [existing] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
@@ -502,7 +506,7 @@ router.put('/:id', authenticate, requirePermission('batches:update'), validate(u
   }
 });
 
-router.post('/:id/chick-placement', authenticate, requirePermission('batches:update'), validate(createChickPlacementSchema), async (req: Request, res: Response) => {
+router.post('/:id/chick-placement', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:update'), validate(createChickPlacementSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     await assertPeriodOpen(req.body.placementDate, 'costing');
@@ -585,7 +589,7 @@ router.post('/:id/chick-placement', authenticate, requirePermission('batches:upd
 });
 
 // POST /api/batches/:id/daily-records — add a daily record
-router.post('/:id/daily-records', authenticate, requirePermission('daily_records:create'), validate(createDailyRecordSchema), async (req: Request, res: Response) => {
+router.post('/:id/daily-records', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('daily_records:create'), validate(createDailyRecordSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
@@ -646,7 +650,7 @@ router.post('/:id/daily-records', authenticate, requirePermission('daily_records
 
 
 // PUT /api/batches/:id/daily-records/:recordId — update a daily record
-router.put('/:id/daily-records/:recordId', authenticate, requirePermission('daily_records:update'), validate(updateDailyRecordSchema), async (req: Request, res: Response) => {
+router.put('/:id/daily-records/:recordId', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('daily_records:update'), validate(updateDailyRecordSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const recordId = Number(req.params.recordId as string);
@@ -710,7 +714,7 @@ router.put('/:id/daily-records/:recordId', authenticate, requirePermission('dail
 });
 
 // POST /api/batches/:id/mortality — quick mortality recording
-router.post('/:id/mortality', authenticate, requirePermission('daily_records:create'), validate(recordMortalitySchema), async (req: Request, res: Response) => {
+router.post('/:id/mortality', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('daily_records:create'), validate(recordMortalitySchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
@@ -798,7 +802,7 @@ router.post('/:id/mortality', authenticate, requirePermission('daily_records:cre
 });
 
 // POST /api/batches/:id/vaccinations — add a vaccination record
-router.post('/:id/vaccinations', authenticate, requirePermission('vaccinations:create'), validate(createVaccinationSchema), async (req: Request, res: Response) => {
+router.post('/:id/vaccinations', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('vaccinations:create'), validate(createVaccinationSchema), async (req: Request, res: Response) => {
   try {
     const batchId = Number(req.params.id as string);
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);

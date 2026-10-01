@@ -1,3 +1,4 @@
+import { requireSiteAccess, scopeCondition, siteOf } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
@@ -13,7 +14,7 @@ import logger from '../lib/logger';
 const router = Router();
 
 // GET /api/sites/list — dropdown list (lightweight, all authenticated users)
-router.get('/list', authenticate, async (_req: Request, res: Response) => {
+router.get('/list', authenticate, async (req: Request, res: Response) => {
   try {
     const allSites = await db
       .select({
@@ -22,7 +23,7 @@ router.get('/list', authenticate, async (_req: Request, res: Response) => {
         location: sites.location,
       })
       .from(sites)
-      .where(eq(sites.status, 'active'));
+      .where(and(eq(sites.status, 'active'), scopeCondition(req, sites.id)));
 
     res.json({
       success: true,
@@ -42,7 +43,7 @@ router.get('/list', authenticate, async (_req: Request, res: Response) => {
 });
 
 // GET /api/sites — full list with stats
-router.get('/', authenticate, requirePermission('sites:read'), async (_req: Request, res: Response) => {
+router.get('/', authenticate, requirePermission('sites:read'), async (req: Request, res: Response) => {
   try {
     const allSites = await db
       .select({
@@ -55,6 +56,7 @@ router.get('/', authenticate, requirePermission('sites:read'), async (_req: Requ
         updatedAt: sites.updatedAt,
       })
       .from(sites)
+      .where(scopeCondition(req, sites.id))
       .orderBy(sites.siteName);
 
     // Get cage counts and active batch counts per site
@@ -102,7 +104,7 @@ router.get('/', authenticate, requirePermission('sites:read'), async (_req: Requ
 });
 
 // GET /api/sites/:id — site detail with cages
-router.get('/:id', authenticate, requirePermission('sites:read'), async (req: Request, res: Response) => {
+router.get('/:id', authenticate, requireSiteAccess(siteOf.param('id')), requirePermission('sites:read'), async (req: Request, res: Response) => {
   try {
     const siteId = Number(req.params.id as string);
     const [site] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
@@ -191,7 +193,7 @@ router.post('/', authenticate, requirePermission('sites:read'), validate(createS
 });
 
 // PUT /api/sites/:id — update a site
-router.put('/:id', authenticate, requirePermission('sites:update'), validate(updateSiteSchema), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requireSiteAccess(siteOf.param('id')), requirePermission('sites:update'), validate(updateSiteSchema), async (req: Request, res: Response) => {
   try {
     const siteId = Number(req.params.id as string);
     const [existing] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
@@ -232,7 +234,7 @@ router.put('/:id', authenticate, requirePermission('sites:update'), validate(upd
 // --- Cage endpoints ---
 
 // POST /api/sites/:siteId/cages — create a cage
-router.post('/:siteId/cages', authenticate, requirePermission('sites:read'), validate(createCageSchema), async (req: Request, res: Response) => {
+router.post('/:siteId/cages', authenticate, requireSiteAccess(siteOf.param()), requirePermission('sites:read'), validate(createCageSchema), async (req: Request, res: Response) => {
   try {
     const siteId = Number(req.params.siteId as string);
     const [site] = await db.select().from(sites).where(eq(sites.id, siteId)).limit(1);
@@ -275,7 +277,7 @@ router.post('/:siteId/cages', authenticate, requirePermission('sites:read'), val
 });
 
 // PUT /api/sites/:siteId/cages/:cageId — update a cage
-router.put('/:siteId/cages/:cageId', authenticate, requirePermission('sites:read'), validate(updateCageSchema), async (req: Request, res: Response) => {
+router.put('/:siteId/cages/:cageId', authenticate, requireSiteAccess(siteOf.param()), requirePermission('sites:read'), validate(updateCageSchema), async (req: Request, res: Response) => {
   try {
     const cageId = Number(req.params.cageId as string);
 
@@ -307,7 +309,7 @@ router.put('/:siteId/cages/:cageId', authenticate, requirePermission('sites:read
 });
 
 // GET /api/sites/:siteId/cages — list cages for a site (for dropdowns)
-router.get('/:siteId/cages', authenticate, async (req: Request, res: Response) => {
+router.get('/:siteId/cages', authenticate, requireSiteAccess(siteOf.param()), async (req: Request, res: Response) => {
   try {
     const siteId = Number(req.params.siteId as string);
     const siteCages = await db

@@ -1,3 +1,4 @@
+import { siteScope } from '../lib/site-scope';
 import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
@@ -1048,7 +1049,9 @@ router.get('/payables/summary', authenticate, requirePermission('inventory:read'
 
 router.get('/service-work-orders', authenticate, requirePermission('inventory:read'), async (req: Request, res: Response) => {
   try {
-    const { status, serviceType, siteId, batchId } = req.query;
+    const { status, serviceType, siteId: requestedSiteId, batchId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
     const conditions = [];
 
     if (status && status !== 'all') conditions.push(eq(serviceWorkOrders.status, String(status)));
@@ -2453,7 +2456,9 @@ router.post('/purchase-orders/:id/receive', authenticate, requirePermission('inv
 
 router.get('/site-consumptions', authenticate, requirePermission('inventory:read'), async (req: Request, res: Response) => {
   try {
-    const { siteId, itemId } = req.query;
+    const { siteId: requestedSiteId, itemId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
     const conditions = [];
     if (siteId) conditions.push(eq(siteInventoryConsumptions.siteId, Number(siteId)));
     if (itemId) conditions.push(eq(siteInventoryConsumptions.inventoryItemId, Number(itemId)));

@@ -1,3 +1,4 @@
+import { requireSiteAccess, siteOf } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { ensureSiteCostCentre } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -504,9 +505,9 @@ router.get(
 );
 
 // GET /api/employees/:id - detail with related data
-router.get(
-  '/:id',
+router.get('/:id',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:read'),
   async (req: Request, res: Response) => {
     try {
@@ -714,9 +715,9 @@ router.post(
 );
 
 // PUT /api/employees/:id - update
-router.put(
-  '/:id',
+router.put('/:id',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(updateEmployeeSchema),
   async (req: Request, res: Response) => {
@@ -815,9 +816,9 @@ router.put(
 );
 
 // DELETE /api/employees/:id - soft delete
-router.delete(
-  '/:id',
+router.delete('/:id',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:delete'),
   async (req: Request, res: Response) => {
     try {
@@ -889,9 +890,9 @@ router.delete(
 // === Emergency Contacts sub-resource ===
 
 // POST /api/employees/:id/emergency-contacts
-router.post(
-  '/:id/emergency-contacts',
+router.post('/:id/emergency-contacts',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(emergencyContactSchema),
   async (req: Request, res: Response) => {
@@ -930,9 +931,9 @@ router.post(
 );
 
 // PUT /api/employees/:id/emergency-contacts/:contactId
-router.put(
-  '/:id/emergency-contacts/:contactId',
+router.put('/:id/emergency-contacts/:contactId',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(emergencyContactSchema),
   async (req: Request, res: Response) => {
@@ -969,9 +970,9 @@ router.put(
 );
 
 // DELETE /api/employees/:id/emergency-contacts/:contactId
-router.delete(
-  '/:id/emergency-contacts/:contactId',
+router.delete('/:id/emergency-contacts/:contactId',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   async (req: Request, res: Response) => {
     try {
@@ -1008,9 +1009,9 @@ router.delete(
 // === Bank Details sub-resource ===
 
 // POST /api/employees/:id/bank-details (upsert)
-router.post(
-  '/:id/bank-details',
+router.post('/:id/bank-details',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(bankDetailsSchema),
   async (req: Request, res: Response) => {
@@ -1065,9 +1066,9 @@ router.post(
 );
 
 // DELETE /api/employees/:id/bank-details
-router.delete(
-  '/:id/bank-details',
+router.delete('/:id/bank-details',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   async (req: Request, res: Response) => {
     try {
@@ -1100,9 +1101,9 @@ router.delete(
 );
 
 // GET /api/employees/:id/compensation
-router.get(
-  '/:id/compensation',
+router.get('/:id/compensation',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:read'),
   async (req: Request, res: Response) => {
     const employeeId = parseInt(req.params.id as string, 10);
@@ -1187,9 +1188,9 @@ router.get(
 );
 
 // GET /api/employees/:id/compensation/history
-router.get(
-  '/:id/compensation/history',
+router.get('/:id/compensation/history',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:read'),
   async (req: Request, res: Response) => {
     const employeeId = parseInt(req.params.id as string, 10);
@@ -1285,9 +1286,9 @@ router.get(
 );
 
 // POST /api/employees/:id/compensation/revisions
-router.post(
-  '/:id/compensation/revisions',
+router.post('/:id/compensation/revisions',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(createCompensationRevisionSchema),
   async (req: Request, res: Response) => {
@@ -1475,9 +1476,9 @@ router.post(
 );
 
 // PUT /api/employees/:id/compensation/revisions/:revisionId
-router.put(
-  '/:id/compensation/revisions/:revisionId',
+router.put('/:id/compensation/revisions/:revisionId',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(updateCompensationRevisionSchema),
   async (req: Request, res: Response) => {
@@ -1671,9 +1672,9 @@ router.put(
 );
 
 // POST /api/employees/:id/compensation/revisions/:revisionId/activate
-router.post(
-  '/:id/compensation/revisions/:revisionId/activate',
+router.post('/:id/compensation/revisions/:revisionId/activate',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   async (req: Request, res: Response) => {
     const employeeId = parseInt(req.params.id as string, 10);
@@ -1802,9 +1803,9 @@ router.post(
 );
 
 // DELETE /api/employees/:id/compensation/revisions/:revisionId
-router.delete(
-  '/:id/compensation/revisions/:revisionId',
+router.delete('/:id/compensation/revisions/:revisionId',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   async (req: Request, res: Response) => {
     const employeeId = parseInt(req.params.id as string, 10);
@@ -1933,9 +1934,9 @@ router.delete(
 );
 
 // PUT /api/employees/:id/compensation (upsert)
-router.put(
-  '/:id/compensation',
+router.put('/:id/compensation',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   validate(upsertCompensationSchema),
   async (req: Request, res: Response) => {
@@ -2094,9 +2095,9 @@ router.put(
 );
 
 // DELETE /api/employees/:id/compensation
-router.delete(
-  '/:id/compensation',
+router.delete('/:id/compensation',
   authenticate,
+  requireSiteAccess(siteOf.employee()),
   requirePermission('employees:update'),
   async (req: Request, res: Response) => {
     const employeeId = parseInt(req.params.id as string, 10);

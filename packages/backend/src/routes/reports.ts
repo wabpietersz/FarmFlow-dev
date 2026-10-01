@@ -1,3 +1,4 @@
+import { siteScope } from '../lib/site-scope';
 import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -537,7 +538,9 @@ async function buildSupplierPaymentSummary(start: string, end: string) {
 // ---------------------------------------------------------------------------
 router.get('/batch-performance', authenticate, requirePermission('reports:read'), async (req: Request, res: Response) => {
   try {
-    const { siteId, startDate, endDate, batchId } = req.query;
+    const { siteId: requestedSiteId, startDate, endDate, batchId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
 
     const conditions = [];
     if (siteId) {
@@ -793,7 +796,9 @@ router.get('/sales-summary', authenticate, requirePermission('reports:read'), as
 // ---------------------------------------------------------------------------
 router.get('/mortality-trends', authenticate, requirePermission('reports:read'), async (req: Request, res: Response) => {
   try {
-    const { siteId, startDate, endDate, batchId } = req.query;
+    const { siteId: requestedSiteId, startDate, endDate, batchId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
 
     const conditions = [];
     if (batchId) {
@@ -853,7 +858,9 @@ router.get('/mortality-trends', authenticate, requirePermission('reports:read'),
 // ---------------------------------------------------------------------------
 router.get('/feed-consumption', authenticate, requirePermission('reports:read'), async (req: Request, res: Response) => {
   try {
-    const { siteId, startDate, endDate, batchId } = req.query;
+    const { siteId: requestedSiteId, startDate, endDate, batchId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
 
     const conditions = [];
     if (batchId) {
@@ -1100,7 +1107,9 @@ router.get('/batch-comparison', authenticate, requirePermission('reports:read'),
 // ---------------------------------------------------------------------------
 router.get('/batch-profitability', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, siteId } = req.query;
+    const { startDate, endDate, siteId: requestedSiteId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
 
     const conditions: SQL[] = [];
     if (startDate) conditions.push(gte(batches.placementDate, startDate as string));
@@ -1212,7 +1221,9 @@ router.get('/batch-profitability', authenticate, requirePermission('reports:fina
 // ---------------------------------------------------------------------------
 router.get('/batch-inventory-consumption', authenticate, requirePermission('reports:financial:read'), async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, siteId, batchId } = req.query;
+    const { startDate, endDate, siteId: requestedSiteId, batchId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
     const conditions: SQL[] = [];
 
     if (startDate) conditions.push(gte(batchInventoryConsumptions.consumptionDate, startDate as string));
@@ -1596,7 +1607,9 @@ router.get('/feed-analytics', authenticate, requirePermission('reports:read'), a
 // ---------------------------------------------------------------------------
 router.get('/export/csv', authenticate, requirePermission('reports:read'), async (req: Request, res: Response) => {
   try {
-    const { reportType, siteId, startDate, endDate, batchId, buyerId } = req.query;
+    const { reportType, siteId: requestedSiteId, startDate, endDate, batchId, buyerId } = req.query;
+    // Farm-scoped users only ever see their own farm
+    const siteId = siteScope(req) ? String(siteScope(req)) : requestedSiteId;
 
     if (!reportType) {
       res.status(400).json({ success: false, error: 'reportType query parameter is required', code: 'MISSING_REPORT_TYPE', statusCode: 400, timestamp: new Date().toISOString() });

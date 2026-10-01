@@ -1,3 +1,4 @@
+import { requireSiteAccess, siteOf } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
@@ -159,7 +160,7 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
 });
 
 // GET /api/sales/:id — sale detail with buyer, lorries, receipts, and balances
-router.get('/:id', authenticate, requirePermission('sales:read'), async (req: Request, res: Response) => {
+router.get('/:id', authenticate, requireSiteAccess(siteOf.sale()), requirePermission('sales:read'), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.id as string);
 
@@ -379,7 +380,7 @@ router.post('/', authenticate, requirePermission('sales:create'), validate(creat
 });
 
 // PUT /api/sales/:id — update sale status
-router.put('/:id', authenticate, requirePermission('sales:update'), validate(updateSaleSchema), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requireSiteAccess(siteOf.sale()), requirePermission('sales:update'), validate(updateSaleSchema), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.id as string);
 
@@ -550,7 +551,7 @@ router.put('/:id', authenticate, requirePermission('sales:update'), validate(upd
 });
 
 // DELETE /api/sales/:id — soft delete (set status to cancelled)
-router.delete('/:id', authenticate, requirePermission('sales:delete'), async (req: Request, res: Response) => {
+router.delete('/:id', authenticate, requireSiteAccess(siteOf.sale()), requirePermission('sales:delete'), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.id as string);
 
@@ -595,7 +596,7 @@ router.delete('/:id', authenticate, requirePermission('sales:delete'), async (re
 });
 
 // POST /api/sales/:saleId/payments — add a buyer receipt allocated to a sale
-router.post('/:saleId/payments', authenticate, requirePermission('payments:create'), validate(createPaymentSchema), async (req: Request, res: Response) => {
+router.post('/:saleId/payments', authenticate, requireSiteAccess(siteOf.sale('saleId')), requirePermission('payments:create'), validate(createPaymentSchema), async (req: Request, res: Response) => {
   try {
     const saleId = Number(req.params.saleId as string);
 

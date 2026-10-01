@@ -1,3 +1,4 @@
+import { requireSiteAccess, siteOf, siteScope } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -61,7 +62,6 @@ function fail(res: Response, error: unknown, fallback: string, code: string) {
   res.status(500).json({ success: false, error: fallback, code, statusCode: 500, timestamp: now() });
 }
 
-const siteScope = (req: Request) => req.user?.siteId ?? null;
 
 // ─── Health programmes (templates) ───────────────────────────────────────────
 
@@ -164,7 +164,7 @@ router.get('/health-tasks/due', authenticate, requirePermission('batches:read'),
   }
 });
 
-router.get('/batches/:id/health-tasks', authenticate, requirePermission('batches:read'), async (req, res) => {
+router.get('/batches/:id/health-tasks', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req, res) => {
   try {
     const tasks = await db
       .select({
@@ -197,7 +197,7 @@ router.get('/batches/:id/health-tasks', authenticate, requirePermission('batches
   }
 });
 
-router.post('/batches/:id/health-tasks/apply', authenticate, requirePermission('batches:update'), validate(applyHealthTemplateSchema), async (req, res) => {
+router.post('/batches/:id/health-tasks/apply', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:update'), validate(applyHealthTemplateSchema), async (req, res) => {
   try {
     const batchId = Number(req.params.id as string);
     const created = await applyHealthTemplate({ batchId, templateId: req.body.templateId });
@@ -208,7 +208,7 @@ router.post('/batches/:id/health-tasks/apply', authenticate, requirePermission('
   }
 });
 
-router.post('/batches/:id/health-tasks', authenticate, requirePermission('vaccinations:create'), validate(addHealthTaskSchema), async (req, res) => {
+router.post('/batches/:id/health-tasks', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('vaccinations:create'), validate(addHealthTaskSchema), async (req, res) => {
   try {
     const batchId = Number(req.params.id as string);
     const [batch] = await db.select().from(batches).where(eq(batches.id, batchId)).limit(1);
@@ -232,7 +232,7 @@ router.post('/batches/:id/health-tasks', authenticate, requirePermission('vaccin
   }
 });
 
-router.post('/health-tasks/:taskId/complete', authenticate, requirePermission('vaccinations:create'), validate(completeHealthTaskSchema), async (req, res) => {
+router.post('/health-tasks/:taskId/complete', authenticate, requireSiteAccess(siteOf.healthTask()), requirePermission('vaccinations:create'), validate(completeHealthTaskSchema), async (req, res) => {
   try {
     const result = await completeHealthTask({
       taskId: Number(req.params.taskId as string),
@@ -249,7 +249,7 @@ router.post('/health-tasks/:taskId/complete', authenticate, requirePermission('v
   }
 });
 
-router.post('/health-tasks/:taskId/skip', authenticate, requirePermission('vaccinations:create'), validate(skipHealthTaskSchema), async (req, res) => {
+router.post('/health-tasks/:taskId/skip', authenticate, requireSiteAccess(siteOf.healthTask()), requirePermission('vaccinations:create'), validate(skipHealthTaskSchema), async (req, res) => {
   try {
     const task = await skipHealthTask({ taskId: Number(req.params.taskId as string), reason: req.body.reason, userId: req.user!.id });
     createAuditLog({ userId: req.user!.id, action: 'health_task_skipped', entityType: 'batch_health_task', entityId: task.id, changes: { reason: req.body.reason } });
@@ -321,7 +321,7 @@ router.put('/growth-standards/:id', authenticate, requirePermission('batches:upd
   }
 });
 
-router.get('/batches/:id/growth', authenticate, requirePermission('batches:read'), async (req, res) => {
+router.get('/batches/:id/growth', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req, res) => {
   try {
     res.json({ success: true, data: await getGrowthComparison(Number(req.params.id as string)), timestamp: now() });
   } catch (error) {
@@ -331,7 +331,7 @@ router.get('/batches/:id/growth', authenticate, requirePermission('batches:read'
 
 // ─── Today's check ───────────────────────────────────────────────────────────
 
-router.get('/batches/:id/today', authenticate, requirePermission('batches:read'), async (req, res) => {
+router.get('/batches/:id/today', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('batches:read'), async (req, res) => {
   try {
     const date = typeof req.query.date === 'string' ? req.query.date : toIsoDate(new Date());
     res.json({ success: true, data: await getTodayCheck(Number(req.params.id as string), date), timestamp: now() });
@@ -340,7 +340,7 @@ router.get('/batches/:id/today', authenticate, requirePermission('batches:read')
   }
 });
 
-router.post('/batches/:id/today', authenticate, requirePermission('daily_records:create'), validate(todayCheckSchema), async (req, res) => {
+router.post('/batches/:id/today', authenticate, requireSiteAccess(siteOf.batch()), requirePermission('daily_records:create'), validate(todayCheckSchema), async (req, res) => {
   try {
     const record = await saveTodayCheck({ ...req.body, batchId: Number(req.params.id as string), userId: req.user!.id });
     res.json({ success: true, data: record, timestamp: now() });
@@ -391,7 +391,7 @@ async function checkVisitBatch(body: { siteId: number; batchId?: number | null }
   if (batch.siteId !== body.siteId) throw new FarmOpsError('That batch is on a different farm');
 }
 
-router.post('/vet-visits', authenticate, requirePermission('vaccinations:create'), validate(vetVisitSchema), async (req, res) => {
+router.post('/vet-visits', authenticate, requireSiteAccess(siteOf.bodyBatch()), requirePermission('vaccinations:create'), validate(vetVisitSchema), async (req, res) => {
   try {
     await checkVisitBatch(req.body);
     const [visit] = await db.insert(vetVisits).values({
@@ -407,7 +407,7 @@ router.post('/vet-visits', authenticate, requirePermission('vaccinations:create'
   }
 });
 
-router.put('/vet-visits/:id', authenticate, requirePermission('vaccinations:create'), validate(vetVisitSchema), async (req, res) => {
+router.put('/vet-visits/:id', authenticate, requireSiteAccess(siteOf.vetVisit()), requirePermission('vaccinations:create'), validate(vetVisitSchema), async (req, res) => {
   try {
     await checkVisitBatch(req.body);
     const [visit] = await db.update(vetVisits).set({
@@ -435,7 +435,7 @@ router.get('/turnarounds', authenticate, requirePermission('sites:read'), async 
   }
 });
 
-router.put('/turnarounds/:id', authenticate, requirePermission('batches:update'), validate(turnaroundUpdateSchema), async (req, res) => {
+router.put('/turnarounds/:id', authenticate, requireSiteAccess(siteOf.turnaround()), requirePermission('batches:update'), validate(turnaroundUpdateSchema), async (req, res) => {
   try {
     const updated = await updateTurnaround({ id: Number(req.params.id as string), ...req.body });
     createAuditLog({ userId: req.user!.id, action: 'house_turnaround_updated', entityType: 'house_turnaround', entityId: updated.id, changes: req.body });

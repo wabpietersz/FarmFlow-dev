@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requirePermission } from '../middleware/auth';
+import { requireSiteAccess, siteOf } from '../lib/site-scope';
 import { validate } from '../validators/auth';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
@@ -88,7 +89,7 @@ const loanSchema = z.object({
   paymentMethod: z.enum(['cash', 'bank_transfer']).default('cash'),
   notes: z.string().max(1000).nullable().optional(),
 });
-router.post('/loans', authenticate, requirePermission('payroll:create'), validate(loanSchema), async (req: Request, res: Response) => {
+router.post('/loans', authenticate, requireSiteAccess(siteOf.bodyEmployee()), requirePermission('payroll:create'), validate(loanSchema), async (req: Request, res: Response) => {
   try {
     const loan = await issueStaffLoan({ ...req.body, userId: req.user!.id });
     createAuditLog({ userId: req.user!.id, action: 'payroll.loan_issued', entityType: 'staff_loan', entityId: loan.id, changes: req.body });
