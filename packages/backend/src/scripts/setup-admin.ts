@@ -1,84 +1,53 @@
 /**
- * One-time script to create the initial admin user.
- * Creates a Firebase user + DB user record + a default site.
+ * Creates the first system admin on a new installation (safe to run again).
+ * No password is ever set or printed: it creates the sign-in and prints a link
+ * the admin opens to choose their own password. Farms are then added in the app.
  *
- * Usage: npx tsx src/scripts/setup-admin.ts
+ * Usage (dev):   FARMFLOW_ADMIN_EMAIL=you@example.com FARMFLOW_ADMIN_FIRST_NAME=Nimal FARMFLOW_ADMIN_LAST_NAME=Perera npx tsx src/scripts/setup-admin.ts
+ * Usage (prod):  same variables, `node dist/scripts/setup-admin.js`
  */
+import { eq } from 'drizzle-orm';
 import { firebaseAuth } from '../lib/firebase';
 import { db } from '../db';
-import { users, sites } from '../db/schema';
-import { eq } from 'drizzle-orm';
-
-const ADMIN_EMAIL = 'admin@farmflow.com';
-const ADMIN_PASSWORD = 'FarmFlow2024!';
-const ADMIN_NAME = 'System Admin';
+import { users } from '../db/schema';
 
 async function main() {
-  console.log('Setting up initial admin user...\n');
-
-  // 1. Ensure a default site exists
-  const existingSites = await db.select().from(sites).limit(1);
-  let siteId: number;
-  if (existingSites.length > 0) {
-    siteId = existingSites[0].id;
-    console.log(`Site already exists: "${existingSites[0].siteName}" (id=${siteId})`);
-  } else {
-    const [site] = await db.insert(sites).values({
-      siteName: 'Main Farm',
-      location: 'Johannesburg, South Africa',
-      capacity: 50000,
-    }).returning();
-    siteId = site.id;
-    console.log(`Created site: "Main Farm" (id=${siteId})`);
+  const email = process.env.FARMFLOW_ADMIN_EMAIL?.trim().toLowerCase();
+  const firstName = process.env.FARMFLOW_ADMIN_FIRST_NAME?.trim() || 'Owner';
+  const lastName = process.env.FARMFLOW_ADMIN_LAST_NAME?.trim() || '';
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    throw new Error('Set FARMFLOW_ADMIN_EMAIL to the first admin’s email address');
   }
+  const fullName = [firstName, lastName].filter(Boolean).join(' ');
 
-  // 2. Create Firebase user (or get existing)
+  // Firebase sign-in (no password: they set it from the link)
   let firebaseUid: string;
   try {
-    const existing = await firebaseAuth.getUserByEmail(ADMIN_EMAIL);
-    firebaseUid = existing.uid;
-    console.log(`Firebase user already exists: ${ADMIN_EMAIL} (uid=${firebaseUid})`);
+    firebaseUid = (await firebaseAuth.getUserByEmail(email)).uid;
+    console.log(`Firebase sign-in already exists for ${email}`);
   } catch {
-    const fbUser = await firebaseAuth.createUser({
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD,
-      displayName: ADMIN_NAME,
-    });
-    firebaseUid = fbUser.uid;
-    console.log(`Created Firebase user: ${ADMIN_EMAIL} (uid=${firebaseUid})`);
+    firebaseUid = (await firebaseAuth.createUser({ email, displayName: fullName })).uid;
+    console.log(`Created Firebase sign-in for ${email}`);
   }
+  await firebaseAuth.setCustomUserClaims(firebaseUid, { role: 'system_admin', siteId: null });
 
-  // 3. Create DB user record (or skip if exists)
-  const existingUsers = await db
-    .select()
-    .from(users)
-    .where(eq(users.firebaseUid, firebaseUid))
-    .limit(1);
-
-  if (existingUsers.length > 0) {
-    console.log(`DB user already exists: id=${existingUsers[0].id}`);
+  const [existing] = await db.select().from(users).where(eq(users.firebaseUid, firebaseUid)).limit(1);
+  if (existing) {
+    console.log(`FarmFlow user already exists (id=${existing.id}, role=${existing.userRole})`);
   } else {
-    const [dbUser] = await db.insert(users).values({
-      firebaseUid,
-      email: ADMIN_EMAIL,
-      fullName: ADMIN_NAME,
-      userRole: 'system_admin',
-      siteId: null,
-      isActive: true,
+    const [created] = await db.insert(users).values({
+      firebaseUid, email, firstName, lastName, fullName, userRole: 'system_admin', siteId: null, isActive: true,
     }).returning();
-    console.log(`Created DB user: id=${dbUser.id}, role=system_admin`);
+    console.log(`Created FarmFlow system admin (id=${created.id})`);
   }
 
-  console.log('\n--- Setup Complete ---');
-  console.log(`Email:    ${ADMIN_EMAIL}`);
-  console.log(`Password: ${ADMIN_PASSWORD}`);
-  console.log(`Role:     system_admin`);
-  console.log('\nYou can now log in at http://localhost:5173/login');
-
+  const link = await firebaseAuth.generatePasswordResetLink(email);
+  console.log('\nOpen this link to choose a password (valid for 1 hour):');
+  console.log(link);
   process.exit(0);
 }
 
 main().catch((err) => {
-  console.error('Setup failed:', err);
+  console.error('Setup failed:', err instanceof Error ? err.message : err);
   process.exit(1);
 });

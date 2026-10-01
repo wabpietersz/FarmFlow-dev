@@ -78,14 +78,8 @@ async function seed() {
     await db
       .insert(systemConfig)
       .values(data)
-      .onConflictDoUpdate({
-        target: systemConfig.configKey,
-        set: {
-          configValue: data.configValue,
-          description: data.description,
-          updatedAt: new Date(),
-        },
-      });
+      // Only fills lists that are missing: lists edited in Settings are never overwritten
+      .onConflictDoNothing({ target: systemConfig.configKey });
     console.log(`  Seeded: ${data.configKey}`);
   }
 
