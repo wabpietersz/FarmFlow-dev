@@ -65,6 +65,10 @@ import { Badge } from '@/components/ui/badge';
 import { EMPTY_FINANCE_TAGS, FinanceTagFields, financeTagsToPayload, type FinanceTagValue } from '@/components/finance/FinanceTagFields';
 import { MoneyLedgerTab } from '@/components/finance/MoneyLedgerTab';
 import { FinanceSetupTab } from '@/components/finance/FinanceSetupTab';
+import { ProfitLossTab } from '@/components/finance/ProfitLossTab';
+import { CashFlowTab } from '@/components/finance/CashFlowTab';
+import { PayablesTab } from '@/components/finance/PayablesTab';
+import { OwnerLoansTab } from '@/components/finance/OwnerLoansTab';
 
 type AccountFormState = {
   accountCode: string;
@@ -233,8 +237,10 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function TreasuryPage() {
   const { hasPermission, currentUser } = useAuthStore();
-  const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') ?? 'overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The tab lives in the address so links like /treasury?tab=payables open it
+  const activeTab = searchParams.get('tab') ?? 'overview';
+  const setActiveTab = (tab: string) => setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', tab); return next; }, { replace: true });
   const [showCreateAccount, setShowCreateAccount] = useState(false);
   const [showManualTransaction, setShowManualTransaction] = useState(false);
   const [showCreateAllocation, setShowCreateAllocation] = useState(false);
@@ -255,6 +261,7 @@ export default function TreasuryPage() {
 
   const canManageAccounts = hasPermission('treasury:accounts:manage');
   const canManageTransactions = hasPermission('treasury:transactions:manage');
+  const canSeeFinancialReports = hasPermission('reports:financial:read');
   const canManagePettyCash = hasPermission('treasury:petty_cash:manage');
   const canSubmitPettyCash = hasPermission('treasury:petty_cash:submit');
   const canReviewPettyCash = hasPermission('treasury:petty_cash:review');
@@ -560,6 +567,10 @@ export default function TreasuryPage() {
         <TabsList className="flex h-auto w-full justify-start overflow-x-auto sm:w-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="ledger">Ledger</TabsTrigger>
+          {canSeeFinancialReports ? <TabsTrigger value="pnl">Profit &amp; loss</TabsTrigger> : null}
+          {canSeeFinancialReports ? <TabsTrigger value="cash-flow">Cash flow</TabsTrigger> : null}
+          <TabsTrigger value="payables">Payables</TabsTrigger>
+          <TabsTrigger value="owner-loans">Owner &amp; loans</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="cheques">Cheques</TabsTrigger>
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
@@ -574,6 +585,11 @@ export default function TreasuryPage() {
             onOpenTransaction={setSelectedTransactionId}
           />
         </TabsContent>
+
+        <TabsContent value="pnl"><ProfitLossTab /></TabsContent>
+        <TabsContent value="cash-flow"><CashFlowTab /></TabsContent>
+        <TabsContent value="payables"><PayablesTab /></TabsContent>
+        <TabsContent value="owner-loans"><OwnerLoansTab canManage={canManageTransactions} /></TabsContent>
 
         <TabsContent value="setup">
           <FinanceSetupTab canManage={canManageAccounts} />

@@ -71,6 +71,13 @@
       "when": 1790831843556,
       "tag": "0009_epf_etf_staff_loans",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790874778213,
+      "tag": "0010_business_loans",
+      "breakpoints": true
     }
   ]
 }

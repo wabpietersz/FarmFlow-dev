@@ -314,3 +314,44 @@ export const operationalExpenses = pgTable(
     index('idx_operational_expenses_account').on(table.financeAccountId),
   ],
 );
+
+/** Loans the business has taken (bank, leasing, family). Money in when received; repayments split principal/interest. */
+export const businessLoans = pgTable(
+  'business_loans',
+  {
+    id: serial('id').primaryKey(),
+    loanCode: varchar('loan_code', { length: 50 }).unique().notNull(),
+    lender: varchar('lender', { length: 150 }).notNull(),
+    principal: decimal('principal', { precision: 14, scale: 2 }).notNull(),
+    /** Annual rate in %, for reference and suggested interest */
+    interestRate: decimal('interest_rate', { precision: 6, scale: 3 }),
+    receivedDate: date('received_date').notNull(),
+    termMonths: integer('term_months'),
+    monthlyInstallment: decimal('monthly_installment', { precision: 14, scale: 2 }),
+    financeAccountId: integer('finance_account_id').references(() => financeAccounts.id).notNull(),
+    treasuryTransactionId: integer('treasury_transaction_id').references(() => treasuryTransactions.id),
+    /** active | repaid */
+    status: varchar('status', { length: 20 }).default('active').notNull(),
+    notes: text('notes'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+);
+
+export const businessLoanRepayments = pgTable(
+  'business_loan_repayments',
+  {
+    id: serial('id').primaryKey(),
+    loanId: integer('loan_id').references(() => businessLoans.id).notNull(),
+    paymentDate: date('payment_date').notNull(),
+    principalAmount: decimal('principal_amount', { precision: 14, scale: 2 }).notNull(),
+    interestAmount: decimal('interest_amount', { precision: 14, scale: 2 }).default('0').notNull(),
+    financeAccountId: integer('finance_account_id').references(() => financeAccounts.id).notNull(),
+    treasuryTransactionId: integer('treasury_transaction_id').references(() => treasuryTransactions.id),
+    reference: varchar('reference', { length: 100 }),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [index('idx_business_loan_repayments_loan').on(table.loanId)],
+);

@@ -148,7 +148,10 @@ Original plan:
 - Payslip PDF, payroll register, bank transfer list.
 - Payroll ledger postings split by employee cost centre.
 
-### Phase 7: Finance reporting
+### Phase 7: Finance reporting — ✅ DONE (2026-10-01)
+Money page gains **Profit & loss** (income/expense by category × month; whole business, one cost centre, or all centres compared; CSV; buyer credit applied to a later sale is recognised as Bird Sales/Other Farm Income on the day it is applied), **Cash flow** (opening → trading → owner/loans/advances → closing, by month, per account or all; CSV), **Payables** (supplier ageing by due date, invoices awaiting approval, advance payments; supplier statements with CSV) and **Owner & loans** (owner money in/out as capital/drawings; business loan register — loan received posts *Loan Received*, repayments split principal *Loan Principal Repayment* vs interest *Loan Interest* expense; suggested monthly interest). Also: a sweep fixed correlated sub-queries that lost their table names (Money transactions list failed), feed routes shadowed by `/:id`, deep links lost on sign-in, and an API smoke test now calls every list endpoint against real Postgres. 2 new integration tests + 90-endpoint smoke test.
+
+Original plan:
 - When buyer credit (a Customer Advance) is later applied to a sale, the P&L must reclassify it as Bird Sales for that batch. No cash moves at that point, so this happens in reporting, not the ledger.
 - Management P&L and cash flow by period × cost centre × category.
 - AP ageing, supplier statements.

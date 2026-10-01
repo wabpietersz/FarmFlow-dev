@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,8 +15,11 @@ export default function LoginPage() {
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [resetError, setResetError] = useState<string | null>(null);
 
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
+
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={from && from !== '/login' ? from : '/dashboard'} replace />;
   }
 
   const handleSubmit = async (e: FormEvent) => {
