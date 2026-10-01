@@ -40,8 +40,8 @@ RUN npm ci --workspace=packages/shared --workspace=packages/backend --omit=dev
 COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/backend/dist packages/backend/dist
 
-# Copy drizzle migrations if they exist
-COPY packages/backend/drizzle* packages/backend/
+# Database migrations (applied on start by dist/scripts/migrate.js)
+COPY packages/backend/drizzle packages/backend/drizzle
 
 # Set environment
 ENV NODE_ENV=production
@@ -53,5 +53,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
 
-# Start the server
-CMD ["node", "packages/backend/dist/server.js"]
+# Bring the database up to date, then start the server
+CMD ["sh", "-c", "node packages/backend/dist/scripts/migrate.js && node packages/backend/dist/server.js"]

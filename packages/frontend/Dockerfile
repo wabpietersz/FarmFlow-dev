@@ -42,8 +42,9 @@ RUN npm run build -w packages/frontend
 # === Stage 2: Serve with nginx ===
 FROM nginx:alpine AS production
 
-# Copy custom nginx config
-COPY packages/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# nginx config template: ${BACKEND_URL} is filled in when the container starts
+COPY packages/frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_URL=http://backend:3001
 
 # Copy built frontend
 COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
