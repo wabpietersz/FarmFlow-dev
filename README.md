@@ -9,8 +9,9 @@ notifications. Installable as a phone app (PWA), works offline for daily farm lo
 - **Using it:** [docs/FarmFlow-User-Guide.md](docs/FarmFlow-User-Guide.md)
 - **What it does and why:** [docs/FarmFlow-Target-Functional-Spec.md](docs/FarmFlow-Target-Functional-Spec.md)
 - **What was built, phase by phase:** [docs/FarmFlow-Build-Roadmap.md](docs/FarmFlow-Build-Roadmap.md)
-- **Deploying:** [DEPLOYMENT.md](DEPLOYMENT.md)
+- **Deploying:** [docs/Deployment-Guide.md](docs/Deployment-Guide.md)
 - **Testing by hand:** [docs/Manual-Test-Plan.md](docs/Manual-Test-Plan.md)
+- **All documents:** [docs/](docs/README.md)
 
 ## Stack
 

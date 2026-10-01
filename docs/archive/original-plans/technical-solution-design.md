@@ -38,7 +38,7 @@ Sales requirements have now expanded to cover:
 - overpayment carry-forward credit
 - buyer running ledgers and outstanding balances
 
-The authoritative implementation plan for that redesign is [docs/Sales-Module-Improvement-Plan.md](/Users/warrenpietersz/Projects/Personal/FarmFlow2/docs/Sales-Module-Improvement-Plan.md).
+The authoritative implementation plan for that redesign is [docs/Sales-Module-Improvement-Plan.md](docs/Sales-Module-Improvement-Plan.md).
 
 Any new work on sales, buyer settlements, or payment allocation should follow that plan instead of extending the older direct `sale -> payment` model described later in this document.
 

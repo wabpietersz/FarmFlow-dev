@@ -2,7 +2,7 @@
 
 This is the source-of-truth document for taking FarmFlow live on GCP.
 
-If this file conflicts with `/Users/warrenpietersz/Projects/Personal/FarmFlow2/DEPLOYMENT.md`, follow this file.
+If this file conflicts with `DEPLOYMENT.md`, follow this file.
 
 ## 1. Goals and constraints
 

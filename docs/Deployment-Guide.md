@@ -1,8 +1,9 @@
-# FarmFlow Deployment Strategies
+# FarmFlow deployment guide
 
-Authoritative go-live runbook: `/Users/warrenpietersz/Projects/Personal/FarmFlow2/deployment_prod.md`
-
-Use this file as a strategy index/history. For live rollout and operations, follow `deployment_prod.md`.
+This is the current go-live guide: Strategy B below, steps 1–7. Steps 5–7 (building the images,
+settings, migrations and the first admin) were rewritten on 2026-10-01 to match the tested
+Docker images. The older detailed write-up is kept in
+[archive/deployment/deployment_prod.md](archive/deployment/deployment_prod.md) for reference only.
 
 This document now contains two separate strategies:
 
@@ -60,7 +61,7 @@ gcloud run deploy farmflow-api \
 
 Status: `CURRENT RECOMMENDED STRATEGY`
 
-Detailed implementation steps live in `/Users/warrenpietersz/Projects/Personal/FarmFlow2/deployment_prod.md`.
+Follow steps 1–7 below.
 
 ### Target architecture
 
