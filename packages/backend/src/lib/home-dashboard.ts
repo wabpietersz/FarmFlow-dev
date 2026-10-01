@@ -1,3 +1,4 @@
+import { qualified } from './sql-utils';
 import { and, desc, eq, gte, inArray, lte, notInArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
@@ -288,13 +289,13 @@ export async function buildHomeDashboard(params: {
         : Promise.resolve([{ count: 0 }]),
       db.select({
         count: sql<number>`count(*)::int`,
-        total: sql<number>`COALESCE(SUM(${supplierInvoices.invoiceAmount}::numeric - COALESCE((SELECT SUM(a.allocated_amount::numeric) FROM ${supplierPaymentAllocations} a WHERE a.supplier_invoice_id = ${supplierInvoices.id}), 0)), 0)::float`,
+        total: sql<number>`COALESCE(SUM(${qualified(supplierInvoices.invoiceAmount)}::numeric - COALESCE((SELECT SUM(a.allocated_amount::numeric) FROM ${supplierPaymentAllocations} a WHERE a.supplier_invoice_id = ${qualified(supplierInvoices.id)}), 0)), 0)::float`,
       })
         .from(supplierInvoices)
         .where(and(
           eq(supplierInvoices.status, 'approved'),
           lte(supplierInvoices.dueDate, toIsoDate(new Date(Date.now() + 7 * 86_400_000))),
-          sql`${supplierInvoices.invoiceAmount}::numeric > COALESCE((SELECT SUM(a.allocated_amount::numeric) FROM ${supplierPaymentAllocations} a WHERE a.supplier_invoice_id = ${supplierInvoices.id}), 0)`,
+          sql`${qualified(supplierInvoices.invoiceAmount)}::numeric > COALESCE((SELECT SUM(a.allocated_amount::numeric) FROM ${supplierPaymentAllocations} a WHERE a.supplier_invoice_id = ${qualified(supplierInvoices.id)}), 0)`,
         )),
     ]);
     const rs = (value: number) => `Rs ${Math.round(value).toLocaleString('en-US')}`;

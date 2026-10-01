@@ -1,3 +1,4 @@
+import { qualified } from './sql-utils';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { employees, payroll, payrollAllowances, payrollDeductions, staffLoanRecoveries, staffLoans, systemConfig } from '../db/schema';
@@ -96,8 +97,8 @@ export async function loansDueForPeriod(employeeId: number, payPeriod: string, e
       principal: staffLoans.principal,
       installmentAmount: staffLoans.installmentAmount,
       recovered: sql<number>`COALESCE((
-        SELECT SUM(${staffLoanRecoveries.amount}::numeric) FROM ${staffLoanRecoveries}
-        WHERE ${staffLoanRecoveries.loanId} = ${LOAN_ID}
+        SELECT SUM(${qualified(staffLoanRecoveries.amount)}::numeric) FROM ${staffLoanRecoveries}
+        WHERE ${qualified(staffLoanRecoveries.loanId)} = ${LOAN_ID}
         ${excludePayrollId ? sql`AND (${staffLoanRecoveries.payrollId} IS NULL OR ${staffLoanRecoveries.payrollId} <> ${excludePayrollId})` : sql``}
       ), 0)::float`,
     })

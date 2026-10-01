@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { qualified } from '../lib/sql-utils';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { StockError, getLocationByCode, planLotConsumptionOrLegacy } from '../lib/stock';
 import { defaultPurchaseCostCentreId } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -51,6 +52,12 @@ import logger from '../lib/logger';
 import { getProductionBatchAvailableQuantity, postInventoryMovement } from '../lib/inventory-movements';
 
 const router = Router();
+
+/** `/recipes/:id` would otherwise swallow `/recipes/cost-optimization` etc. (declared later): skip to the next route. */
+function numericIdOnly(req: Request, _res: Response, next: NextFunction) {
+  if (/^\d+$/.test(String(req.params.id))) next();
+  else next('route');
+}
 
 async function getFeedInventoryType() {
   const [feedType] = await db
@@ -131,11 +138,11 @@ router.get('/recipes', authenticate, requirePermission('feed_production:read'), 
         targetCalcium: feedRecipes.targetCalcium,
         createdAt: feedRecipes.createdAt,
         updatedAt: feedRecipes.updatedAt,
-        ingredientCount: sql<number>`(SELECT count(*)::int FROM ${feedRecipeIngredients} WHERE ${feedRecipeIngredients.recipeId} = feed_recipes.id)`,
+        ingredientCount: sql<number>`(SELECT count(*)::int FROM ${feedRecipeIngredients} WHERE ${qualified(feedRecipeIngredients.recipeId)} = feed_recipes.id)`,
         ingredientSummary: sql<string>`(
-          SELECT string_agg(${feedRecipeIngredients.ingredientName}, ', ' ORDER BY ${feedRecipeIngredients.proportion} DESC)
+          SELECT string_agg(${qualified(feedRecipeIngredients.ingredientName)}, ', ' ORDER BY ${qualified(feedRecipeIngredients.proportion)} DESC)
           FROM ${feedRecipeIngredients}
-          WHERE ${feedRecipeIngredients.recipeId} = feed_recipes.id
+          WHERE ${qualified(feedRecipeIngredients.recipeId)} = feed_recipes.id
         )`,
       })
       .from(feedRecipes)
@@ -183,7 +190,7 @@ router.get('/recipes', authenticate, requirePermission('feed_production:read'), 
 });
 
 // GET /api/feed/recipes/:id — recipe detail with ingredients
-router.get('/recipes/:id', authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
+router.get('/recipes/:id', numericIdOnly, authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
   try {
     const recipeId = Number(req.params.id as string);
 
@@ -863,7 +870,7 @@ router.get('/production/summary', authenticate, requirePermission('feed_producti
 });
 
 // GET /api/feed/production/:id — production detail with materials
-router.get('/production/:id', authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
+router.get('/production/:id', numericIdOnly, authenticate, requirePermission('feed_production:read'), async (req: Request, res: Response) => {
   try {
     const prodId = Number(req.params.id as string);
 

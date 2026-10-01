@@ -1,3 +1,4 @@
+import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { db } from '../db';
@@ -157,46 +158,46 @@ async function buildFinancialOverviewData(start: string, end: string) {
         `,
         accountNames: sql<string>`
           COALESCE((
-            SELECT string_agg(DISTINCT ${financeAccounts.accountName}, ', ')
+            SELECT string_agg(DISTINCT ${qualified(financeAccounts.accountName)}, ', ')
             FROM ${treasuryTransactionEntries}
             INNER JOIN ${financeAccounts}
-              ON ${financeAccounts.id} = ${treasuryTransactionEntries.financeAccountId}
-            WHERE ${treasuryTransactionEntries.treasuryTransactionId} = ${treasuryTransactions.id}
+              ON ${qualified(financeAccounts.id)} = ${qualified(treasuryTransactionEntries.financeAccountId)}
+            WHERE ${qualified(treasuryTransactionEntries.treasuryTransactionId)} = ${qualified(treasuryTransactions.id)}
           ), '')
         `,
         sourceModule: sql<string | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceModule}
+            SELECT ${qualified(treasuryTransactionLinks.sourceModule)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${qualified(treasuryTransactions.id)}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
         sourceEntityType: sql<string | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceEntityType}
+            SELECT ${qualified(treasuryTransactionLinks.sourceEntityType)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${qualified(treasuryTransactions.id)}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
         sourceEntityId: sql<number | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceEntityId}
+            SELECT ${qualified(treasuryTransactionLinks.sourceEntityId)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${qualified(treasuryTransactions.id)}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
         sourceCodeSnapshot: sql<string | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceCodeSnapshot}
+            SELECT ${qualified(treasuryTransactionLinks.sourceCodeSnapshot)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${qualified(treasuryTransactions.id)}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
@@ -382,18 +383,18 @@ async function buildPettyCashOutstandingSummary() {
       treasuryTransactionId: pettyCashAllocations.treasuryTransactionId,
       approvedExpenseAmount: sql<number>`
         COALESCE((
-          SELECT SUM(${pettyCashExpenses.amount}::numeric)
+          SELECT SUM(${qualified(pettyCashExpenses.amount)}::numeric)
           FROM ${pettyCashExpenses}
-          WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
-            AND ${pettyCashExpenses.status} = 'approved'
+          WHERE ${qualified(pettyCashExpenses.allocationId)} = ${qualified(pettyCashAllocations.id)}
+            AND ${qualified(pettyCashExpenses.status)} = 'approved'
         ), 0)::float
       `,
       submittedExpenseAmount: sql<number>`
         COALESCE((
-          SELECT SUM(${pettyCashExpenses.amount}::numeric)
+          SELECT SUM(${qualified(pettyCashExpenses.amount)}::numeric)
           FROM ${pettyCashExpenses}
-          WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
-            AND ${pettyCashExpenses.status} = 'submitted'
+          WHERE ${qualified(pettyCashExpenses.allocationId)} = ${qualified(pettyCashAllocations.id)}
+            AND ${qualified(pettyCashExpenses.status)} = 'submitted'
         ), 0)::float
       `,
     })

@@ -1,3 +1,4 @@
+import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
@@ -356,8 +357,8 @@ router.get('/', authenticate, requirePermission('payroll:read'), async (req: Req
         chequeNumber: chequeLeaves.chequeNumber,
         treasuryTransactionId: payroll.treasuryTransactionId,
         compensationRevisionId: payroll.compensationRevisionId,
-        totalAllowances: sql<string>`coalesce((select sum(${payrollAllowances.amount}) from ${payrollAllowances} where ${payrollAllowances.payrollId} = ${payroll.id}), 0)`,
-        totalDeductions: sql<string>`coalesce((select sum(${payrollDeductions.amount}) from ${payrollDeductions} where ${payrollDeductions.payrollId} = ${payroll.id}), 0)`,
+        totalAllowances: sql<string>`coalesce((select sum(${qualified(payrollAllowances.amount)}) from ${payrollAllowances} where ${qualified(payrollAllowances.payrollId)} = ${qualified(payroll.id)}), 0)`,
+        totalDeductions: sql<string>`coalesce((select sum(${qualified(payrollDeductions.amount)}) from ${payrollDeductions} where ${qualified(payrollDeductions.payrollId)} = ${qualified(payroll.id)}), 0)`,
         notes: payroll.notes,
         createdAt: payroll.createdAt,
         updatedAt: payroll.updatedAt,

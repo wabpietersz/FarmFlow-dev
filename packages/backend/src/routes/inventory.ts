@@ -1,3 +1,4 @@
+import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
@@ -492,7 +493,7 @@ router.get('/contracts', authenticate, requirePermission('inventory:read'), asyn
         linkedPurchaseOrderCount: sql<number>`(
           SELECT COUNT(*)::int
           FROM ${purchaseOrders}
-          WHERE ${purchaseOrders.contractId} = ${supplierContracts.id}
+          WHERE ${qualified(purchaseOrders.contractId)} = ${qualified(supplierContracts.id)}
         )`,
       })
       .from(supplierContracts)
@@ -721,11 +722,11 @@ router.get('/supplier-invoices', authenticate, requirePermission('inventory:read
         createdAt: supplierInvoices.createdAt,
         updatedAt: supplierInvoices.updatedAt,
         paidAmount: sql<number>`(
-          SELECT COALESCE(SUM(${supplierPaymentAllocations.allocatedAmount}::numeric), 0)::float
+          SELECT COALESCE(SUM(${qualified(supplierPaymentAllocations.allocatedAmount)}::numeric), 0)::float
           FROM ${supplierPaymentAllocations}
-          INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
-          WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
-            AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+          INNER JOIN ${supplierPayments} ON ${qualified(supplierPayments.id)} = ${qualified(supplierPaymentAllocations.supplierPaymentId)}
+          WHERE ${qualified(supplierPaymentAllocations.supplierInvoiceId)} = ${qualified(supplierInvoices.id)}
+            AND ${qualified(supplierPayments.paymentStatus)} IN ('pending', 'completed')
         )`,
       })
       .from(supplierInvoices)
@@ -1002,22 +1003,22 @@ router.get('/payables/summary', authenticate, requirePermission('inventory:read'
         invoiceReference: supplierInvoices.invoiceReference,
         dueDate: supplierInvoices.dueDate,
         orderedAmount: sql<number>`COALESCE((
-          SELECT SUM(${purchaseOrderItems.orderedQuantity}::numeric * ${purchaseOrderItems.unitPrice}::numeric)
+          SELECT SUM(${qualified(purchaseOrderItems.orderedQuantity)}::numeric * ${qualified(purchaseOrderItems.unitPrice)}::numeric)
           FROM ${purchaseOrderItems}
-          WHERE ${purchaseOrderItems.purchaseOrderId} = ${supplierInvoices.purchaseOrderId}
+          WHERE ${qualified(purchaseOrderItems.purchaseOrderId)} = ${qualified(supplierInvoices.purchaseOrderId)}
         ), 0)::float`,
         receivedAmount: sql<number>`COALESCE((
-          SELECT SUM(${purchaseOrderItems.receivedQuantity}::numeric * ${purchaseOrderItems.unitPrice}::numeric)
+          SELECT SUM(${qualified(purchaseOrderItems.receivedQuantity)}::numeric * ${qualified(purchaseOrderItems.unitPrice)}::numeric)
           FROM ${purchaseOrderItems}
-          WHERE ${purchaseOrderItems.purchaseOrderId} = ${supplierInvoices.purchaseOrderId}
+          WHERE ${qualified(purchaseOrderItems.purchaseOrderId)} = ${qualified(supplierInvoices.purchaseOrderId)}
         ), 0)::float`,
         invoicedAmount: supplierInvoices.invoiceAmount,
         paidAmount: sql<number>`COALESCE((
-          SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+          SELECT SUM(${qualified(supplierPaymentAllocations.allocatedAmount)}::numeric)
           FROM ${supplierPaymentAllocations}
-          INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
-          WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
-            AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+          INNER JOIN ${supplierPayments} ON ${qualified(supplierPayments.id)} = ${qualified(supplierPaymentAllocations.supplierPaymentId)}
+          WHERE ${qualified(supplierPaymentAllocations.supplierInvoiceId)} = ${qualified(supplierInvoices.id)}
+            AND ${qualified(supplierPayments.paymentStatus)} IN ('pending', 'completed')
         ), 0)::float`,
       })
       .from(supplierInvoices)
@@ -2196,11 +2197,11 @@ router.get('/purchase-orders/:id', authenticate, requirePermission('inventory:re
         invoiceAmount: supplierInvoices.invoiceAmount,
         status: supplierInvoices.status,
         paidAmount: sql<number>`COALESCE((
-          SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+          SELECT SUM(${qualified(supplierPaymentAllocations.allocatedAmount)}::numeric)
           FROM ${supplierPaymentAllocations}
-          INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
-          WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
-            AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+          INNER JOIN ${supplierPayments} ON ${qualified(supplierPayments.id)} = ${qualified(supplierPaymentAllocations.supplierPaymentId)}
+          WHERE ${qualified(supplierPaymentAllocations.supplierInvoiceId)} = ${qualified(supplierInvoices.id)}
+            AND ${qualified(supplierPayments.paymentStatus)} IN ('pending', 'completed')
         ), 0)::float`,
       })
       .from(supplierInvoices)
@@ -2734,9 +2735,9 @@ router.get('/transfers', authenticate, requirePermission('inventory:read'), asyn
         fromName: fromLocation.name,
         toName: toLocation.name,
         notes: stockTransfers.notes,
-        lineCount: sql<number>`(SELECT count(*)::int FROM stock_transfer_lines l WHERE l.transfer_id = ${stockTransfers.id})`,
-        value: sql<number>`(SELECT COALESCE(SUM(l.quantity::numeric * lot.cost_per_unit::numeric), 0)::float FROM stock_transfer_lines l JOIN inventory_lots lot ON lot.id = l.source_lot_id WHERE l.transfer_id = ${stockTransfers.id})`,
-        items: sql<string>`(SELECT string_agg(DISTINCT fi.ingredient_name, ', ') FROM stock_transfer_lines l JOIN feed_inventory fi ON fi.id = l.inventory_item_id WHERE l.transfer_id = ${stockTransfers.id})`,
+        lineCount: sql<number>`(SELECT count(*)::int FROM stock_transfer_lines l WHERE l.transfer_id = ${qualified(stockTransfers.id)})`,
+        value: sql<number>`(SELECT COALESCE(SUM(l.quantity::numeric * lot.cost_per_unit::numeric), 0)::float FROM stock_transfer_lines l JOIN inventory_lots lot ON lot.id = l.source_lot_id WHERE l.transfer_id = ${qualified(stockTransfers.id)})`,
+        items: sql<string>`(SELECT string_agg(DISTINCT fi.ingredient_name, ', ') FROM stock_transfer_lines l JOIN feed_inventory fi ON fi.id = l.inventory_item_id WHERE l.transfer_id = ${qualified(stockTransfers.id)})`,
       })
       .from(stockTransfers)
       .innerJoin(fromLocation, eq(stockTransfers.fromLocationId, fromLocation.id))

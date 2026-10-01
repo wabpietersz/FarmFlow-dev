@@ -1,3 +1,4 @@
+import { qualified } from './sql-utils';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { batches, buyerReceiptAllocations, buyerReceiptLines, buyerReceipts, buyers, saleBookings, sales, sites } from '../db/schema';
@@ -241,13 +242,13 @@ export async function receivablesAgeing(asOf = today()) {
       creditLimit: buyers.creditLimit,
       phoneNumber: buyers.phoneNumber,
       paid: sql<number>`COALESCE((
-        SELECT SUM(${buyerReceiptAllocations.allocatedAmount}::numeric)
+        SELECT SUM(${qualified(buyerReceiptAllocations.allocatedAmount)}::numeric)
         FROM ${buyerReceiptAllocations}
-        JOIN ${buyerReceiptLines} ON ${buyerReceiptLines.id} = ${buyerReceiptAllocations.receiptLineId}
-        JOIN ${buyerReceipts} ON ${buyerReceipts.id} = ${buyerReceiptLines.receiptId}
-        WHERE ${buyerReceiptAllocations.saleId} = ${sales.id}
-          AND ${buyerReceiptLines.paymentStatus} = 'completed'
-          AND ${buyerReceipts.receiptDate} <= ${asOf}
+        JOIN ${buyerReceiptLines} ON ${qualified(buyerReceiptLines.id)} = ${qualified(buyerReceiptAllocations.receiptLineId)}
+        JOIN ${buyerReceipts} ON ${qualified(buyerReceipts.id)} = ${qualified(buyerReceiptLines.receiptId)}
+        WHERE ${qualified(buyerReceiptAllocations.saleId)} = ${qualified(sales.id)}
+          AND ${qualified(buyerReceiptLines.paymentStatus)} = 'completed'
+          AND ${qualified(buyerReceipts.receiptDate)} <= ${asOf}
       ), 0)::float`,
     })
     .from(sales)
@@ -292,7 +293,7 @@ export async function receivablesAgeing(asOf = today()) {
       .select({
         buyerId: buyerReceipts.buyerId,
         received: sql<number>`COALESCE(SUM(${buyerReceiptLines.paymentAmount}::numeric), 0)::float`,
-        applied: sql<number>`COALESCE(SUM((SELECT COALESCE(SUM(${buyerReceiptAllocations.allocatedAmount}::numeric), 0) FROM ${buyerReceiptAllocations} WHERE ${buyerReceiptAllocations.receiptLineId} = ${buyerReceiptLines.id})), 0)::float`,
+        applied: sql<number>`COALESCE(SUM((SELECT COALESCE(SUM(${qualified(buyerReceiptAllocations.allocatedAmount)}::numeric), 0) FROM ${buyerReceiptAllocations} WHERE ${qualified(buyerReceiptAllocations.receiptLineId)} = ${qualified(buyerReceiptLines.id)})), 0)::float`,
       })
       .from(buyerReceiptLines)
       .innerJoin(buyerReceipts, eq(buyerReceiptLines.receiptId, buyerReceipts.id))

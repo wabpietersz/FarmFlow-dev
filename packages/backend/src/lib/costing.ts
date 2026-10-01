@@ -1,3 +1,4 @@
+import { qualified } from './sql-utils';
 import { and, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
@@ -221,7 +222,7 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
       referenceType: batchInventoryConsumptions.referenceType,
       referenceId: batchInventoryConsumptions.referenceId,
       notes: batchInventoryConsumptions.notes,
-      itemName: sql<string>`(SELECT ingredient_name FROM feed_inventory WHERE feed_inventory.id = ${batchInventoryConsumptions.inventoryItemId})`,
+      itemName: sql<string>`(SELECT ingredient_name FROM feed_inventory WHERE feed_inventory.id = ${qualified(batchInventoryConsumptions.inventoryItemId)})`,
     }).from(batchInventoryConsumptions),
     db.select({
       id: siteInventoryConsumptions.id,
@@ -231,7 +232,7 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
       referenceType: siteInventoryConsumptions.referenceType,
       referenceId: siteInventoryConsumptions.referenceId,
       notes: siteInventoryConsumptions.notes,
-      itemName: sql<string>`(SELECT ingredient_name FROM feed_inventory WHERE feed_inventory.id = ${siteInventoryConsumptions.inventoryItemId})`,
+      itemName: sql<string>`(SELECT ingredient_name FROM feed_inventory WHERE feed_inventory.id = ${qualified(siteInventoryConsumptions.inventoryItemId)})`,
     }).from(siteInventoryConsumptions),
     db.select({
       payrollId: payroll.id,
@@ -273,7 +274,7 @@ export async function buildCostingModel(asOfInput?: string): Promise<CostingMode
         // Purchase-order payments buy stock; that stock is costed when it is used.
         sql`NOT EXISTS (
           SELECT 1 FROM treasury_transaction_links l
-          WHERE l.treasury_transaction_id = ${treasuryTransactions.id} AND l.source_entity_type = 'purchase_order'
+          WHERE l.treasury_transaction_id = ${qualified(treasuryTransactions.id)} AND l.source_entity_type = 'purchase_order'
         )`,
       )),
   ]);

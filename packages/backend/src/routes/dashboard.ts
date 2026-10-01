@@ -1,3 +1,4 @@
+import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { hasPermission } from '../lib/permissions';
 import { buildHomeDashboard } from '../lib/home-dashboard';
@@ -437,11 +438,11 @@ router.get('/executive', authenticate, async (_req: Request, res: Response) => {
           dueDate: supplierInvoices.dueDate,
           invoiceAmount: supplierInvoices.invoiceAmount,
           paidAmount: sql<number>`COALESCE((
-            SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+            SELECT SUM(${qualified(supplierPaymentAllocations.allocatedAmount)}::numeric)
             FROM ${supplierPaymentAllocations}
-            INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
-            WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
-              AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+            INNER JOIN ${supplierPayments} ON ${qualified(supplierPayments.id)} = ${qualified(supplierPaymentAllocations.supplierPaymentId)}
+            WHERE ${qualified(supplierPaymentAllocations.supplierInvoiceId)} = ${qualified(supplierInvoices.id)}
+              AND ${qualified(supplierPayments.paymentStatus)} IN ('pending', 'completed')
           ), 0)::float`,
         })
         .from(supplierInvoices)
@@ -554,11 +555,11 @@ router.get('/exceptions', authenticate, async (_req: Request, res: Response) => 
           dueDate: supplierInvoices.dueDate,
           amount: supplierInvoices.invoiceAmount,
           paidAmount: sql<number>`COALESCE((
-            SELECT SUM(${supplierPaymentAllocations.allocatedAmount}::numeric)
+            SELECT SUM(${qualified(supplierPaymentAllocations.allocatedAmount)}::numeric)
             FROM ${supplierPaymentAllocations}
-            INNER JOIN ${supplierPayments} ON ${supplierPayments.id} = ${supplierPaymentAllocations.supplierPaymentId}
-            WHERE ${supplierPaymentAllocations.supplierInvoiceId} = ${supplierInvoices.id}
-              AND ${supplierPayments.paymentStatus} IN ('pending', 'completed')
+            INNER JOIN ${supplierPayments} ON ${qualified(supplierPayments.id)} = ${qualified(supplierPaymentAllocations.supplierPaymentId)}
+            WHERE ${qualified(supplierPaymentAllocations.supplierInvoiceId)} = ${qualified(supplierInvoices.id)}
+              AND ${qualified(supplierPayments.paymentStatus)} IN ('pending', 'completed')
           ), 0)::float`,
         })
         .from(supplierInvoices)
@@ -601,11 +602,11 @@ router.get('/exceptions', authenticate, async (_req: Request, res: Response) => 
           totalAmount: sales.totalAmount,
           creditTerms: buyers.creditTerms,
           paidAmount: sql<number>`COALESCE((
-            SELECT SUM(${buyerReceiptAllocations.allocatedAmount}::numeric)
+            SELECT SUM(${qualified(buyerReceiptAllocations.allocatedAmount)}::numeric)
             FROM ${buyerReceiptAllocations}
-            INNER JOIN ${buyerReceiptLines} ON ${buyerReceiptLines.id} = ${buyerReceiptAllocations.receiptLineId}
-            WHERE ${buyerReceiptAllocations.saleId} = ${sales.id}
-              AND ${buyerReceiptLines.paymentStatus} = 'completed'
+            INNER JOIN ${buyerReceiptLines} ON ${qualified(buyerReceiptLines.id)} = ${qualified(buyerReceiptAllocations.receiptLineId)}
+            WHERE ${qualified(buyerReceiptAllocations.saleId)} = ${qualified(sales.id)}
+              AND ${qualified(buyerReceiptLines.paymentStatus)} = 'completed'
           ), 0)::float`,
         })
         .from(sales)

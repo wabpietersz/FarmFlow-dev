@@ -1,3 +1,4 @@
+import { qualified } from '../lib/sql-utils';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
 import { UserRole } from '@farmflow/shared';
@@ -66,6 +67,9 @@ import {
   updateChequeLeafStatus,
 } from '../lib/treasury';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
+
+/** Fully qualified: Drizzle drops the table name in single-table queries, which breaks correlated sub-queries. */
+const TX_ID = sql.raw('"treasury_transactions"."id"');
 
 const router = Router();
 
@@ -152,16 +156,16 @@ router.get('/cheque-books', authenticate, requirePermission('treasury:read'), as
           COALESCE((
             SELECT COUNT(*)::int
             FROM ${chequeLeaves}
-            WHERE ${chequeLeaves.chequeBookId} = ${chequeBooks.id}
-              AND ${chequeLeaves.status} = 'available'
+            WHERE ${qualified(chequeLeaves.chequeBookId)} = ${qualified(chequeBooks.id)}
+              AND ${qualified(chequeLeaves.status)} = 'available'
           ), 0)
         `,
         issuedLeaves: sql<number>`
           COALESCE((
             SELECT COUNT(*)::int
             FROM ${chequeLeaves}
-            WHERE ${chequeLeaves.chequeBookId} = ${chequeBooks.id}
-              AND ${chequeLeaves.status} = 'issued'
+            WHERE ${qualified(chequeLeaves.chequeBookId)} = ${qualified(chequeBooks.id)}
+              AND ${qualified(chequeLeaves.status)} = 'issued'
           ), 0)
         `,
       })
@@ -657,28 +661,28 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
         sourceModule: treasuryTransactions.sourceModule,
         sourceEntityType: sql<string | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceEntityType}
+            SELECT ${qualified(treasuryTransactionLinks.sourceEntityType)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${TX_ID}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
         sourceEntityId: sql<number | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceEntityId}
+            SELECT ${qualified(treasuryTransactionLinks.sourceEntityId)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${TX_ID}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
         sourceCodeSnapshot: sql<string | null>`
           (
-            SELECT ${treasuryTransactionLinks.sourceCodeSnapshot}
+            SELECT ${qualified(treasuryTransactionLinks.sourceCodeSnapshot)}
             FROM ${treasuryTransactionLinks}
-            WHERE ${treasuryTransactionLinks.treasuryTransactionId} = ${treasuryTransactions.id}
-            ORDER BY ${treasuryTransactionLinks.id}
+            WHERE ${qualified(treasuryTransactionLinks.treasuryTransactionId)} = ${TX_ID}
+            ORDER BY ${qualified(treasuryTransactionLinks.id)}
             LIMIT 1
           )
         `,
@@ -689,7 +693,7 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
             SELECT string_agg(DISTINCT fc.name, ', ')
             FROM ${treasuryTransactionEntries} e
             JOIN ${financeCategories} fc ON fc.id = e.category_id
-            WHERE e.treasury_transaction_id = ${treasuryTransactions.id}
+            WHERE e.treasury_transaction_id = ${TX_ID}
           )
         `,
         costCentreNames: sql<string | null>`
@@ -697,14 +701,14 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
             SELECT string_agg(DISTINCT cc.name, ', ')
             FROM ${treasuryTransactionEntries} e
             JOIN ${costCentres} cc ON cc.id = e.cost_centre_id
-            WHERE e.treasury_transaction_id = ${treasuryTransactions.id}
+            WHERE e.treasury_transaction_id = ${TX_ID}
           )
         `,
         hasUncategorized: sql<boolean>`
           EXISTS (
             SELECT 1 FROM ${treasuryTransactionEntries} e
             JOIN ${financeCategories} fc ON fc.id = e.category_id
-            WHERE e.treasury_transaction_id = ${treasuryTransactions.id} AND fc.category_type = 'suspense'
+            WHERE e.treasury_transaction_id = ${TX_ID} AND fc.category_type = 'suspense'
           )
         `,
       })
@@ -726,7 +730,7 @@ router.get('/transactions', authenticate, requirePermission('treasury:read'), as
       batchId ? sql`e.batch_id = ${Number(batchId)}` : null,
     ].filter(Boolean);
     for (const filter of entryFilters) {
-      conditions.push(sql`EXISTS (SELECT 1 FROM ${treasuryTransactionEntries} e WHERE e.treasury_transaction_id = ${treasuryTransactions.id} AND ${filter})`);
+      conditions.push(sql`EXISTS (SELECT 1 FROM ${treasuryTransactionEntries} e WHERE e.treasury_transaction_id = ${TX_ID} AND ${filter})`);
     }
     if (from) {
       conditions.push(sql`${treasuryTransactions.transactionDate} >= ${String(from)}`);
@@ -1021,7 +1025,7 @@ router.get('/reconciliations', authenticate, requirePermission('treasury:read'),
           COALESCE((
             SELECT COUNT(*)::int
             FROM ${treasuryTransactionEntries}
-            WHERE ${treasuryTransactionEntries.reconciliationId} = ${financeReconciliations.id}
+            WHERE ${qualified(treasuryTransactionEntries.reconciliationId)} = ${qualified(financeReconciliations.id)}
           ), 0)
         `,
       })
@@ -1131,18 +1135,18 @@ router.get('/petty-cash/allocations', authenticate, requirePermission('treasury:
         updatedAt: pettyCashAllocations.updatedAt,
         approvedExpenseAmount: sql<number>`
           COALESCE((
-            SELECT SUM(${pettyCashExpenses.amount}::numeric)
+            SELECT SUM(${qualified(pettyCashExpenses.amount)}::numeric)
             FROM ${pettyCashExpenses}
-            WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
-              AND ${pettyCashExpenses.status} = 'approved'
+            WHERE ${qualified(pettyCashExpenses.allocationId)} = ${qualified(pettyCashAllocations.id)}
+              AND ${qualified(pettyCashExpenses.status)} = 'approved'
           ), 0)::float
         `,
         submittedExpenseAmount: sql<number>`
           COALESCE((
-            SELECT SUM(${pettyCashExpenses.amount}::numeric)
+            SELECT SUM(${qualified(pettyCashExpenses.amount)}::numeric)
             FROM ${pettyCashExpenses}
-            WHERE ${pettyCashExpenses.allocationId} = ${pettyCashAllocations.id}
-              AND ${pettyCashExpenses.status} = 'submitted'
+            WHERE ${qualified(pettyCashExpenses.allocationId)} = ${qualified(pettyCashAllocations.id)}
+              AND ${qualified(pettyCashExpenses.status)} = 'submitted'
           ), 0)::float
         `,
       })
