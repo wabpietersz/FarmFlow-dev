@@ -35,7 +35,6 @@ function createChainMock(resolvedValue: unknown = []) {
 
 let dbChains: ReturnType<typeof createChainMock>[] = [];
 let chainIndex = 0;
-let transactionFn: ((tx: unknown) => Promise<unknown>) | null = null;
 
 jest.mock('../db', () => {
   return {
@@ -49,7 +48,6 @@ jest.mock('../db', () => {
           }
           if (prop === 'transaction') {
             return async (fn: (tx: unknown) => Promise<unknown>) => {
-              transactionFn = fn;
               // Create a mock tx that behaves like db
               const txProxy = new Proxy({}, {
                 get(_t, txProp: string) {
@@ -181,7 +179,6 @@ describe('Attendance Module Routes', () => {
     jest.clearAllMocks();
     chainIndex = 0;
     dbChains = [];
-    transactionFn = null;
   });
 
   // ==================== SHIFTS ====================

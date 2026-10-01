@@ -112,7 +112,7 @@ const viewer = {
   updatedAt: new Date(),
 };
 
-const farmManager = {
+const _farmManager = {
   id: 2,
   firebaseUid: 'manager-uid',
   email: 'manager@farmflow.com',

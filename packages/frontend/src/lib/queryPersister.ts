@@ -103,6 +103,8 @@ export const NON_PERSISTABLE_KEYS = [
   'auth',
   'users',
   'settings',
+  // Read from IndexedDB itself; persisting it would show a stale queue
+  'offline-queue',
 ] as const;
 
 /**

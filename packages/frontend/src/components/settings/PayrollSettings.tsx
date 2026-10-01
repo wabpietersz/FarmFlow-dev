@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useResettableState } from '@/lib/useResettableState';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,12 +17,12 @@ const FIELDS = [
 export function PayrollSettings({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useStatutoryRates();
   const save = useSaveStatutoryRates();
-  const [form, setForm] = useState({ epfEmployeeRate: '8', epfEmployerRate: '12', etfEmployerRate: '3' });
-
-  useEffect(() => {
-    const rates = data?.data;
-    if (rates) setForm({ epfEmployeeRate: String(rates.epfEmployeeRate), epfEmployerRate: String(rates.epfEmployerRate), etfEmployerRate: String(rates.etfEmployerRate) });
-  }, [data]);
+  const rates = data?.data;
+  const [form, setForm] = useResettableState(JSON.stringify(rates ?? null), () => ({
+    epfEmployeeRate: String(rates?.epfEmployeeRate ?? 8),
+    epfEmployerRate: String(rates?.epfEmployerRate ?? 12),
+    etfEmployerRate: String(rates?.etfEmployerRate ?? 3),
+  }));
 
   if (isLoading) return <Skeleton className="h-40 rounded-3xl" />;
   const values = { epfEmployeeRate: Number(form.epfEmployeeRate), epfEmployerRate: Number(form.epfEmployerRate), etfEmployerRate: Number(form.etfEmployerRate) };

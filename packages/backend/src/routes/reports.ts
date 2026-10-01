@@ -5,9 +5,9 @@ import { authenticate, requirePermission } from '../middleware/auth';
 import { db } from '../db';
 import {
   batches, dailyRecords, sales, buyerReceiptAllocations, buyers, sites, feedInventory,
-  feedProductionBatches, feedRecipes, feedDistributions,
+  feedProductionBatches,
   batchInventoryConsumptions, inventoryItemTypes,
-  buyerReceiptLines, buyerReceipts, treasuryTransactionEntries, treasuryTransactionLinks, treasuryTransactions,
+  buyerReceiptLines, treasuryTransactionEntries, treasuryTransactionLinks, treasuryTransactions,
   attendance, leaveBalances, payroll, employees, financeAccounts, supplierPayments, suppliers,
   purchaseOrders, pettyCashAllocations, pettyCashExpenses, chequeLeaves, users,
 } from '../db/schema';
@@ -1534,9 +1534,6 @@ router.get('/feed-analytics', authenticate, requirePermission('reports:read'), a
     const inventoryTurnover = await Promise.all(
       inventoryItems.map(async (item) => {
         // Total distributed from production materials
-        const distConditions: SQL[] = [eq(feedDistributions.productionBatchId, item.id)];
-        // Actually, distribution is by farm batch, not inventory item.
-        // Use a simpler approach: total feed consumption across all batches
         const currentStock = Number(item.quantity);
         const reorderLevel = item.reorderLevel ? Number(item.reorderLevel) : null;
 

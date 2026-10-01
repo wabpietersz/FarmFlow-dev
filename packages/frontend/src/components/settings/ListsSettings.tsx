@@ -1,4 +1,5 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useResettableState } from '@/lib/useResettableState';
+import { useState, type KeyboardEvent } from 'react';
 import { Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -40,12 +41,8 @@ export function ListsSettings({ canEdit }: { canEdit: boolean }) {
 function ListCard({ configKey, title, description, placeholder, canEdit }: { configKey: string; title: string; description: string; placeholder: string; canEdit: boolean }) {
   const { value, isLoading } = useConfigValue<string[]>(configKey, []);
   const update = useUpdateSystemConfig();
-  const [items, setItems] = useState<string[]>([]);
+  const [items, setItems] = useResettableState(JSON.stringify(value), () => (Array.isArray(value) ? value : []));
   const [draft, setDraft] = useState('');
-
-  useEffect(() => {
-    if (Array.isArray(value)) setItems(value);
-  }, [JSON.stringify(value)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (next: string[]) => {
     const previous = items;
@@ -112,11 +109,7 @@ function ListCard({ configKey, title, description, placeholder, canEdit }: { con
 export function AlertSettings({ canEdit }: { canEdit: boolean }) {
   const { value, isLoading } = useConfigValue<Partial<AlertThresholds>>('alert_thresholds', DEFAULT_THRESHOLDS);
   const update = useUpdateSystemConfig();
-  const [form, setForm] = useState<AlertThresholds>(DEFAULT_THRESHOLDS);
-
-  useEffect(() => {
-    setForm({ ...DEFAULT_THRESHOLDS, ...(value ?? {}) });
-  }, [JSON.stringify(value)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [form, setForm] = useResettableState<AlertThresholds>(JSON.stringify(value), () => ({ ...DEFAULT_THRESHOLDS, ...(value ?? {}) }));
 
   if (isLoading) return <Skeleton className="h-48 rounded-3xl" />;
 

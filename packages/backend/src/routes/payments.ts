@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
-import { and, desc, eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { updatePaymentSchema } from '../validators/sales';

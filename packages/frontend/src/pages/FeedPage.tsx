@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import {
   useRecipes,
@@ -176,6 +176,9 @@ function formatQuantity(value: number, maxFractionDigits = 2) {
 
 // --- Helper Component ---
 
+/** Extra fields the recipe list returns beyond the shared type */
+type RecipeExtras = { ingredientSummary?: string; ingredientCount?: number; status?: string };
+
 export default function FeedPage() {
   const { hasPermission } = useAuthStore();
   const queryClient = useQueryClient();
@@ -197,7 +200,7 @@ export default function FeedPage() {
     cost: string;
     status: string;
     ingredientSummary?: string;
-    ingredients?: any[];
+    ingredients?: Array<{ ingredientName?: string; proportion?: string | number; unit?: string }>;
   } | null>(null);
 
   // =====================
@@ -377,7 +380,7 @@ export default function FeedPage() {
   };
 
   // Track which recipe detail we've already loaded ingredients for
-  const loadedRecipeDetailIdRef = useRef<number | null>(null);
+  const [loadedRecipeDetailId, setLoadedRecipeDetailId] = useState<number | null>(null);
 
   const handleOpenEditRecipe = (recipe: {
     id: number;
@@ -385,44 +388,37 @@ export default function FeedPage() {
     feedType: string;
     cost?: number | string | null;
   }) => {
-    loadedRecipeDetailIdRef.current = null; // reset so useEffect will re-populate
+    setLoadedRecipeDetailId(null); // reset so the ingredients load again
     setEditingRecipe({ id: recipe.id });
-    // Set basic fields immediately; ingredients will be loaded from detail query via useEffect
+    // Set basic fields immediately; ingredients load from the detail query below
     setRecipeForm({
       recipeName: recipe.recipeName,
       feedType: recipe.feedType,
       cost: recipe.cost != null ? String(recipe.cost) : '',
-      status: (recipe as any).status ?? 'active',
+      status: (recipe as typeof recipe & RecipeExtras).status ?? 'active',
       ingredients: [{ inventoryItemId: '', proportion: '', unit: 'kg' }],
     });
     setShowRecipeDialog(true);
   };
 
   // When recipe detail loads, populate ingredients into the form
-  const recipeDetailForEdit = (recipeDetailData as unknown as { data?: { recipe?: Record<string, unknown>; ingredients?: { inventoryItemId?: number | null; proportion?: string; unit?: string }[] } })?.data;
+  const recipeDetailForEdit = (recipeDetailData as unknown as { data?: { recipe?: Record<string, unknown>; ingredients?: { inventoryItemId?: number | null; ingredientName?: string; proportion?: string; unit?: string }[] } })?.data;
+  const recipeDetailIngredients = recipeDetailForEdit?.ingredients ?? [];
 
-  useEffect(() => {
-    if (
-      editingRecipe &&
-      recipeDetailForEdit?.ingredients &&
-      loadedRecipeDetailIdRef.current !== editingRecipe.id
-    ) {
-      loadedRecipeDetailIdRef.current = editingRecipe.id;
-      const loadedIngredients = recipeDetailForEdit.ingredients
-        .filter((ing: { inventoryItemId?: number | null }) => ing.inventoryItemId != null)
-        .map((ing: { inventoryItemId?: number | null; proportion?: string; unit?: string }) => ({
-          inventoryItemId: String(ing.inventoryItemId ?? ''),
-          proportion: String(ing.proportion ?? ''),
-          unit: ing.unit ?? 'kg',
-        }));
-      if (loadedIngredients.length > 0) {
-        setRecipeForm((prev) => ({
-          ...prev,
-          ingredients: loadedIngredients,
-        }));
-      }
+  // When the recipe's detail arrives, fill its ingredients into the form once (during render, not in an effect)
+  if (editingRecipe && recipeDetailForEdit?.ingredients && loadedRecipeDetailId !== editingRecipe.id) {
+    setLoadedRecipeDetailId(editingRecipe.id);
+    const loadedIngredients = recipeDetailForEdit.ingredients
+      .filter((ing) => ing.inventoryItemId != null)
+      .map((ing) => ({
+        inventoryItemId: String(ing.inventoryItemId ?? ''),
+        proportion: String(ing.proportion ?? ''),
+        unit: ing.unit ?? 'kg',
+      }));
+    if (loadedIngredients.length > 0) {
+      setRecipeForm((prev) => ({ ...prev, ingredients: loadedIngredients }));
     }
-  }, [editingRecipe, recipeDetailForEdit]);
+  }
 
   const handleAddIngredient = () => {
     setRecipeForm((prev) => ({
@@ -850,8 +846,8 @@ export default function FeedPage() {
                               ? `Rs. ${Number(recipe.cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '--'}
                           </TableCell>
-                          <TableCell className="hidden sm:table-cell text-muted-foreground text-sm max-w-[300px] truncate" title={(recipe as any).ingredientSummary}>
-                            {(recipe as any).ingredientSummary || ((recipe as any).ingredientCount ? `${(recipe as any).ingredientCount} ingredients` : '--')}
+                          <TableCell className="hidden sm:table-cell text-muted-foreground text-sm max-w-[300px] truncate" title={(recipe as typeof recipe & RecipeExtras).ingredientSummary}>
+                            {(recipe as typeof recipe & RecipeExtras).ingredientSummary || ((recipe as typeof recipe & RecipeExtras).ingredientCount ? `${(recipe as typeof recipe & RecipeExtras).ingredientCount} ingredients` : '--')}
                           </TableCell>
                           <TableCell>
                             {hasPermission('feed_production:update') ? (
@@ -882,7 +878,7 @@ export default function FeedPage() {
                                   feedType: recipe.feedType,
                                   cost: recipe.cost ? String(recipe.cost) : '0',
                                   status: recipe.status ?? 'active',
-                                  ingredientSummary: (recipe as any).ingredientSummary,
+                                  ingredientSummary: (recipe as typeof recipe & RecipeExtras).ingredientSummary,
                                 })}
                                 title="View details"
                               >
@@ -2214,14 +2210,14 @@ export default function FeedPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {((recipeDetailData as any)?.data?.ingredients || []).map((ing: any, i: number) => (
+                    {recipeDetailIngredients.map((ing, i: number) => (
                       <TableRow key={i}>
                         <TableCell>{ing.ingredientName || 'Unknown Ingredient'}</TableCell>
                         <TableCell>{ing.proportion}</TableCell>
                         <TableCell>{ing.unit}</TableCell>
                       </TableRow>
                     ))}
-                    {(!((recipeDetailData as any)?.data?.ingredients) || ((recipeDetailData as any)?.data?.ingredients.length === 0)) && (
+                    {recipeDetailIngredients.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={3} className="text-center text-muted-foreground">No ingredients found.</TableCell>
                       </TableRow>

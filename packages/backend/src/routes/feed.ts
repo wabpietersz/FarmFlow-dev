@@ -1,12 +1,9 @@
 import { qualified } from '../lib/sql-utils';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { StockError, getLocationByCode, planLotConsumptionOrLegacy } from '../lib/stock';
-import { defaultPurchaseCostCentreId } from '../lib/finance-tags';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import {
-  createSupplierSchema,
-  updateSupplierSchema,
   createRecipeSchema,
   updateRecipeSchema,
   createInventorySchema,
@@ -20,10 +17,6 @@ import {
   qcCheckpointSchema,
   createReportScheduleSchema,
   updateReportScheduleSchema,
-  createPurchaseOrderSchema,
-  updatePurchaseOrderSchema,
-  updatePurchaseOrderStatusSchema,
-  receivePurchaseOrderSchema,
 } from '../validators/feed';
 import { db } from '../db';
 import {
@@ -37,16 +30,14 @@ import {
   inventoryAuditTrail,
   inventoryAlerts,
   inventoryItemTypes,
-  inventoryMovements,
   purchaseOrders,
   purchaseOrderItems,
   inventoryLots,
   productionMaterialLots,
   reportSchedules,
   batches,
-  supplierContracts,
 } from '../db/schema';
-import { eq, and, ilike, sql, desc, sum, gte, lte, asc } from 'drizzle-orm';
+import { eq, and, ilike, sql, desc, gte, lte, asc } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import { getProductionBatchAvailableQuantity, postInventoryMovement } from '../lib/inventory-movements';
@@ -1617,7 +1608,7 @@ router.get('/distribution', authenticate, requirePermission('feed_production:rea
       .limit(limitNum)
       .offset(offset);
 
-    let countQuery = db.select({ total: sql<number>`count(*)::int` }).from(feedDistributions).$dynamic();
+    const countQuery = db.select({ total: sql<number>`count(*)::int` }).from(feedDistributions).$dynamic();
     if (conditions.length > 0) {
       // Count with the same joins for search filter
       let joinedCount = db
@@ -1982,11 +1973,6 @@ router.get('/recipes/cost-optimization', authenticate, requirePermission('feed_i
       let potentialSavings = 0;
 
       for (const ing of ingredients) {
-        // Find cheaper alternative in inventory for the same ingredient type
-        const alternatives = inventoryItems.filter(
-          (inv) => inv.ingredientName !== ing.ingredientName && Number(inv.costPerUnit) < Number(recipe.cost) * Number(ing.proportion) / 100
-        );
-
         // Check if any inventory items have significantly lower cost
         const currentInv = inventoryItems.find((inv) => inv.ingredientName === ing.ingredientName);
         if (currentInv && Number(currentInv.quantity) > Number(currentInv.reorderLevel || 0) * 2) {
@@ -2610,17 +2596,6 @@ router.get('/production/waste-summary', authenticate, requirePermission('feed_pr
 // PURCHASE ORDERS
 // =============================================================================
 
-// Helper: generate PO code PO-YYYYMMDD-XXX
-async function generatePOCode(date: string): Promise<string> {
-  const dateStr = date.replace(/-/g, '').slice(0, 8);
-  const prefix = `PO-${dateStr}-`;
-  const [result] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(purchaseOrders)
-    .where(ilike(purchaseOrders.orderCode, `${prefix}%`));
-  const seq = String((result?.total ?? 0) + 1).padStart(3, '0');
-  return `${prefix}${seq}`;
-}
 
 // GET /api/feed/purchase-orders — list purchase orders
 

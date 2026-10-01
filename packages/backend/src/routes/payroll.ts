@@ -1303,11 +1303,10 @@ router.put('/:id', authenticate, requireSiteAccess(siteOf.payroll()), requirePer
     if (req.body.overtimeHours !== undefined) updateData.overtimeHours = req.body.overtimeHours.toFixed(2);
     if (req.body.overtimeRate !== undefined) updateData.overtimeRate = req.body.overtimeRate.toFixed(2);
 
-    const [updated] = await db
+    await db
       .update(payroll)
       .set(updateData)
-      .where(eq(payroll.id, id))
-      .returning();
+      .where(eq(payroll.id, id));
 
     // Recalculate totals if overtime changed
     if (req.body.overtimeHours !== undefined || req.body.overtimeRate !== undefined) {

@@ -64,7 +64,7 @@ describe('advances, paying and EPF/ETF', () => {
     ]);
 
     const farmRun = await draftPayroll(farmHand.id, '2026-09-01', 50000, [{ amount: 5000, countsForEpf: true }]);
-    const millRun = await draftPayroll(millHand.id, '2026-09-01', 40000);
+    const _millRun = await draftPayroll(millHand.id, '2026-09-01', 40000);
     expect(farmRun).toEqual(expect.objectContaining({ grossSalary: '55000.00', epfEmployee: '4400.00', loanRecovery: '10000.00', netSalary: '40600.00' }));
     expect((await listStaffLoans())[0]).toEqual(expect.objectContaining({ outstanding: 10000, leftAfterScheduled: 0 }));
 

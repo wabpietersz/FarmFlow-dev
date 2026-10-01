@@ -8,24 +8,22 @@ import { cn } from '@/lib/utils';
 export default function OfflineBanner() {
   const isOnline = useOnlineStatus();
   const { mutations, count, retry, discard, hasFailed } = useOfflineMutationQueue();
-  const [showQueue, setShowQueue] = useState(false);
+  const [queueOpen, setShowQueue] = useState(false);
+  // The queue panel closes by itself once everything has synced
+  const showQueue = queueOpen && count > 0;
   const [justCameOnline, setJustCameOnline] = useState(false);
 
-  // Show "back online" notification briefly
+  // Show "back online" briefly when the connection returns (state adjusted during render)
+  const [wasOnline, setWasOnline] = useState(isOnline);
+  if (wasOnline !== isOnline) {
+    setWasOnline(isOnline);
+    setJustCameOnline(isOnline);
+  }
   useEffect(() => {
-    if (isOnline) {
-      setJustCameOnline(true);
-      const timer = setTimeout(() => setJustCameOnline(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [isOnline]);
-
-  // Hide queue panel when all mutations are synced
-  useEffect(() => {
-    if (count === 0) {
-      setShowQueue(false);
-    }
-  }, [count]);
+    if (!justCameOnline) return;
+    const timer = setTimeout(() => setJustCameOnline(false), 3000);
+    return () => clearTimeout(timer);
+  }, [justCameOnline]);
 
   const showBanner = !isOnline || justCameOnline || count > 0;
   if (!showBanner) return null;

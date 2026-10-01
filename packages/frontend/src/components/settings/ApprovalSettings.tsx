@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useResettableState } from '@/lib/useResettableState';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,12 +16,11 @@ const FIELDS = [
 export function ApprovalSettings({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useApprovalLimits();
   const save = useSaveApprovalLimits();
-  const [form, setForm] = useState({ purchaseOrder: '', moneyOut: '' });
-
-  useEffect(() => {
-    const limits = data?.data;
-    if (limits) setForm({ purchaseOrder: limits.purchaseOrder ? String(limits.purchaseOrder) : '', moneyOut: limits.moneyOut ? String(limits.moneyOut) : '' });
-  }, [data]);
+  const limits = data?.data;
+  const [form, setForm] = useResettableState(JSON.stringify(limits ?? null), () => ({
+    purchaseOrder: limits?.purchaseOrder ? String(limits.purchaseOrder) : '',
+    moneyOut: limits?.moneyOut ? String(limits.moneyOut) : '',
+  }));
 
   if (isLoading) return <Skeleton className="h-40 rounded-3xl" />;
   const value = (v: string) => (v.trim() && Number(v) > 0 ? Number(v) : null);

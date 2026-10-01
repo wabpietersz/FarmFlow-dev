@@ -72,7 +72,7 @@ function serviceTypeCategoryCode(serviceType: string) {
   return 'repairs_maintenance';
 }
 import { assertPeriodOpen } from '../lib/period-locks';
-import { getProductionBatchAvailableQuantity, postInventoryMovement } from '../lib/inventory-movements';
+import { postInventoryMovement } from '../lib/inventory-movements';
 import { isMissingTreasuryColumn, isMissingTreasuryTable, sendTreasurySchemaNotReady } from '../lib/treasury-errors';
 
 const router = Router();
@@ -86,17 +86,6 @@ interface LotConsumption {
   lineCost: number;
   previousRemaining: number;
   newRemaining: number;
-}
-
-async function generateLotCode(date: string, prefix = 'LOT'): Promise<string> {
-  const dateStr = date.replace(/-/g, '').slice(0, 8);
-  const lotPrefix = `${prefix}-${dateStr}-`;
-  const [result] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(inventoryLots)
-    .where(ilike(inventoryLots.lotCode, `${lotPrefix}%`));
-  const seq = String((result?.total ?? 0) + 1).padStart(3, '0');
-  return `${lotPrefix}${seq}`;
 }
 
 async function generatePOCode(date: string): Promise<string> {

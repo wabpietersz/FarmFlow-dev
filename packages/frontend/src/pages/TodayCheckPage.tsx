@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useResettableState } from '@/lib/useResettableState';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Minus, Plus, Syringe, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -35,14 +36,13 @@ export default function TodayCheckPage() {
   const [date, setDate] = useState(isoToday());
   const { data, isLoading, error } = useTodayCheck(id, date);
   const save = useSaveTodayCheck(id!);
-  const [form, setForm] = useState<Form>(EMPTY);
   const [showMore, setShowMore] = useState(false);
 
   const check = data?.data;
-
-  useEffect(() => {
+  // The form starts from today's saved record (or blank) and resets when the day or record changes
+  const [form, setForm] = useResettableState<Form>(JSON.stringify([check?.date ?? null, check?.record ?? null]), () => {
     const record = check?.record;
-    setForm(record
+    return record
       ? {
           deaths: record.mortalityCount,
           cause: record.mortalityCause ?? '',
@@ -53,8 +53,8 @@ export default function TodayCheckPage() {
           humidity: record.humidity != null ? String(record.humidity) : '',
           notes: record.notes ?? '',
         }
-      : EMPTY);
-  }, [check?.record, check?.date]);
+      : EMPTY;
+  });
 
   const filled = useMemo(() => [form.feed, form.water, form.weight, form.temperature].filter(Boolean).length + 1, [form]);
   const progress = Math.round((filled / 5) * 100);

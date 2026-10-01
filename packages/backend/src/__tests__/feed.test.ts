@@ -85,7 +85,7 @@ const viewer = {
   updatedAt: new Date(),
 };
 
-const systemAdmin = {
+const _systemAdmin = {
   id: 1,
   firebaseUid: 'admin-uid',
   email: 'admin@farmflow.com',
@@ -163,14 +163,14 @@ const mockPurchaseOrder = {
   updatedAt: new Date(),
 };
 
-const mockSubmittedPO = {
+const _mockSubmittedPO = {
   ...mockPurchaseOrder,
   id: 2,
   orderCode: 'PO-20260210-002',
   status: 'submitted',
 };
 
-const mockPOItem = {
+const _mockPOItem = {
   id: 1,
   purchaseOrderId: 1,
   inventoryItemId: 1,
@@ -181,7 +181,7 @@ const mockPOItem = {
   notes: null,
 };
 
-const mockPOItem2 = {
+const _mockPOItem2 = {
   id: 2,
   purchaseOrderId: 1,
   inventoryItemId: 2,

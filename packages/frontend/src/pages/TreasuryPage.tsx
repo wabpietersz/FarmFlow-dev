@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft,
   Building2,
@@ -311,7 +311,8 @@ export default function TreasuryPage() {
     (account) => account.accountType === 'current' && account.allowsCheque,
   );
 
-  const overview = useMemo(() => {
+  // Cheap to compute; recalculated each render so it can never go stale
+  const overview = (() => {
     const totalBalance = accounts.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
     const bankBalance = accounts
       .filter((account) => ['bank', 'current'].includes(account.accountType))
@@ -342,9 +343,9 @@ export default function TreasuryPage() {
       bouncedIncomingCheques,
       activeAccounts: accounts.filter((account) => account.status === 'active').length,
     };
-  }, [accounts, allocations, bouncedIncomingReceipts, outgoingCheques, pendingIncomingReceipts, transactions]);
+  })();
 
-  const recentTransactions = useMemo(() => transactions.slice(0, 8), [transactions]);
+  const recentTransactions = transactions.slice(0, 8);
   const schemaErrorMessage = [
     accountsQuery.error,
     chequeBooksQuery.error,

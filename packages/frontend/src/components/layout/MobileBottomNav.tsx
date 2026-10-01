@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { LayoutGrid, X } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -31,9 +31,12 @@ export default function MobileBottomNav() {
   }, [visible, hasPermission]);
   const moreActive = moreLinks.some((link) => isHrefActive(location.pathname, link.href));
 
-  useEffect(() => {
+  // Close the "More" sheet when the page changes (adjusted during render, not in an effect)
+  const [sheetPath, setSheetPath] = useState(location.pathname);
+  if (sheetPath !== location.pathname) {
+    setSheetPath(location.pathname);
     setSheet(null);
-  }, [location.pathname]);
+  }
 
   const tabClass = (active: boolean) =>
     cn(

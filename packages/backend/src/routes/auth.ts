@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { sendPasswordResetEmail, sendPasswordResetResendEmail } from '../lib/mailer';
 import { UserRole } from '@farmflow/shared';
 import { firebaseAuth } from '../lib/firebase';
-import { authenticate, requireRole, requirePermission } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import { validate, registerSchema, loginSchema, setAccessLevelSchema } from '../validators/auth';
 import { getAccessMatrix, getUserPermissions, setAccessLevel } from '../lib/permissions';
 import { createAuditLog } from '../lib/audit';

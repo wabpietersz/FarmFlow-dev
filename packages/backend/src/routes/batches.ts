@@ -4,8 +4,8 @@ import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { createBatchSchema, updateBatchSchema, createChickPlacementSchema, createDailyRecordSchema, updateDailyRecordSchema, recordMortalitySchema, createVaccinationSchema } from '../validators/batch';
 import { db } from '../db';
-import { batches, cages, sites, dailyRecords, vaccinations, batchInventoryConsumptions, chickPlacements, feedInventory, inventoryAuditTrail, inventoryItemTypes, inventoryLots, purchaseOrderItems, supplierContracts, suppliers } from '../db/schema';
-import { eq, sql, and, desc, asc } from 'drizzle-orm';
+import { batches, cages, sites, dailyRecords, vaccinations, batchInventoryConsumptions, chickPlacements, feedInventory, inventoryItemTypes, supplierContracts, suppliers } from '../db/schema';
+import { eq, sql, and, desc } from 'drizzle-orm';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import { BatchCloseError, buildSingleBatchCostSummary, closeBatch, getBatchPerformance, reopenBatch } from '../lib/batch-costs';
@@ -13,7 +13,6 @@ import { buildCostingModel } from '../lib/costing';
 import { FarmOpsError, applyHealthTemplate, recordVaccination } from '../lib/batch-health';
 import { setUpNewBatch, startTurnaroundForBatch } from '../lib/farm-ops';
 import { closeBatchSchema } from '../validators/batch';
-import { postInventoryMovement } from '../lib/inventory-movements';
 import { assertPeriodOpen } from '../lib/period-locks';
 
 const router = Router();

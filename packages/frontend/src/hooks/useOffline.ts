@@ -6,7 +6,7 @@
  * - useOfflineMutation: submit mutations with offline queueing
  */
 import { useState, useEffect, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queueMutation, retryMutation, discardMutation } from '@/lib/offlineSync';
 import { getAllMutations, getMutationQueueCount, type QueuedMutation } from '@/lib/offlineDb';
 
@@ -37,36 +37,31 @@ export function useOnlineStatus(): boolean {
  * Hook to view and manage the offline mutation queue.
  */
 export function useOfflineMutationQueue() {
-  const [mutations, setMutations] = useState<QueuedMutation[]>([]);
-  const [count, setCount] = useState(0);
   const queryClient = useQueryClient();
 
-  const refresh = useCallback(async () => {
-    const all = await getAllMutations();
-    setMutations(all);
-    const c = await getMutationQueueCount();
-    setCount(c);
-  }, []);
+  // The queue lives in IndexedDB; poll it every 5 s and right after the connection changes
+  const queue = useQuery({
+    queryKey: ['offline-queue'],
+    queryFn: async () => ({ mutations: await getAllMutations(), count: await getMutationQueueCount() }),
+    refetchInterval: 5000,
+    networkMode: 'always',
+  });
+  const mutations: QueuedMutation[] = queue.data?.mutations ?? [];
+  const count = queue.data?.count ?? 0;
+  const { refetch } = queue;
+  const refresh = useCallback(async () => { await refetch(); }, [refetch]);
 
   useEffect(() => {
-    refresh();
-
-    // Refresh on online/offline changes
     const handleChange = () => {
-      setTimeout(refresh, 1500); // Delay to let sync complete
+      setTimeout(() => void refetch(), 1500); // Delay to let sync complete
     };
     window.addEventListener('online', handleChange);
     window.addEventListener('offline', handleChange);
-
-    // Poll every 5 seconds for queue updates
-    const interval = setInterval(refresh, 5000);
-
     return () => {
       window.removeEventListener('online', handleChange);
       window.removeEventListener('offline', handleChange);
-      clearInterval(interval);
     };
-  }, [refresh]);
+  }, [refetch]);
 
   const retry = useCallback(
     async (id: string) => {

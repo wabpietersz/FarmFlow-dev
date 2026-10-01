@@ -100,7 +100,7 @@ export interface PendingBuyerChequeReceipt {
   treasuryReversalTransactionId?: number | null;
 }
 
-export interface BouncedBuyerChequeReceipt extends PendingBuyerChequeReceipt {}
+export type BouncedBuyerChequeReceipt = PendingBuyerChequeReceipt;
 
 export interface CreateFinanceAccountPayload {
   accountCode: string;
