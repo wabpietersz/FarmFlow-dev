@@ -63,6 +63,7 @@ export const sales = pgTable(
     index('idx_sales_batch_id').on(table.batchId),
     index('idx_sales_buyer_id').on(table.buyerId),
     index('idx_sales_sale_date').on(table.saleDate),
+    index('idx_sales_site_id').on(table.siteId),
   ],
 );
 
@@ -158,6 +159,8 @@ export const buyerReceiptLines = pgTable(
   (table) => [
     index('idx_buyer_receipt_lines_receipt_id').on(table.receiptId),
     index('idx_buyer_receipt_lines_payment_status').on(table.paymentStatus),
+    index('idx_buyer_receipt_lines_treasury_transaction_id').on(table.treasuryTransactionId),
+    index('idx_buyer_receipt_lines_finance_account_id').on(table.financeAccountId),
   ],
 );
 
@@ -204,5 +207,8 @@ export const saleBookings = pgTable(
   (table) => [
     index('idx_sale_bookings_catch_date').on(table.catchDate),
     index('idx_sale_bookings_status').on(table.status),
+    index('idx_sale_bookings_batch_id').on(table.batchId),
+    index('idx_sale_bookings_buyer_id').on(table.buyerId),
+    index('idx_sale_bookings_sale_id').on(table.saleId),
   ],
 );

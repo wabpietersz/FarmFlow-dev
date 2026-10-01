@@ -270,6 +270,7 @@ export const pettyCashExpenses = pgTable(
     index('idx_petty_cash_expenses_allocation').on(table.allocationId),
     index('idx_petty_cash_expenses_status').on(table.status),
     index('idx_petty_cash_expenses_date').on(table.expenseDate),
+    index('idx_petty_cash_expenses_cost_centre_id').on(table.costCentreId),
   ],
 );
 
@@ -312,6 +313,8 @@ export const operationalExpenses = pgTable(
     index('idx_operational_expenses_site').on(table.siteId),
     index('idx_operational_expenses_batch').on(table.batchId),
     index('idx_operational_expenses_account').on(table.financeAccountId),
+    index('idx_operational_expenses_treasury_transaction_id').on(table.treasuryTransactionId),
+    index('idx_operational_expenses_cost_centre_id').on(table.costCentreId),
   ],
 );
 

@@ -1,12 +1,12 @@
 import { requireSiteAccess, siteOf } from '../lib/site-scope';
 import { Router, type Request, type Response } from 'express';
 import { isFinanceTagError, sendFinanceTagError } from '../lib/finance-tags';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, sql, inArray } from 'drizzle-orm';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../validators/auth';
 import { createPaymentSchema, createSaleSchema, updateSaleSchema } from '../validators/sales';
 import { db } from '../db';
-import { batches, buyers, buyerReceiptAllocations, saleLorries, sales, sites } from '../db/schema';
+import { batches, buyers, buyerReceiptAllocations, buyerReceiptLines, saleLorries, sales, sites } from '../db/schema';
 import { createAuditLog } from '../lib/audit';
 import logger from '../lib/logger';
 import {
@@ -16,6 +16,7 @@ import {
   isPostingRuleError,
   getBuyerBalanceSummary,
   getSaleFinancialSummary,
+  getSettlementStatus,
   listSaleLorries,
   normalizeSaleLorries,
 } from '../lib/sales-ledger';
@@ -125,23 +126,37 @@ router.get('/', authenticate, requirePermission('sales:read'), async (req: Reque
     }
     const [{ total }] = await countQuery;
 
-    const enrichedResults = await Promise.all(
-      results.map(async (sale) => {
-        const [financial, buyerSummary] = await Promise.all([
-          getSaleFinancialSummary(sale.id, Number(sale.totalAmount)),
-          getBuyerBalanceSummary(sale.buyerId),
-        ]);
-        return {
-          ...sale,
-          status: normalizeSaleWorkflowStatus(sale.status),
-          totalPaid: financial.totalPaid,
-          outstandingBalance: financial.outstandingBalance,
-          settlementStatus: financial.settlementStatus,
-          buyerAdvanceCredit: buyerSummary.advanceCredit,
-          buyerNetBalance: buyerSummary.netBalance,
-        };
-      }),
-    );
+    // Paid totals for the whole page in one query, and each buyer's balance once (not once per row)
+    const saleIds = results.map((sale) => sale.id);
+    const paidRows = saleIds.length
+      ? await db
+          .select({
+            saleId: buyerReceiptAllocations.saleId,
+            paid: sql<number>`COALESCE(SUM(${buyerReceiptAllocations.allocatedAmount}::numeric), 0)::float`,
+          })
+          .from(buyerReceiptAllocations)
+          .innerJoin(buyerReceiptLines, eq(buyerReceiptAllocations.receiptLineId, buyerReceiptLines.id))
+          .where(and(inArray(buyerReceiptAllocations.saleId, saleIds), eq(buyerReceiptLines.paymentStatus, 'completed')))
+          .groupBy(buyerReceiptAllocations.saleId)
+      : [];
+    const paidBySale = new Map(paidRows.map((row) => [row.saleId, row.paid]));
+    const buyerIds = [...new Set(results.map((sale) => sale.buyerId))];
+    const buyerSummaries = new Map(await Promise.all(buyerIds.map(async (id) => [id, await getBuyerBalanceSummary(id)] as const)));
+
+    const enrichedResults = results.map((sale) => {
+      const totalAmount = Number(sale.totalAmount);
+      const totalPaid = paidBySale.get(sale.id) ?? 0;
+      const buyerSummary = buyerSummaries.get(sale.buyerId)!;
+      return {
+        ...sale,
+        status: normalizeSaleWorkflowStatus(sale.status),
+        totalPaid,
+        outstandingBalance: Number((totalAmount - totalPaid).toFixed(2)),
+        settlementStatus: getSettlementStatus(totalAmount, totalPaid),
+        buyerAdvanceCredit: buyerSummary.advanceCredit,
+        buyerNetBalance: buyerSummary.netBalance,
+      };
+    });
 
     res.json({
       success: true,

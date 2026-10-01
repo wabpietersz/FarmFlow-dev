@@ -61,6 +61,7 @@ export const payroll = pgTable(
     index('idx_payroll_pay_period').on(table.payPeriod),
     index('idx_payroll_status').on(table.status),
     index('idx_payroll_compensation_revision_id').on(table.compensationRevisionId),
+    index('idx_payroll_treasury_transaction_id').on(table.treasuryTransactionId),
   ],
 );
 
@@ -72,7 +73,10 @@ export const payrollDeductions = pgTable('payroll_deductions', {
   deductionType: varchar('deduction_type', { length: 100 }).notNull(),
   amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
   remarks: text('remarks'),
-});
+},
+  (table) => [
+    index('idx_payroll_deductions_payroll_id').on(table.payrollId),
+  ]);
 
 export const payrollAllowances = pgTable('payroll_allowances', {
   id: serial('id').primaryKey(),
@@ -83,7 +87,10 @@ export const payrollAllowances = pgTable('payroll_allowances', {
   amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
   countsForEpf: boolean('counts_for_epf').default(false).notNull(),
   remarks: text('remarks'),
-});
+},
+  (table) => [
+    index('idx_payroll_allowances_payroll_id').on(table.payrollId),
+  ]);
 
 export const compensationTemplates = pgTable(
   'compensation_templates',
@@ -130,6 +137,7 @@ export const staffLoans = pgTable(
   (table) => [
     index('idx_staff_loans_employee').on(table.employeeId),
     index('idx_staff_loans_status').on(table.status),
+    index('idx_staff_loans_treasury_transaction_id').on(table.treasuryTransactionId),
   ],
 );
 

@@ -82,7 +82,10 @@ export const dailyRecordPhotos = pgTable('daily_record_photos', {
     .notNull(),
   photoUrl: varchar('photo_url', { length: 512 }).notNull(),
   uploadedAt: timestamp('uploaded_at').defaultNow().notNull(),
-});
+},
+  (table) => [
+    index('idx_daily_record_photos_daily_record_id').on(table.dailyRecordId),
+  ]);
 
 export const vaccinations = pgTable(
   'vaccinations',

@@ -44,6 +44,7 @@ export const employees = pgTable(
     index('idx_employees_site_id').on(table.siteId),
     index('idx_employees_designation').on(table.designation),
     index('idx_employees_status').on(table.status),
+    index('idx_employees_cost_centre_id').on(table.costCentreId),
   ],
 );
 
@@ -55,7 +56,10 @@ export const emergencyContacts = pgTable('emergency_contacts', {
   contactName: varchar('contact_name', { length: 100 }).notNull(),
   relationship: varchar('relationship', { length: 50 }).notNull(),
   phoneNumber: varchar('phone_number', { length: 20 }).notNull(),
-});
+},
+  (table) => [
+    index('idx_emergency_contacts_employee_id').on(table.employeeId),
+  ]);
 
 export const bankDetails = pgTable('bank_details', {
   id: serial('id').primaryKey(),

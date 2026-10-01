@@ -80,7 +80,11 @@ export const feedRecipeIngredients = pgTable('feed_recipe_ingredients', {
   ingredientName: varchar('ingredient_name', { length: 100 }).notNull(),
   proportion: decimal('proportion', { precision: 5, scale: 2 }).notNull(),
   unit: varchar('unit', { length: 20 }).notNull(),
-});
+},
+  (table) => [
+    index('idx_feed_recipe_ingredients_recipe_id').on(table.recipeId),
+    index('idx_feed_recipe_ingredients_inventory_item_id').on(table.inventoryItemId),
+  ]);
 
 export const feedInventory = pgTable(
   'feed_inventory',
@@ -105,6 +109,7 @@ export const feedInventory = pgTable(
     index('idx_feed_inventory_ingredient').on(table.ingredientName),
     index('idx_feed_inventory_item_type').on(table.itemTypeId),
     index('idx_feed_inventory_item_code').on(table.itemCode),
+    index('idx_feed_inventory_supplier_id').on(table.supplierId),
   ],
 );
 
@@ -154,7 +159,11 @@ export const feedProductionMaterials = pgTable('feed_production_materials', {
   actualCost: decimal('actual_cost', { precision: 12, scale: 2 }),
   weightedCostPerUnit: decimal('weighted_cost_per_unit', { precision: 10, scale: 2 }),
   unit: varchar('unit', { length: 20 }).notNull(),
-});
+},
+  (table) => [
+    index('idx_feed_production_materials_production_batch_id').on(table.productionBatchId),
+    index('idx_feed_production_materials_inventory_item_id').on(table.inventoryItemId),
+  ]);
 
 // --- Feed Distribution ---
 
@@ -179,6 +188,7 @@ export const feedDistributions = pgTable(
   (table) => [
     index('idx_feed_dist_farm_batch').on(table.farmBatchId),
     index('idx_feed_dist_date').on(table.distributionDate),
+    index('idx_feed_distributions_production_batch_id').on(table.productionBatchId),
   ],
 );
 
@@ -264,6 +274,7 @@ export const purchaseOrders = pgTable(
     index('idx_po_status').on(table.status),
     index('idx_po_supplier').on(table.supplierId),
     index('idx_po_order_date').on(table.orderDate),
+    index('idx_purchase_orders_cost_centre_id').on(table.costCentreId),
   ],
 );
 
@@ -411,6 +422,8 @@ export const supplierPayments = pgTable(
     index('idx_supplier_payments_po').on(table.purchaseOrderId),
     index('idx_supplier_payments_status').on(table.paymentStatus),
     index('idx_supplier_payments_date').on(table.paymentDate),
+    index('idx_supplier_payments_treasury_transaction_id').on(table.treasuryTransactionId),
+    index('idx_supplier_payments_finance_account_id').on(table.financeAccountId),
   ],
 );
 
@@ -573,6 +586,7 @@ export const inventoryLots = pgTable(
     index('idx_lots_location').on(table.locationId, table.inventoryItemId),
     index('idx_lots_remaining').on(table.remainingQuantity),
     index('idx_lots_received_date').on(table.receivedDate),
+    index('idx_inventory_lots_purchase_order_item_id').on(table.purchaseOrderItemId),
   ],
 );
 
@@ -664,6 +678,8 @@ export const inventoryMovements = pgTable(
     index('idx_inventory_movements_lot').on(table.inventoryLotId),
     index('idx_inventory_movements_batch').on(table.batchId),
     index('idx_inventory_movements_source').on(table.sourceModule, table.sourceEntityType, table.sourceEntityId),
+    index('idx_inventory_movements_purchase_order_id').on(table.purchaseOrderId),
+    index('idx_inventory_movements_production_batch_id').on(table.productionBatchId),
   ],
 );
 
@@ -722,7 +738,10 @@ export const stockTransfers = pgTable(
     createdBy: integer('created_by').references(() => users.id),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (table) => [index('idx_stock_transfers_date').on(table.transferDate)],
+  (table) => [index('idx_stock_transfers_date').on(table.transferDate),
+    index('idx_stock_transfers_from_location_id').on(table.fromLocationId),
+    index('idx_stock_transfers_to_location_id').on(table.toLocationId),
+  ],
 );
 
 export const stockTransferLines = pgTable(
@@ -735,7 +754,10 @@ export const stockTransferLines = pgTable(
     destinationLotId: integer('destination_lot_id').references(() => inventoryLots.id).notNull(),
     quantity: decimal('quantity', { precision: 10, scale: 2 }).notNull(),
   },
-  (table) => [index('idx_stock_transfer_lines_transfer').on(table.transferId)],
+  (table) => [index('idx_stock_transfer_lines_transfer').on(table.transferId),
+    index('idx_stock_transfer_lines_source_lot_id').on(table.sourceLotId),
+    index('idx_stock_transfer_lines_inventory_item_id').on(table.inventoryItemId),
+  ],
 );
 
 export const purchaseRequisitions = pgTable(
@@ -756,7 +778,9 @@ export const purchaseRequisitions = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
-  (table) => [index('idx_purchase_requisitions_status').on(table.status)],
+  (table) => [index('idx_purchase_requisitions_status').on(table.status),
+    index('idx_purchase_requisitions_purchase_order_id').on(table.purchaseOrderId),
+  ],
 );
 
 export const purchaseRequisitionItems = pgTable(

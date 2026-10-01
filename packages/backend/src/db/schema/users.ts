@@ -30,5 +30,6 @@ export const users = pgTable(
     index('idx_users_firebase_uid').on(table.firebaseUid),
     index('idx_users_email').on(table.email),
     index('idx_users_user_role').on(table.userRole),
+    index('idx_users_site_id').on(table.siteId),
   ],
 );

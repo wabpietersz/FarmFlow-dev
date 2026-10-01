@@ -37,7 +37,7 @@ function createChainMock(resolvedValue: unknown = []) {
   const methods = [
     'select', 'from', 'where', 'limit', 'offset', 'orderBy',
     'leftJoin', 'insert', 'values', 'returning', 'update',
-    'set', 'delete', '$dynamic', 'innerJoin',
+    'set', 'delete', '$dynamic', 'innerJoin', 'groupBy',
   ];
   for (const m of methods) {
     chain[m] = jest.fn();

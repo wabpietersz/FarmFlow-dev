@@ -157,5 +157,7 @@ export const houseTurnarounds = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
-  (table) => [index('idx_house_turnarounds_cage').on(table.cageId, table.status)],
+  (table) => [index('idx_house_turnarounds_cage').on(table.cageId, table.status),
+    index('idx_house_turnarounds_previous_batch_id').on(table.previousBatchId),
+  ],
 );
