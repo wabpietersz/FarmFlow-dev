@@ -1,25 +1,25 @@
 import { useState } from 'react';
 import { Banknote, Download, FileText, Landmark } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { usePayPeriod, usePayrollRegister } from '@/hooks/usePayroll';
 import { getApiErrorMessage } from '@/lib/api';
 import { downloadCsv, generatePayslipsPDF } from '@/lib/generatePayslips';
 import { formatCurrency } from '@/lib/utils';
 import { AccountSelect } from './AccountSelect';
-
-const STATUS_VARIANT: Record<string, 'secondary' | 'info' | 'warning' | 'success'> = { draft: 'secondary', reviewed: 'info', approved: 'warning', paid: 'success' };
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 /** The month at a glance: register, pay everyone, bank transfer list, payslips. */
 export function PayMonthPanel({ month, canPay }: { month: string; canPay: boolean }) {
+  const navigate = useNavigate();
   const { data, isLoading } = usePayrollRegister(month);
   const [paying, setPaying] = useState(false);
   const register = data?.data;
@@ -86,14 +86,14 @@ export function PayMonthPanel({ month, canPay }: { month: string; canPay: boolea
               <TableHead className="text-right">Net pay</TableHead>
               <TableHead className="text-right">Employer EPF/ETF</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-[60px]" />
+              <TableActionsHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.payrollId}>
+              <TableRow key={row.payrollId} onOpen={() => navigate(`/payroll/${row.payrollId}`)}>
                 <TableCell>
-                  <Link to={`/payroll/${row.payrollId}`} className="font-semibold hover:underline">{row.employeeName}</Link>
+                  <p className="font-semibold">{row.employeeName}</p>
                   <p className="text-xs text-muted-foreground">{row.designation} · {row.costCentreName ?? row.siteName ?? '—'}{row.epfNumber ? ` · EPF ${row.epfNumber}` : ''}</p>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{formatCurrency(row.grossSalary)}</TableCell>
@@ -102,12 +102,14 @@ export function PayMonthPanel({ month, canPay }: { month: string; canPay: boolea
                 <TableCell className="text-right tabular-nums">{row.loanRecovery ? formatCurrency(row.loanRecovery) : '—'}</TableCell>
                 <TableCell className="text-right font-bold tabular-nums">{formatCurrency(row.netSalary)}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{row.epfEmployer + row.etfEmployer ? formatCurrency(row.epfEmployer + row.etfEmployer) : '—'}</TableCell>
-                <TableCell><Badge variant={STATUS_VARIANT[row.status] ?? 'secondary'} className="capitalize">{row.status}</Badge></TableCell>
-                <TableCell>
-                  <Button size="icon" variant="ghost" aria-label={`Payslip for ${row.employeeName}`} onClick={() => generatePayslipsPDF(register.payPeriod, [row])}>
-                    <FileText className="h-4 w-4" />
-                  </Button>
-                </TableCell>
+                <TableCell><StatusBadge status={row.status} tone={row.status === 'approved' ? 'warning' : undefined} /></TableCell>
+                <TableActionsCell>
+                  <RowActions
+                    label={`payslip for ${row.employeeName}`}
+                    open={`/payroll/${row.payrollId}`}
+                    actions={[{ label: 'Download payslip', icon: FileText, onSelect: () => generatePayslipsPDF(register.payPeriod, [row]) }]}
+                  />
+                </TableActionsCell>
               </TableRow>
             ))}
           </TableBody>

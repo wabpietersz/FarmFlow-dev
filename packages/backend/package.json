@@ -18,6 +18,8 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:treasury-sample": "tsx src/db/seedTreasurySample.ts",
     "db:reset": "tsx src/db/reset.ts",
+    "db:testdata": "tsx src/db/seedTestData.ts",
+    "db:testdata:signins": "tsx src/scripts/testdata-signins.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

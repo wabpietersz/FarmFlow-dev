@@ -10,9 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -30,18 +28,13 @@ import {
   attendanceFormSchema, bulkAttendanceFormSchema, shiftFormSchema, leaveBalanceFormSchema, bulkLeaveBalanceFormSchema,
   type AttendanceFormValues, type BulkAttendanceFormValues, type ShiftFormValues, type LeaveBalanceFormValues, type BulkLeaveBalanceFormValues,
 } from '@/lib/validations/attendance';
-import { Plus, Clock, CalendarDays, Palmtree, Trash2, Users } from 'lucide-react';
+import { Ban, Plus, Clock, CalendarDays, Palmtree, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMemo } from 'react';
 import type { LeaveType } from '@farmflow/shared';
 import { parseApiError } from '@/lib/api';
-
-const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
-  present: 'bg-success-soft text-success',
-  absent: 'bg-danger-soft text-danger',
-  on_leave: 'bg-warning-soft text-warning',
-  half_day: 'bg-info-soft text-info',
-};
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const LEAVE_TYPE_LABELS: Record<string, string> = {
   casual: 'Casual',
@@ -321,7 +314,7 @@ export default function AttendancePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Attendance & Leave</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Attendance &amp; leave</h1>
       </div>
 
       {/* Summary cards */}
@@ -420,7 +413,7 @@ export default function AttendancePage() {
                         onClick={() => { attendanceForm.reset({ attendanceDate, status: 'present' }); setShowRecordAttendance(true); }}
                         disabled={attendanceEmployeesLoading || attendanceEmployeesError || activeEmployees.length === 0}
                       >
-                        <Plus className="h-4 w-4 mr-2" />
+                        <Plus className="h-4 w-4" />
                         Record
                       </Button>
                     </>
@@ -462,7 +455,7 @@ export default function AttendancePage() {
                         <TableHead>Leave Type</TableHead>
                         <TableHead className="hidden sm:table-cell">Shift</TableHead>
                         <TableHead className="hidden md:table-cell">Notes</TableHead>
-                        {hasPermission('attendance:delete') && <TableHead className="w-[50px]" />}
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -473,9 +466,7 @@ export default function AttendancePage() {
                             {new Date(record.attendanceDate).toLocaleDateString()}
                           </TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${ATTENDANCE_STATUS_COLORS[record.status] ?? ''}`}>
-                              {record.status.replace('_', ' ')}
-                            </span>
+                            <StatusBadge status={record.status} />
                           </TableCell>
                           <TableCell className="capitalize text-muted-foreground">
                             {record.leaveType ? (LEAVE_TYPE_LABELS[record.leaveType] || record.leaveType) : '-'}
@@ -486,13 +477,12 @@ export default function AttendancePage() {
                           <TableCell className="hidden md:table-cell text-muted-foreground max-w-[200px] truncate">
                             {record.notes ?? '--'}
                           </TableCell>
-                          {hasPermission('attendance:delete') && (
-                            <TableCell>
-                              <Button variant="ghost" size="icon" onClick={() => handleDeleteAttendance(record.id)}>
-                                <Trash2 className="h-4 w-4 text-danger" />
-                              </Button>
-                            </TableCell>
-                          )}
+                          <TableActionsCell>
+                            <RowActions
+                              label={`attendance for ${record.employeeName ?? 'employee'}`}
+                              actions={[{ label: 'Delete', icon: Trash2, destructive: true, hidden: !hasPermission('attendance:delete'), onSelect: () => handleDeleteAttendance(record.id) }]}
+                            />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -543,11 +533,11 @@ export default function AttendancePage() {
                 {hasPermission('attendance:create') && (
                   <div className="ml-auto flex gap-2">
                     <Button variant="outline" onClick={() => { bulkLeaveBalanceForm.reset({ year: leaveYear, employeeIds: [] }); setShowBulkLeaveBalance(true); }}>
-                      <Users className="h-4 w-4 mr-2" />
+                      <Users className="h-4 w-4" />
                       Bulk Set
                     </Button>
                     <Button onClick={() => { leaveBalanceForm.reset({ year: leaveYear }); setShowLeaveBalance(true); }}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Set Balance
                     </Button>
                   </div>
@@ -619,7 +609,7 @@ export default function AttendancePage() {
                 <h3 className="text-lg font-medium">Shift Definitions</h3>
                 {hasPermission('attendance:create') && (
                   <Button onClick={() => { shiftForm.reset(); setShowShiftDialog(true); }}>
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4" />
                     New Shift
                   </Button>
                 )}
@@ -647,7 +637,7 @@ export default function AttendancePage() {
                       <TableHead>Start Time</TableHead>
                       <TableHead>End Time</TableHead>
                       <TableHead>Status</TableHead>
-                      {hasPermission('attendance:delete') && <TableHead className="w-[100px]" />}
+                      <TableActionsHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -657,19 +647,14 @@ export default function AttendancePage() {
                         <TableCell>{shift.startTime}</TableCell>
                         <TableCell>{shift.endTime}</TableCell>
                         <TableCell>
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${shift.status === 'active' ? 'bg-success-soft text-success' : 'bg-muted text-foreground'}`}>
-                            {shift.status}
-                          </span>
+                          <StatusBadge status={shift.status} />
                         </TableCell>
-                        {hasPermission('attendance:delete') && (
-                          <TableCell>
-                            {shift.status === 'active' && (
-                              <Button variant="ghost" size="sm" className="text-danger" onClick={() => handleDeactivateShift(shift.id)}>
-                                Deactivate
-                              </Button>
-                            )}
-                          </TableCell>
-                        )}
+                        <TableActionsCell>
+                          <RowActions
+                            label={`shift ${shift.shiftName}`}
+                            actions={[{ label: 'Deactivate', icon: Ban, destructive: true, hidden: !hasPermission('attendance:delete') || shift.status !== 'active', onSelect: () => handleDeactivateShift(shift.id) }]}
+                          />
+                        </TableActionsCell>
                       </TableRow>
                     ))}
                   </TableBody>

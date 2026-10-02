@@ -14,7 +14,9 @@ import {
   Wheat,
   HeartPulse,
   Settings,
-  type LucideIcon, ClipboardCheck } from 'lucide-react';
+  ClipboardCheck,
+  type LucideIcon,
+} from 'lucide-react';
 
 export interface NavItem {
   type: 'link';
@@ -49,9 +51,10 @@ export const mainNavigationItems: MainNavigationItem[] = [
     label: 'Farms',
     icon: Egg,
     children: [
-      { type: 'link', key: 'batches', label: 'Batches', href: '/batches', icon: Egg, requiredPermission: 'batches:read' },
+      // Place first, then the flock in it, then its care, then the controls around it.
       { type: 'link', key: 'sites', label: 'Sites & houses', href: '/sites', icon: Building2, requiredPermission: 'sites:read' },
-      { type: 'link', key: 'farm-care', label: 'Health & houses', href: '/farm-care', icon: HeartPulse, requiredPermission: 'batches:read' },
+      { type: 'link', key: 'batches', label: 'Batches', href: '/batches', icon: Egg, requiredPermission: 'batches:read' },
+      { type: 'link', key: 'farm-care', label: 'Health & care', href: '/farm-care', icon: HeartPulse, requiredPermission: 'batches:read' },
       { type: 'link', key: 'farm-control', label: 'Farm control', href: '/farm-control', icon: ShieldEllipsis, requiredPermission: 'inventory:read' },
     ],
   },
@@ -111,8 +114,8 @@ export const mainNavigationItems: MainNavigationItem[] = [
 /** Administration lives in the profile menu, not the main bar. */
 export const adminNavigationItems: NavItem[] = [
   { type: 'link', key: 'approvals', label: 'Approvals', href: '/approvals', icon: ClipboardCheck },
-  { type: 'link', key: 'settings', label: 'Settings', href: '/settings', icon: Settings, requiredPermission: 'system:read' },
   { type: 'link', key: 'users', label: 'Users & access', href: '/settings?section=users', icon: UserPlus, requiredPermission: 'users:read' },
+  { type: 'link', key: 'settings', label: 'Settings', href: '/settings', icon: Settings, requiredPermission: 'system:read' },
 ];
 
 /** Phone bottom bar: the four places people go most; everything else sits under "More". */

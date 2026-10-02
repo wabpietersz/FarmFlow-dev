@@ -35,9 +35,11 @@ const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof
 
 const pillClass = (active: boolean) =>
   cn(
-    'inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full px-4 text-[15px] font-semibold transition-colors',
+    'group inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-semibold transition-colors lg:px-4 lg:text-[15px]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-    active ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+    active
+      ? 'bg-foreground text-background'
+      : 'text-muted-foreground hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground',
   );
 
 export default function AppLayout() {
@@ -75,7 +77,7 @@ export default function AppLayout() {
               farmflow
             </Link>
 
-            <nav aria-label="Main" className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none md:flex">
+            <nav aria-label="Main" className="-mx-1 hidden min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1 py-1 scrollbar-none md:flex lg:gap-1">
               {visibleMainItems.map((item) => (
                 <TopNavItem key={item.key} item={item} pathname={location.pathname} />
               ))}
@@ -85,7 +87,7 @@ export default function AppLayout() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-11 rounded-full"
+                className="hidden size-11 rounded-full lg:inline-flex"
                 aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
                 onClick={() => setPreference(isDark ? 'light' : 'dark')}
               >
@@ -96,27 +98,27 @@ export default function AppLayout() {
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-11 items-center gap-2 rounded-full pl-1 pr-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="group flex h-11 items-center gap-2 rounded-full pl-1 pr-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted"
                     aria-label="Account menu"
                   >
                     <span className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-sm font-bold text-secondary-foreground">
                       {initials}
                     </span>
-                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:block" />
+                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 sm:block" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64 rounded-2xl p-1.5">
-                  <DropdownMenuLabel className="px-3 py-2">
-                    <p className="text-sm font-bold">{currentUser?.fullName}</p>
-                    <p className="text-xs capitalize text-muted-foreground">{roleName}</p>
+                <DropdownMenuContent align="end" sideOffset={8} className="w-64">
+                  <DropdownMenuLabel>
+                    <p className="text-sm font-bold text-foreground">{currentUser?.fullName}</p>
+                    <p className="text-xs font-medium capitalize">{roleName}</p>
                   </DropdownMenuLabel>
                   {visibleAdminItems.length > 0 ? (
                     <>
                       <DropdownMenuSeparator />
                       {visibleAdminItems.map((item) => (
-                        <DropdownMenuItem key={item.key} asChild className="rounded-xl">
+                        <DropdownMenuItem key={item.key} asChild>
                           <Link to={item.href}>
-                            <item.icon className="mr-2 h-4 w-4" />
+                            <item.icon />
                             {item.label}
                           </Link>
                         </DropdownMenuItem>
@@ -124,17 +126,17 @@ export default function AppLayout() {
                     </>
                   ) : null}
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="px-3 text-xs font-medium text-muted-foreground">Appearance</DropdownMenuLabel>
+                  <DropdownMenuLabel>Appearance</DropdownMenuLabel>
                   {THEME_OPTIONS.map((option) => (
-                    <DropdownMenuItem key={option.value} onClick={() => setPreference(option.value)} className="rounded-xl">
-                      <option.icon className="mr-2 h-4 w-4" />
+                    <DropdownMenuItem key={option.value} onClick={() => setPreference(option.value)}>
+                      <option.icon />
                       <span className="flex-1">{option.label}</span>
                       {preference === option.value ? <Check className="h-4 w-4 text-primary" /> : null}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => logout()} className="rounded-xl text-destructive focus:text-destructive">
-                    <LogOut className="mr-2 h-4 w-4" />
+                  <DropdownMenuItem onClick={() => logout()} variant="destructive">
+                    <LogOut />
                     Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -169,16 +171,16 @@ function TopNavItem({ item, pathname }: { item: MainNavigationItem; pathname: st
       <DropdownMenuTrigger asChild>
         <button type="button" className={pillClass(active)}>
           {item.label}
-          <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+          <ChevronDown className="h-3.5 w-3.5 opacity-70 transition-transform group-data-[state=open]:rotate-180" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56 rounded-2xl p-1.5">
+      <DropdownMenuContent align="start" sideOffset={8} className="w-60">
         {item.children.map((child) => {
           const childActive = isHrefActive(pathname, child.href);
           return (
-            <DropdownMenuItem key={child.key} asChild className={cn('rounded-xl py-2.5', childActive && 'bg-secondary text-secondary-foreground')}>
+            <DropdownMenuItem key={child.key} asChild className={cn(childActive && 'bg-secondary font-semibold text-secondary-foreground [&_svg]:!text-secondary-foreground')}>
               <Link to={child.href} aria-current={childActive ? 'page' : undefined}>
-                <child.icon className="mr-2 h-4 w-4" />
+                <child.icon />
                 {child.label}
               </Link>
             </DropdownMenuItem>

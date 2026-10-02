@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CalendarClock, Eye, Leaf, Plus, ShoppingCart, Trash2, Users2, Wallet } from 'lucide-react';
+import { Ban, CalendarClock, Leaf, Pencil, Plus, ShoppingCart, Trash2, Users2, Wallet } from 'lucide-react';
 import type { SaleBooking } from '@farmflow/shared';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
@@ -13,7 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -25,25 +25,8 @@ import { BookingsTab } from '@/components/sales/BookingsTab';
 import { ReceivablesTab } from '@/components/sales/ReceivablesTab';
 import { OtherIncomeDialog } from '@/components/sales/OtherIncomeDialog';
 import { CreditLimitDialog, readCreditBlock, type CreditBlock } from '@/components/sales/CreditLimitDialog';
-
-const SALE_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-muted text-foreground',
-  reviewed: 'bg-info-soft text-info',
-  pending: 'bg-info-soft text-info',
-  completed: 'bg-success-soft text-success',
-  cancelled: 'bg-danger-soft text-danger',
-};
-
-const SETTLEMENT_STATUS_COLORS: Record<string, string> = {
-  unpaid: 'bg-danger-soft text-danger',
-  partially_paid: 'bg-warning-soft text-warning',
-  paid: 'bg-success-soft text-success',
-};
-
-const BUYER_STATUS_COLORS: Record<string, string> = {
-  active: 'bg-success-soft text-success',
-  inactive: 'bg-muted text-foreground',
-};
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 function displaySaleStatus(status: string) {
   return status === 'pending' ? 'reviewed' : status;
@@ -59,6 +42,7 @@ const defaultLorry = {
 
 export default function SalesPage() {
   const { hasPermission } = useAuthStore();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const activeTab = params.get('tab') ?? 'sales';
   const setActiveTab = (tab: string) => setParams({ tab }, { replace: true });
@@ -258,11 +242,11 @@ export default function SalesPage() {
         {hasPermission('sales:create') && (
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button variant="outline" onClick={() => setShowOtherIncome(true)} className="w-full sm:w-auto">
-              <Leaf className="h-4 w-4 mr-2" />
+              <Leaf className="h-4 w-4" />
               Other income
             </Button>
             <Button onClick={() => { setFromBooking(null); resetSaleForm(); setShowCreateSale(true); }} className="w-full sm:w-auto">
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               New Sale
             </Button>
           </div>
@@ -337,7 +321,7 @@ export default function SalesPage() {
                   </p>
                   {hasPermission('sales:create') && !salesStatusFilter && (
                     <Button onClick={() => setShowCreateSale(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       New Sale
                     </Button>
                   )}
@@ -356,17 +340,13 @@ export default function SalesPage() {
                         <TableHead>Settlement</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="w-[50px]" />
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {salesList.map((sale) => (
-                        <TableRow key={sale.id}>
-                          <TableCell>
-                            <Link to={`/sales/${sale.id}`} className="font-medium text-foreground hover:underline">
-                              {sale.saleCode}
-                            </Link>
-                          </TableCell>
+                        <TableRow key={sale.id} onOpen={() => navigate(`/sales/${sale.id}`)}>
+                          <TableCell className="font-semibold">{sale.saleCode}</TableCell>
                           <TableCell className="text-muted-foreground">
                             {sale.saleType === 'other_income'
                               ? <span><span className="font-medium text-foreground">{sale.itemDescription}</span>{sale.batchCode ? ` · ${sale.batchCode}` : sale.siteName ? ` · ${sale.siteName}` : ''}</span>
@@ -385,21 +365,15 @@ export default function SalesPage() {
                           <TableCell className="font-medium">{formatCurrency(Number(sale.totalAmount))}</TableCell>
                           <TableCell className="font-medium">{formatCurrency(sale.outstandingBalance ?? 0)}</TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SETTLEMENT_STATUS_COLORS[sale.settlementStatus ?? 'unpaid'] ?? 'bg-muted text-foreground'}`}>
-                              {(sale.settlementStatus ?? 'unpaid').replace('_', ' ')}
-                            </span>
+                            <StatusBadge status={sale.settlementStatus ?? 'unpaid'} />
                           </TableCell>
                           <TableCell className="text-muted-foreground">{new Date(sale.saleDate).toLocaleDateString()}</TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[displaySaleStatus(sale.status)] ?? ''}`}>
-                              {displaySaleStatus(sale.status)}
-                            </span>
+                            <StatusBadge status={displaySaleStatus(sale.status)} tone={displaySaleStatus(sale.status) === 'pending' ? 'info' : undefined} />
                           </TableCell>
-                          <TableCell>
-                            <Button asChild variant="ghost" size="icon">
-                              <Link to={`/sales/${sale.id}`}><Eye className="h-4 w-4" /></Link>
-                            </Button>
-                          </TableCell>
+                          <TableActionsCell>
+                            <RowActions label={`sale ${sale.saleCode}`} open={`/sales/${sale.id}`} />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -440,7 +414,7 @@ export default function SalesPage() {
                 />
                 {hasPermission('sales:create') && (
                   <Button onClick={() => { setEditingBuyer(null); buyerForm.reset(); setShowBuyerDialog(true); }} className="w-full sm:w-auto">
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4" />
                     New Buyer
                   </Button>
                 )}
@@ -474,17 +448,13 @@ export default function SalesPage() {
                         <TableHead>Net Balance</TableHead>
                         <TableHead>Terms / limit</TableHead>
                         <TableHead>Status</TableHead>
-                        {hasPermission('sales:update') && <TableHead className="w-[100px]" />}
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {buyersList.map((buyer) => (
-                        <TableRow key={buyer.id}>
-                          <TableCell className="font-medium">
-                            <Link to={`/buyers/${buyer.id}`} className="hover:underline">
-                              {buyer.buyerName}
-                            </Link>
-                          </TableCell>
+                        <TableRow key={buyer.id} onOpen={() => navigate(`/buyers/${buyer.id}`)}>
+                          <TableCell className="font-semibold">{buyer.buyerName}</TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">{buyer.contactPerson ?? '--'}</TableCell>
                           <TableCell className="hidden sm:table-cell text-muted-foreground">{buyer.phoneNumber ?? '--'}</TableCell>
                           <TableCell className="hidden md:table-cell text-muted-foreground">{buyer.email ?? '--'}</TableCell>
@@ -498,22 +468,18 @@ export default function SalesPage() {
                             {buyer.creditLimit != null ? <span className="block text-xs">limit {formatCurrency(Number(buyer.creditLimit))}</span> : null}
                           </TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${BUYER_STATUS_COLORS[buyer.status ?? 'active'] ?? ''}`}>
-                              {buyer.status ?? 'active'}
-                            </span>
+                            <StatusBadge status={buyer.status ?? 'active'} />
                           </TableCell>
-                          {hasPermission('sales:update') && (
-                            <TableCell>
-                              <div className="flex gap-1">
-                                <Button variant="ghost" size="sm" onClick={() => handleEditBuyer(buyer)}>Edit</Button>
-                                {buyer.status === 'active' && (
-                                  <Button variant="ghost" size="sm" className="text-danger" onClick={() => handleDeactivateBuyer(buyer.id)}>
-                                    Deactivate
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          )}
+                          <TableActionsCell>
+                            <RowActions
+                              label={`buyer ${buyer.buyerName}`}
+                              open={`/buyers/${buyer.id}`}
+                              actions={[
+                                { label: 'Edit', icon: Pencil, hidden: !hasPermission('sales:update'), onSelect: () => handleEditBuyer(buyer) },
+                                { label: 'Deactivate', icon: Ban, destructive: true, hidden: !hasPermission('sales:update') || buyer.status !== 'active', onSelect: () => handleDeactivateBuyer(buyer.id) },
+                              ]}
+                            />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -640,7 +606,7 @@ export default function SalesPage() {
                     size="sm"
                     onClick={() => lorryFieldArray.append(defaultLorry)}
                   >
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4" />
                     Add Lorry
                   </Button>
                 </div>

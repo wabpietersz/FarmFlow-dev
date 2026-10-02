@@ -22,6 +22,8 @@ const badgeVariants = cva(
         warning: "bg-warning-soft text-warning",
         info: "bg-info-soft text-info",
         danger: "bg-danger-soft text-danger",
+        neutral: "bg-muted text-muted-foreground",
+        strong: "bg-foreground text-background",
       },
     },
     defaultVariants: {

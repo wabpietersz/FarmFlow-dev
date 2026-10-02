@@ -1,14 +1,16 @@
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Trophy } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { useBatchHistory } from '@/hooks/useFarmOps';
 import { formatCurrency } from '@/lib/utils';
+import { RowActions } from '@/components/ui/row-actions';
 
 const fmt = (value: number | null, digits = 2) => (value == null ? '—' : value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
 
 /** Closed batches side by side, with the farm's averages and best results. */
 export function BatchHistory() {
+  const navigate = useNavigate();
   const { data, isLoading } = useBatchHistory();
   const history = data?.data;
   if (isLoading) return <Skeleton className="h-64 rounded-3xl" />;
@@ -46,12 +48,13 @@ export function BatchHistory() {
             <TableHead className="text-right">Cost / kg</TableHead>
             <TableHead className="text-right">Profit</TableHead>
             <TableHead className="text-right">Per bird</TableHead>
+            <TableActionsHead />
           </TableRow>
         </TableHeader>
         <TableBody>
           {history.batches.map((row) => (
-            <TableRow key={row.batchId}>
-              <TableCell><Link to={`/batches/${row.batchId}`} className="font-bold text-primary hover:underline">{row.batchCode}</Link></TableCell>
+            <TableRow key={row.batchId} onOpen={() => navigate(`/batches/${row.batchId}`)}>
+              <TableCell className="font-semibold">{row.batchCode}</TableCell>
               <TableCell>{row.siteName} · {row.cageNumber}</TableCell>
               <TableCell className="text-right">{row.ageDays ?? '—'} d</TableCell>
               <TableCell className="text-right">{fmt(row.mortalityPct, 1)}%</TableCell>
@@ -61,6 +64,7 @@ export function BatchHistory() {
               <TableCell className="text-right">{row.costPerKg == null ? '—' : formatCurrency(row.costPerKg)}</TableCell>
               <TableCell className={`text-right font-semibold ${row.profit < 0 ? 'text-danger' : ''}`}>{formatCurrency(row.profit)}</TableCell>
               <TableCell className={`text-right ${row.batchCode === best.profitPerBird ? 'font-bold text-success' : ''}`}>{row.profitPerBird == null ? '—' : formatCurrency(row.profitPerBird)}</TableCell>
+              <TableActionsCell><RowActions label={`batch ${row.batchCode}`} open={`/batches/${row.batchId}`} /></TableActionsCell>
             </TableRow>
           ))}
         </TableBody>

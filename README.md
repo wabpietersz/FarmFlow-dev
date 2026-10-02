@@ -10,7 +10,7 @@ notifications. Installable as a phone app (PWA), works offline for daily farm lo
 - **What it does and why:** [docs/FarmFlow-Target-Functional-Spec.md](docs/FarmFlow-Target-Functional-Spec.md)
 - **What was built, phase by phase:** [docs/FarmFlow-Build-Roadmap.md](docs/FarmFlow-Build-Roadmap.md)
 - **Deploying:** [docs/Deployment-Guide.md](docs/Deployment-Guide.md)
-- **Testing by hand:** [docs/Manual-Test-Plan.md](docs/Manual-Test-Plan.md)
+- **Testing by hand:** [docs/testing/](docs/testing/README.md) (a plan per area, with test data: `npm run db:testdata`)
 - **All documents:** [docs/](docs/README.md)
 
 ## Stack

@@ -27,6 +27,7 @@ import {
 import { Download, Activity, DollarSign, Wheat, Factory } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)'];
 
@@ -213,13 +214,7 @@ export default function FeedAnalyticsTab() {
                       <TableCell className="font-medium">{item.ingredientName}</TableCell>
                       <TableCell className="text-right">{item.currentStock.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          item.daysUntilReorder === 0
-                            ? 'bg-danger-soft text-danger'
-                            : 'bg-success-soft text-success'
-                        }`}>
-                          {item.daysUntilReorder === 0 ? 'Low Stock' : 'OK'}
-                        </span>
+                        <StatusBadge status={item.daysUntilReorder === 0 ? 'low' : 'ok'} label={item.daysUntilReorder === 0 ? 'Low stock' : 'OK'} tone={item.daysUntilReorder === 0 ? 'danger' : undefined} />
                       </TableCell>
                     </TableRow>
                   ))}

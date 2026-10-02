@@ -31,14 +31,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -59,22 +52,21 @@ import {
   Plus,
   Pencil,
   Trash2,
-  Package,
   FlaskConical,
   Warehouse,
   RefreshCw,
-  AlertTriangle,
   Factory,
   Truck,
   Play,
   CheckCircle,
   XCircle,
-  Eye,
-} from 'lucide-react';
+  } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiPut, parseApiError } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import type { FeedType } from '@farmflow/shared';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 // --- Types ---
 
@@ -102,12 +94,6 @@ interface InventoryForm {
 }
 
 // --- Constants ---
-
-const FEED_TYPE_COLORS: Record<string, string> = {
-  starter: 'bg-info-soft text-info',
-  grower: 'bg-success-soft text-success',
-  finisher: 'bg-warning-soft text-warning',
-};
 
 const EMPTY_RECIPE_FORM: RecipeForm = {
   recipeName: '',
@@ -144,13 +130,6 @@ interface DistributionForm {
   notes: string;
 }
 
-const PRODUCTION_STATUS_COLORS: Record<string, string> = {
-  planned: 'bg-info-soft text-info',
-  in_progress: 'bg-warning-soft text-warning',
-  completed: 'bg-success-soft text-success',
-  cancelled: 'bg-muted text-foreground',
-};
-
 const EMPTY_PRODUCTION_FORM: ProductionForm = {
   recipeId: '',
   plannedQuantity: '',
@@ -181,6 +160,7 @@ type RecipeExtras = { ingredientSummary?: string; ingredientCount?: number; stat
 
 export default function FeedPage() {
   const { hasPermission } = useAuthStore();
+  const canUpdateProduction = hasPermission('feed_production:update');
   const queryClient = useQueryClient();
 
   // =====================
@@ -787,7 +767,7 @@ export default function FeedPage() {
                 <div className="sm:ml-auto">
                   {hasPermission('feed_production:create') && (
                     <Button onClick={handleOpenCreateRecipe}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Recipe
                     </Button>
                   )}
@@ -811,7 +791,7 @@ export default function FeedPage() {
                   </p>
                   {hasPermission('feed_production:create') && !recipeSearch && !recipeFeedTypeFilter && (
                     <Button onClick={handleOpenCreateRecipe}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Recipe
                     </Button>
                   )}
@@ -826,18 +806,22 @@ export default function FeedPage() {
                         <TableHead>Cost</TableHead>
                         <TableHead className="hidden sm:table-cell">Ingredients</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="w-[120px]" />
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {recipesList.map((recipe) => (
-                        <TableRow key={recipe.id} className={recipe.status === 'inactive' ? 'opacity-60' : ''}>
-                          <TableCell className="font-medium">{recipe.recipeName}</TableCell>
+                        <TableRow key={recipe.id} className={recipe.status === 'inactive' ? 'opacity-60' : ''} onOpen={() => setViewingRecipe({
+                                  id: recipe.id,
+                                  recipeName: recipe.recipeName,
+                                  feedType: recipe.feedType,
+                                  cost: recipe.cost ? String(recipe.cost) : '0',
+                                  status: recipe.status ?? 'active',
+                                  ingredientSummary: (recipe as typeof recipe & RecipeExtras).ingredientSummary,
+                                })}>
+                          <TableCell className="font-semibold">{recipe.recipeName}</TableCell>
                           <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className={FEED_TYPE_COLORS[recipe.feedType] ?? ''}
-                            >
+                            <Badge variant="secondary" className="capitalize">
                               {recipe.feedType}
                             </Badge>
                           </TableCell>
@@ -850,29 +834,12 @@ export default function FeedPage() {
                             {(recipe as typeof recipe & RecipeExtras).ingredientSummary || ((recipe as typeof recipe & RecipeExtras).ingredientCount ? `${(recipe as typeof recipe & RecipeExtras).ingredientCount} ingredients` : '--')}
                           </TableCell>
                           <TableCell>
-                            {hasPermission('feed_production:update') ? (
-                              <button
-                                type="button"
-                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize cursor-pointer transition-colors ${recipe.status === 'active' ? 'bg-success-soft text-success hover:bg-success-soft/70' : 'bg-muted text-foreground hover:bg-muted/80'}`}
-                                onClick={() => handleToggleRecipeStatus(recipe.id, recipe.status ?? 'active')}
-                                title={`Click to ${recipe.status === 'active' ? 'deactivate' : 'activate'}`}
-                              >
-                                {recipe.status ?? 'active'}
-                              </button>
-                            ) : (
-                              <span
-                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${recipe.status === 'active' ? 'bg-success-soft text-success' : 'bg-muted text-foreground'}`}
-                              >
-                                {recipe.status ?? 'active'}
-                              </span>
-                            )}
+                            <StatusBadge status={recipe.status ?? 'active'} />
                           </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1 justify-end">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setViewingRecipe({
+                          <TableActionsCell>
+                            <RowActions
+                              label={`recipe ${recipe.recipeName}`}
+                              open={() => setViewingRecipe({
                                   id: recipe.id,
                                   recipeName: recipe.recipeName,
                                   feedType: recipe.feedType,
@@ -880,33 +847,18 @@ export default function FeedPage() {
                                   status: recipe.status ?? 'active',
                                   ingredientSummary: (recipe as typeof recipe & RecipeExtras).ingredientSummary,
                                 })}
-                                title="View details"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              {hasPermission('feed_production:update') && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleOpenEditRecipe(recipe)}
-                                  title="Edit recipe"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {hasPermission('feed_production:delete') && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-danger"
-                                  onClick={() => setShowDeleteRecipeConfirm(recipe.id)}
-                                  title="Permanently delete recipe"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
+                              actions={[
+                                { label: 'Edit', icon: Pencil, hidden: !hasPermission('feed_production:update'), onSelect: () => handleOpenEditRecipe(recipe) },
+                                {
+                                  label: recipe.status === 'active' ? 'Deactivate' : 'Activate',
+                                  icon: recipe.status === 'active' ? XCircle : CheckCircle,
+                                  hidden: !hasPermission('feed_production:update'),
+                                  onSelect: () => handleToggleRecipeStatus(recipe.id, recipe.status ?? 'active'),
+                                },
+                                { label: 'Delete', icon: Trash2, destructive: true, hidden: !hasPermission('feed_production:delete'), onSelect: () => setShowDeleteRecipeConfirm(recipe.id) },
+                              ]}
+                            />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -961,7 +913,7 @@ export default function FeedPage() {
                 <div className="sm:ml-auto">
                   {hasPermission('feed_inventory:create') && (
                     <Button onClick={handleOpenCreateInventory}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Item
                     </Button>
                   )}
@@ -985,7 +937,7 @@ export default function FeedPage() {
                   </p>
                   {hasPermission('feed_inventory:create') && !inventorySearch && (
                     <Button onClick={handleOpenCreateInventory}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Item
                     </Button>
                   )}
@@ -1003,7 +955,7 @@ export default function FeedPage() {
                         <TableHead className="hidden md:table-cell">Last Restock</TableHead>
                         <TableHead className="hidden md:table-cell">Lots</TableHead>
                         <TableHead>Stock</TableHead>
-                        <TableHead className="w-[150px]" />
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1012,8 +964,8 @@ export default function FeedPage() {
                           item.reorderLevel != null &&
                           Number(item.quantity) < Number(item.reorderLevel);
                         return (
-                          <TableRow key={item.id} className={isLowStock ? 'bg-danger-soft' : ''}>
-                            <TableCell className="font-medium">{item.ingredientName}</TableCell>
+                          <TableRow key={item.id} onOpen={item.lotCount ? () => setShowLotsDialog(item.id) : undefined}>
+                            <TableCell className="font-semibold">{item.ingredientName}</TableCell>
                             <TableCell>{Number(item.quantity).toLocaleString()}</TableCell>
                             <TableCell className="text-muted-foreground">{item.unit}</TableCell>
                             <TableCell className="hidden sm:table-cell">
@@ -1032,58 +984,27 @@ export default function FeedPage() {
                                 : '--'}
                             </TableCell>
                             <TableCell className="hidden md:table-cell">
-                              {item.lotCount != null && item.lotCount > 0 ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 gap-1 text-xs"
-                                  onClick={() => setShowLotsDialog(item.id)}
-                                >
-                                  <Package className="h-3 w-3" />
-                                  {item.lotCount} lots
-                                </Button>
-                              ) : (
-                                <span className="text-muted-foreground text-xs">--</span>
-                              )}
+                              {item.lotCount != null && item.lotCount > 0 ? `${item.lotCount} lots` : <span className="text-muted-foreground">--</span>}
                             </TableCell>
                             <TableCell>
-                              {isLowStock ? (
-                                <Badge variant="destructive" className="gap-1">
-                                  <AlertTriangle className="h-3 w-3" />
-                                  Low
-                                </Badge>
-                              ) : (
-                                <Badge variant="secondary" className="bg-success-soft text-success">
-                                  OK
-                                </Badge>
-                              )}
+                              <StatusBadge status={isLowStock ? 'low' : 'ok'} label={isLowStock ? 'Low' : 'OK'} tone={isLowStock ? 'danger' : undefined} />
                             </TableCell>
-                            <TableCell>
-                              <div className="flex gap-1">
-                                {hasPermission('feed_inventory:update') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    title="Restock"
-                                    onClick={() => {
-                                      setShowRestockDialog(item.id);
-                                      setRestockQuantity('');
-                                    }}
-                                  >
-                                    <RefreshCw className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {hasPermission('feed_inventory:update') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleOpenEditInventory(item)}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
+                            <TableActionsCell>
+                              <RowActions
+                                label={item.ingredientName}
+                                openLabel="Open lots for"
+                                open={item.lotCount ? () => setShowLotsDialog(item.id) : undefined}
+                                actions={[
+                                  { label: 'Edit', icon: Pencil, hidden: !hasPermission('feed_inventory:update'), onSelect: () => handleOpenEditInventory(item) },
+                                  {
+                                    label: 'Restock',
+                                    icon: RefreshCw,
+                                    hidden: !hasPermission('feed_inventory:update'),
+                                    onSelect: () => { setShowRestockDialog(item.id); setRestockQuantity(''); },
+                                  },
+                                ]}
+                              />
+                            </TableActionsCell>
                           </TableRow>
                         );
                       })}
@@ -1148,7 +1069,7 @@ export default function FeedPage() {
                 <div className="sm:ml-auto">
                   {hasPermission('feed_production:create') && (
                     <Button onClick={handleOpenCreateProduction}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       New Production
                     </Button>
                   )}
@@ -1172,7 +1093,7 @@ export default function FeedPage() {
                   </p>
                   {hasPermission('feed_production:create') && !productionStatusFilter && (
                     <Button onClick={handleOpenCreateProduction}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       New Production
                     </Button>
                   )}
@@ -1190,17 +1111,17 @@ export default function FeedPage() {
                         <TableHead>Status</TableHead>
                         <TableHead className="hidden md:table-cell">Date</TableHead>
                         <TableHead className="hidden md:table-cell">Cost</TableHead>
-                        {hasPermission('feed_production:update') && <TableHead className="w-[180px]" />}
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {productionsList.map((prod) => (
-                        <TableRow key={prod.id}>
-                          <TableCell className="font-medium font-mono text-sm">{prod.productionCode}</TableCell>
+                        <TableRow key={prod.id} onOpen={prod.status === 'completed' ? () => setShowCostBreakdownDialog(prod.id) : undefined}>
+                          <TableCell className="font-semibold">{prod.productionCode}</TableCell>
                           <TableCell>{(prod as { recipeName?: string }).recipeName ?? '--'}</TableCell>
                           <TableCell className="hidden sm:table-cell">
                             {(prod as { feedType?: string }).feedType ? (
-                              <Badge variant="secondary" className={FEED_TYPE_COLORS[(prod as { feedType?: string }).feedType!] ?? ''}>
+                              <Badge variant="secondary" className="capitalize">
                                 {(prod as { feedType?: string }).feedType}
                               </Badge>
                             ) : '--'}
@@ -1210,9 +1131,7 @@ export default function FeedPage() {
                             {prod.actualQuantity != null ? `${Number(prod.actualQuantity).toLocaleString()} ${prod.unit}` : '--'}
                           </TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${PRODUCTION_STATUS_COLORS[prod.status] ?? ''}`}>
-                              {prod.status.replace('_', ' ')}
-                            </span>
+                            <StatusBadge status={prod.status} tone={prod.status === 'cancelled' ? 'neutral' : undefined} />
                           </TableCell>
                           <TableCell className="hidden md:table-cell text-muted-foreground">
                             {new Date(prod.productionDate).toLocaleDateString()}
@@ -1222,37 +1141,25 @@ export default function FeedPage() {
                               ? `Rs. ${Number(prod.productionCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '--'}
                           </TableCell>
-                          {hasPermission('feed_production:update') && (
-                            <TableCell>
-                              <div className="flex gap-1">
-                                {prod.status === 'planned' && (
-                                  <Button variant="ghost" size="icon" title="Start" onClick={() => handleStartProduction(prod.id)}>
-                                    <Play className="h-4 w-4 text-info" />
-                                  </Button>
-                                )}
-                                {prod.status === 'in_progress' && (
-                                  <Button variant="ghost" size="icon" title="Complete" onClick={() => handleOpenComplete(prod.id)}>
-                                    <CheckCircle className="h-4 w-4 text-success" />
-                                  </Button>
-                                )}
-                                {(prod.status === 'planned' || prod.status === 'in_progress') && (
-                                  <Button variant="ghost" size="icon" title="Cancel" onClick={() => handleCancelProduction(prod.id)}>
-                                    <XCircle className="h-4 w-4 text-warning" />
-                                  </Button>
-                                )}
-                                {(prod.status === 'planned' || prod.status === 'cancelled') && hasPermission('feed_production:delete') && (
-                                  <Button variant="ghost" size="icon" className="text-danger" onClick={() => setShowDeleteProductionConfirm(prod.id)}>
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                {prod.status === 'completed' && (
-                                  <Button variant="ghost" size="icon" title="Cost Breakdown" onClick={() => setShowCostBreakdownDialog(prod.id)}>
-                                    <Eye className="h-4 w-4 text-primary" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          )}
+                          <TableActionsCell>
+                            <RowActions
+                              label={`production ${prod.productionCode}`}
+                              openLabel="Open cost breakdown for"
+                              open={prod.status === 'completed' ? () => setShowCostBreakdownDialog(prod.id) : undefined}
+                              actions={[
+                                { label: 'Start', icon: Play, primary: true, hidden: !canUpdateProduction || prod.status !== 'planned', onSelect: () => handleStartProduction(prod.id) },
+                                { label: 'Complete', icon: CheckCircle, primary: true, hidden: !canUpdateProduction || prod.status !== 'in_progress', onSelect: () => handleOpenComplete(prod.id) },
+                                { label: 'Cancel run', icon: XCircle, hidden: !canUpdateProduction || !(prod.status === 'planned' || prod.status === 'in_progress'), onSelect: () => handleCancelProduction(prod.id) },
+                                {
+                                  label: 'Delete',
+                                  icon: Trash2,
+                                  destructive: true,
+                                  hidden: !canUpdateProduction || !hasPermission('feed_production:delete') || !(prod.status === 'planned' || prod.status === 'cancelled'),
+                                  onSelect: () => setShowDeleteProductionConfirm(prod.id),
+                                },
+                              ]}
+                            />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1305,7 +1212,7 @@ export default function FeedPage() {
                 <div className="sm:ml-auto">
                   {hasPermission('feed_production:create') && (
                     <Button onClick={handleOpenCreateDistribution}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       New Distribution
                     </Button>
                   )}
@@ -1329,7 +1236,7 @@ export default function FeedPage() {
                   </p>
                   {hasPermission('feed_production:create') && !distributionFeedTypeFilter && (
                     <Button onClick={handleOpenCreateDistribution}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       New Distribution
                     </Button>
                   )}
@@ -1345,20 +1252,20 @@ export default function FeedPage() {
                         <TableHead>Quantity</TableHead>
                         <TableHead className="hidden sm:table-cell">Date</TableHead>
                         <TableHead className="hidden md:table-cell">Notes</TableHead>
-                        {hasPermission('feed_production:delete') && <TableHead className="w-[80px]" />}
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {distributionsList.map((dist) => (
                         <TableRow key={dist.id}>
-                          <TableCell className="font-mono text-sm">
+                          <TableCell className="font-semibold">
                             {(dist as { productionCode?: string }).productionCode ?? 'Manual'}
                           </TableCell>
                           <TableCell className="font-medium">
                             {(dist as { farmBatchCode?: string }).farmBatchCode ?? '--'}
                           </TableCell>
                           <TableCell>
-                            <Badge variant="secondary" className={FEED_TYPE_COLORS[dist.feedType] ?? ''}>
+                            <Badge variant="secondary" className="capitalize">
                               {dist.feedType}
                             </Badge>
                           </TableCell>
@@ -1369,18 +1276,12 @@ export default function FeedPage() {
                           <TableCell className="hidden md:table-cell text-muted-foreground max-w-[200px] truncate">
                             {dist.notes ?? '--'}
                           </TableCell>
-                          {hasPermission('feed_production:delete') && (
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-danger"
-                                onClick={() => setShowDeleteDistributionConfirm(dist.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          )}
+                          <TableActionsCell>
+                            <RowActions
+                              label="this distribution"
+                              actions={[{ label: 'Delete', icon: Trash2, destructive: true, hidden: !hasPermission('feed_production:delete'), onSelect: () => setShowDeleteDistributionConfirm(dist.id) }]}
+                            />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -2183,7 +2084,7 @@ export default function FeedPage() {
                 <span className="font-medium text-muted-foreground">Name:</span> <span className="ml-2">{viewingRecipe?.recipeName}</span>
               </div>
               <div>
-                <span className="font-medium text-muted-foreground">Type:</span> <Badge variant="secondary" className={`ml-2 ${FEED_TYPE_COLORS[viewingRecipe?.feedType || '']}`}>{viewingRecipe?.feedType}</Badge>
+                <span className="font-medium text-muted-foreground">Type:</span> <Badge variant="secondary" className="ml-2 capitalize">{viewingRecipe?.feedType}</Badge>
               </div>
               <div>
                 <span className="font-medium text-muted-foreground">Status:</span> <span className={`ml-2 capitalize ${viewingRecipe?.status === 'active' ? 'text-success' : 'text-muted-foreground'}`}>{viewingRecipe?.status}</span>
@@ -2274,7 +2175,7 @@ export default function FeedPage() {
                     <TableHead className="text-right">Remaining</TableHead>
                     <TableHead className="text-right">Cost/Unit</TableHead>
                     <TableHead>Date</TableHead>
-                    <TableHead className="w-[60px]" />
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2284,25 +2185,17 @@ export default function FeedPage() {
                     const pct = received > 0 ? (remaining / received) * 100 : 0;
                     const colorClass = remaining <= 0 ? 'text-muted-foreground bg-muted/30' : pct < 10 ? 'bg-danger-soft' : pct < 50 ? 'bg-warning-soft' : '';
                     return (
-                      <TableRow key={lot.id} className={colorClass}>
-                        <TableCell className="font-mono text-xs">{lot.lotCode}</TableCell>
+                      <TableRow key={lot.id} className={colorClass} onOpen={() => setShowLotHistoryDialog(lot.id)}>
+                        <TableCell className="font-semibold">{lot.lotCode}</TableCell>
                         <TableCell className="text-xs">{lot.poOrderCode ?? '--'}</TableCell>
                         <TableCell className="text-xs">{lot.supplierName ?? '--'}</TableCell>
                         <TableCell className="text-right">{received.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-medium">{remaining.toLocaleString()}</TableCell>
                         <TableCell className="text-right">Rs. {Number(lot.costPerUnit).toFixed(2)}</TableCell>
                         <TableCell className="text-xs">{new Date(lot.receivedDate).toLocaleDateString()}</TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            title="View consumption history"
-                            onClick={() => setShowLotHistoryDialog(lot.id)}
-                          >
-                            <Eye className="h-3 w-3" />
-                          </Button>
-                        </TableCell>
+                        <TableActionsCell>
+                          <RowActions label={`lot ${lot.lotCode}`} openLabel="Open usage history for" open={() => setShowLotHistoryDialog(lot.id)} />
+                        </TableActionsCell>
                       </TableRow>
                     );
                   })}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useEmployees, useDeleteEmployee } from '@/hooks/useEmployees';
 import { Button } from '@/components/ui/button';
@@ -7,20 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -36,12 +23,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, MoreHorizontal, Eye, Pencil, Trash2, Search, Users, Download } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, Users, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { getIdToken } from '@/lib/firebase';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 export default function EmployeesPage() {
   const { hasPermission } = useAuthStore();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -104,28 +94,19 @@ export default function EmployeesPage() {
   const totalPages = data?.totalPages ?? 0;
   const total = data?.total ?? 0;
 
-  const statusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'active': return 'default' as const;
-      case 'on_leave': return 'secondary' as const;
-      case 'terminated': return 'destructive' as const;
-      default: return 'outline' as const;
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Employees</h1>
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExportCSV}>
-            <Download className="h-4 w-4 mr-2" />
+            <Download className="h-4 w-4" />
             Export CSV
           </Button>
           {hasPermission('employees:create') && (
             <Button asChild>
               <Link to="/employees/new">
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-4 w-4" />
                 Add Employee
               </Link>
             </Button>
@@ -176,7 +157,7 @@ export default function EmployeesPage() {
               {hasPermission('employees:create') && !debouncedSearch && !statusFilter && (
                 <Button asChild>
                   <Link to="/employees/new">
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4" />
                     Add Employee
                   </Link>
                 </Button>
@@ -193,20 +174,13 @@ export default function EmployeesPage() {
                     <TableHead className="hidden md:table-cell">Type</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden lg:table-cell">Join Date</TableHead>
-                    <TableHead className="w-[50px]" />
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {employees.map((emp) => (
-                    <TableRow key={emp.id}>
-                      <TableCell>
-                        <Link
-                          to={`/employees/${emp.id}`}
-                          className="font-medium text-foreground hover:underline"
-                        >
-                          {emp.firstName} {emp.lastName}
-                        </Link>
-                      </TableCell>
+                    <TableRow key={emp.id} onOpen={() => navigate(`/employees/${emp.id}`)}>
+                      <TableCell className="font-semibold">{emp.firstName} {emp.lastName}</TableCell>
                       <TableCell className="text-muted-foreground">{emp.designation}</TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">
                         {emp.siteName ?? '--'}
@@ -217,47 +191,27 @@ export default function EmployeesPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusBadgeVariant(emp.status)} className="capitalize">
-                          {emp.status.replace(/_/g, ' ')}
-                        </Badge>
+                        <StatusBadge status={emp.status} />
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-muted-foreground">
                         {new Date(emp.joinDate).toLocaleDateString()}
                       </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem asChild>
-                              <Link to={`/employees/${emp.id}`}>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View
-                              </Link>
-                            </DropdownMenuItem>
-                            {hasPermission('employees:update') && (
-                              <DropdownMenuItem asChild>
-                                <Link to={`/employees/${emp.id}/edit`}>
-                                  <Pencil className="h-4 w-4 mr-2" />
-                                  Edit
-                                </Link>
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission('employees:delete') && emp.status !== 'terminated' && (
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => setDeleteTarget({ id: emp.id, name: `${emp.firstName} ${emp.lastName}` })}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Terminate
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={`${emp.firstName} ${emp.lastName}`}
+                          open={`/employees/${emp.id}`}
+                          actions={[
+                            { label: 'Edit', icon: Pencil, href: `/employees/${emp.id}/edit`, hidden: !hasPermission('employees:update') },
+                            {
+                              label: 'Terminate',
+                              icon: Trash2,
+                              destructive: true,
+                              hidden: !hasPermission('employees:delete') || emp.status === 'terminated',
+                              onSelect: () => setDeleteTarget({ id: emp.id, name: `${emp.firstName} ${emp.lastName}` }),
+                            },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

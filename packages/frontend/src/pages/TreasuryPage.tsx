@@ -8,6 +8,8 @@ import {
   Landmark,
   Plus,
   Wallet,
+  Check,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
@@ -52,14 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { EMPTY_FINANCE_TAGS, FinanceTagFields, financeTagsToPayload, type FinanceTagValue } from '@/components/finance/FinanceTagFields';
@@ -69,6 +64,8 @@ import { ProfitLossTab } from '@/components/finance/ProfitLossTab';
 import { CashFlowTab } from '@/components/finance/CashFlowTab';
 import { PayablesTab } from '@/components/finance/PayablesTab';
 import { OwnerLoansTab } from '@/components/finance/OwnerLoansTab';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type AccountFormState = {
   accountCode: string;
@@ -193,47 +190,8 @@ const TRANSACTION_TYPE_LABELS: Record<string, string> = {
   petty_cash_expense: 'Petty Cash Expense',
 };
 
-const STATUS_BADGES: Record<string, string> = {
-  active: 'bg-success-soft text-success',
-  inactive: 'bg-muted text-foreground',
-  pending: 'bg-warning-soft text-warning',
-  pending_approval: 'bg-warning-soft text-warning',
-  posted: 'bg-info-soft text-info',
-  cleared: 'bg-success-soft text-success',
-  reversed: 'bg-danger-soft text-danger',
-  bounced: 'bg-danger-soft text-danger',
-  issued: 'bg-info-soft text-info',
-  voided: 'bg-muted text-foreground',
-  allocated: 'bg-warning-soft text-warning',
-  submitted: 'bg-info-soft text-info',
-  reviewed: 'bg-success-soft text-success',
-  approved: 'bg-success-soft text-success',
-  rejected: 'bg-danger-soft text-danger',
-};
-
 function AccountTypeBadge({ type }: { type: string }) {
-  const tone =
-    type === 'current'
-      ? 'bg-warning-soft text-warning'
-      : type === 'cash'
-        ? 'bg-success-soft text-success'
-        : type === 'petty_cash'
-          ? 'bg-info-soft text-info'
-          : 'bg-muted text-foreground';
-
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${tone}`}>
-      {ACCOUNT_TYPE_LABELS[type] ?? type}
-    </span>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGES[status] ?? 'bg-muted text-foreground'}`}>
-      {status.replace(/_/g, ' ')}
-    </span>
-  );
+  return <Badge variant="secondary">{ACCOUNT_TYPE_LABELS[type] ?? type}</Badge>;
 }
 
 export default function TreasuryPage() {
@@ -567,16 +525,17 @@ export default function TreasuryPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
         <TabsList className="flex h-auto w-full justify-start overflow-x-auto sm:w-auto">
+          {/* Day-to-day money first, then what is owed, then the reports, then setup. */}
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="transactions">Transactions</TabsTrigger>
+          <TabsTrigger value="cheques">Cheques</TabsTrigger>
+          <TabsTrigger value="petty-cash">Petty cash</TabsTrigger>
+          <TabsTrigger value="payables">Payables</TabsTrigger>
+          <TabsTrigger value="owner-loans">Owner &amp; loans</TabsTrigger>
           <TabsTrigger value="ledger">Ledger</TabsTrigger>
           {canSeeFinancialReports ? <TabsTrigger value="pnl">Profit &amp; loss</TabsTrigger> : null}
           {canSeeFinancialReports ? <TabsTrigger value="cash-flow">Cash flow</TabsTrigger> : null}
-          <TabsTrigger value="payables">Payables</TabsTrigger>
-          <TabsTrigger value="owner-loans">Owner &amp; loans</TabsTrigger>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="cheques">Cheques</TabsTrigger>
-          <TabsTrigger value="transactions">Transactions</TabsTrigger>
-          <TabsTrigger value="petty-cash">Petty Cash</TabsTrigger>
           <TabsTrigger value="setup">Setup</TabsTrigger>
         </TabsList>
 
@@ -767,7 +726,7 @@ export default function TreasuryPage() {
                           <TableHead>Account</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableActionsHead />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -795,27 +754,30 @@ export default function TreasuryPage() {
                             </TableCell>
                             <TableCell className="text-right font-medium">{formatCurrency(Number(receipt.paymentAmount))}</TableCell>
                             <TableCell><StatusBadge status={receipt.paymentStatus} /></TableCell>
-                            <TableCell className="text-right">
-                              {canManageTransactions ? (
-                                <div className="flex justify-end gap-2">
-                                  <Button
-                                    size="sm"
-                                    disabled={updatePaymentMutation.isPending || !receipt.financeAccountId}
-                                    onClick={() => void handleUpdateIncomingReceiptStatus(receipt.id, 'completed', receipt.financeAccountId)}
-                                  >
-                                    Clear
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={updatePaymentMutation.isPending}
-                                    onClick={() => void handleUpdateIncomingReceiptStatus(receipt.id, 'bounced', receipt.financeAccountId)}
-                                  >
-                                    Bounce
-                                  </Button>
-                                </div>
-                              ) : null}
-                            </TableCell>
+                            <TableActionsCell>
+                              <RowActions
+                                label={`receipt ${receipt.receiptCode}`}
+                                actions={[
+                                  {
+                                    label: 'Clear',
+                                    icon: Check,
+                                    primary: true,
+                                    hidden: !canManageTransactions,
+                                    disabled: updatePaymentMutation.isPending || !receipt.financeAccountId,
+                                    onSelect: () => void handleUpdateIncomingReceiptStatus(receipt.id, 'completed', receipt.financeAccountId),
+                                  },
+                                  {
+                                    label: 'Bounce',
+                                    icon: X,
+                                    primary: true,
+                                    destructive: true,
+                                    hidden: !canManageTransactions,
+                                    disabled: updatePaymentMutation.isPending,
+                                    onSelect: () => void handleUpdateIncomingReceiptStatus(receipt.id, 'bounced', receipt.financeAccountId),
+                                  },
+                                ]}
+                              />
+                            </TableActionsCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1226,15 +1188,12 @@ export default function TreasuryPage() {
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Source</TableHead>
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {transactions.map((transaction) => (
-                        <TableRow
-                          key={transaction.id}
-                          className="cursor-pointer"
-                          onClick={() => setSelectedTransactionId(transaction.id)}
-                        >
+                        <TableRow key={transaction.id} onOpen={() => setSelectedTransactionId(transaction.id)}>
                           <TableCell>
                             <div>
                               <p className="font-medium">{transaction.transactionCode}</p>
@@ -1252,6 +1211,9 @@ export default function TreasuryPage() {
                           <TableCell>{new Date(String(transaction.transactionDate)).toLocaleDateString()}</TableCell>
                           <TableCell><StatusBadge status={transaction.status} /></TableCell>
                           <TableCell className="capitalize">{transaction.sourceModule ?? '--'}</TableCell>
+                          <TableActionsCell>
+                            <RowActions label={`transaction ${transaction.transactionCode}`} open={() => setSelectedTransactionId(transaction.id)} />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1319,15 +1281,12 @@ export default function TreasuryPage() {
                           <TableHead>Manager</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
+                          <TableActionsHead />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {allocations.map((allocation) => (
-                          <TableRow
-                            key={allocation.id}
-                            className="cursor-pointer"
-                            onClick={() => setSelectedAllocationId(allocation.id)}
-                          >
+                          <TableRow key={allocation.id} onOpen={() => setSelectedAllocationId(allocation.id)}>
                             <TableCell>
                               <div>
                                 <p className="font-medium">{allocation.allocationCode}</p>
@@ -1347,6 +1306,9 @@ export default function TreasuryPage() {
                                 Spent {formatCurrency(Number(allocation.approvedExpenseAmount ?? 0))}
                               </p>
                             </TableCell>
+                            <TableActionsCell>
+                              <RowActions label={`allocation ${allocation.allocationCode}`} open={() => setSelectedAllocationId(allocation.id)} />
+                            </TableActionsCell>
                           </TableRow>
                         ))}
                       </TableBody>

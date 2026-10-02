@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check, ClipboardCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/store/authStore';
 import { useApprovalInbox, useApprovalRequests, useDecideApproval, type ApprovalRequest } from '@/hooks/useApprovals';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn, formatCurrency } from '@/lib/utils';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const KIND_LABEL: Record<ApprovalRequest['entityType'], string> = { purchase_order: 'Purchase order', money_out: 'Money out' };
 
@@ -80,7 +80,7 @@ export default function ApprovalsPage() {
                       </div>
                     ) : <p className="text-sm text-muted-foreground">{own ? 'Waiting for someone else to approve.' : 'Waiting for a manager.'}</p>
                   ) : (
-                    <Badge variant={request.status === 'approved' ? 'success' : 'secondary'} className="capitalize">{request.status}</Badge>
+                    <StatusBadge status={request.status} />
                   )}
                 </div>
               );

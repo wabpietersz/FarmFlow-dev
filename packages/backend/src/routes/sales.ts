@@ -497,18 +497,21 @@ router.put('/:id', authenticate, requireSiteAccess(siteOf.sale()), requirePermis
         return;
       }
 
-      const normalized = normalizeSaleLorries(
-        effectiveLorries.map((line: EditableLorryLine) => ({
-          lorryNumber: line.lorryNumber,
-          birdsCount: Number(line.birdsCount),
-          previousWeight: Number(line.previousWeight),
-          loadedWeight: Number(line.loadedWeight),
-          notes: line.notes ?? undefined,
-        })),
-      );
-      if (normalized.totalWeight <= 0 || normalized.totalBirds <= 0) {
-        res.status(400).json({ success: false, error: 'Sale must have valid lorry totals before review', code: 'SALE_INVALID_TOTALS', statusCode: 400, timestamp: new Date().toISOString() });
-        return;
+      // Other income (litter, manure…) has no lorries to check
+      if (existing.saleType === 'live_birds') {
+        const normalized = normalizeSaleLorries(
+          effectiveLorries.map((line: EditableLorryLine) => ({
+            lorryNumber: line.lorryNumber,
+            birdsCount: Number(line.birdsCount),
+            previousWeight: Number(line.previousWeight),
+            loadedWeight: Number(line.loadedWeight),
+            notes: line.notes ?? undefined,
+          })),
+        );
+        if (normalized.totalWeight <= 0 || normalized.totalBirds <= 0) {
+          res.status(400).json({ success: false, error: 'Sale must have valid lorry totals before review', code: 'SALE_INVALID_TOTALS', statusCode: 400, timestamp: new Date().toISOString() });
+          return;
+        }
       }
 
       updatePayload.status = 'reviewed';

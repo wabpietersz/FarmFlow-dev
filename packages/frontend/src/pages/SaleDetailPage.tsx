@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ArrowLeft, Banknote, CheckCircle2, CreditCard, DollarSign, Landmark, Plus, Receipt, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowLeft, Banknote, Check, CheckCircle2, CreditCard, DollarSign, Landmark, Plus, Receipt, Save, ShieldCheck, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { SaleStatus } from '@farmflow/shared';
 import { useAuthStore } from '@/store/authStore';
@@ -15,25 +15,13 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { draftSaleDetailSchema, receiptFormSchema, type DraftSaleDetailValues, type ReceiptFormValues } from '@/lib/validations/sales';
 import { formatCurrency } from '@/lib/utils';
 import { generateInvoicePDF } from '@/lib/generateInvoice';
-
-const SALE_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-muted text-foreground',
-  reviewed: 'bg-info-soft text-info',
-  pending: 'bg-info-soft text-info',
-  completed: 'bg-success-soft text-success',
-  cancelled: 'bg-danger-soft text-danger',
-};
-
-const PAYMENT_STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-warning-soft text-warning',
-  completed: 'bg-success-soft text-success',
-  bounced: 'bg-danger-soft text-danger',
-};
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
@@ -346,14 +334,12 @@ export default function SaleDetailPage() {
               <Link to={`/buyers/${sale.buyerId}`} className="hover:underline">{sale.buyerName}</Link> | {isOtherIncome ? sale.itemDescription : sale.batchCode}
             </p>
           </div>
-          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${SALE_STATUS_COLORS[workflowStatus ?? sale.status] ?? ''}`}>
-            {workflowStatus ?? sale.status}
-          </span>
+          <StatusBadge status={workflowStatus ?? sale.status} tone={(workflowStatus ?? sale.status) === 'pending' ? 'info' : undefined} />
         </div>
         <div className="flex flex-wrap gap-2">
           {isDraft && hasPermission('sales:update') && (
             <Button onClick={isOtherIncome ? handleReviewOtherIncome : draftForm.handleSubmit(handleMarkReviewed)} disabled={updateSaleMutation.isPending}>
-              <ShieldCheck className="h-4 w-4 mr-2" />
+              <ShieldCheck className="h-4 w-4" />
               Mark Reviewed
             </Button>
           )}
@@ -363,17 +349,17 @@ export default function SaleDetailPage() {
               disabled={updateSaleMutation.isPending || !canMarkCompleted}
               title={canMarkCompleted ? undefined : 'Fully settle the sale before completing it'}
             >
-              <CheckCircle2 className="h-4 w-4 mr-2" />
+              <CheckCircle2 className="h-4 w-4" />
               Mark Completed
             </Button>
           )}
           <Button variant="outline" onClick={handleDownloadInvoice}>
-            <Receipt className="h-4 w-4 mr-2" />
+            <Receipt className="h-4 w-4" />
             Invoice
           </Button>
           {canRecordReceipt && hasPermission('payments:create') && (
             <Button onClick={() => setShowAddPayment(true)}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Add Receipt
             </Button>
           )}
@@ -558,7 +544,7 @@ export default function SaleDetailPage() {
                       <p className="text-sm text-muted-foreground">These totals will become the sale totals when you save the draft or review it.</p>
                     </div>
                     <Button type="button" variant="outline" size="sm" onClick={() => draftLorryFieldArray.append(defaultLorryLine)}>
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Lorry
                     </Button>
                   </div>
@@ -690,7 +676,7 @@ export default function SaleDetailPage() {
 
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button type="submit" variant="outline" disabled={updateSaleMutation.isPending}>
-                    <Save className="h-4 w-4 mr-2" />
+                    <Save className="h-4 w-4" />
                     Save Draft
                   </Button>
                 </div>
@@ -751,7 +737,7 @@ export default function SaleDetailPage() {
                     <TableHead className="hidden lg:table-cell">Treasury</TableHead>
                     <TableHead className="hidden sm:table-cell">Cheque #</TableHead>
                     <TableHead>Status</TableHead>
-                    {hasPermission('payments:update') && <TableHead className="w-[150px]" />}
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -779,36 +765,17 @@ export default function SaleDetailPage() {
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">{payment.chequeNumber ?? '--'}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${PAYMENT_STATUS_COLORS[payment.paymentStatus] ?? ''}`}>
-                          {payment.paymentStatus}
-                        </span>
+                        <StatusBadge status={payment.paymentStatus} />
                       </TableCell>
-                      {hasPermission('payments:update') && (
-                        <TableCell>
-                          {payment.paymentStatus === 'pending' && (
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-success"
-                                onClick={() => handleUpdatePaymentStatus(payment.id, 'completed')}
-                                disabled={updatePaymentMutation.isPending}
-                              >
-                                Clear
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-danger"
-                                onClick={() => handleUpdatePaymentStatus(payment.id, 'bounced')}
-                                disabled={updatePaymentMutation.isPending}
-                              >
-                                Bounce
-                              </Button>
-                            </div>
-                          )}
-                        </TableCell>
-                      )}
+                      <TableActionsCell>
+                        <RowActions
+                          label={`payment ${payment.receiptCode ?? payment.referenceNumber ?? payment.id}`}
+                          actions={[
+                            { label: 'Clear', icon: Check, primary: true, hidden: !hasPermission('payments:update') || payment.paymentStatus !== 'pending', disabled: updatePaymentMutation.isPending, onSelect: () => handleUpdatePaymentStatus(payment.id, 'completed') },
+                            { label: 'Bounce', icon: X, primary: true, destructive: true, hidden: !hasPermission('payments:update') || payment.paymentStatus !== 'pending', disabled: updatePaymentMutation.isPending, onSelect: () => handleUpdatePaymentStatus(payment.id, 'bounced') },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -884,7 +851,7 @@ export default function SaleDetailPage() {
                       size="sm"
                       onClick={() => receiptFieldArray.append({ ...defaultReceiptLine, financeAccountId: treasuryAccounts[0]?.id ?? 0 })}
                     >
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-4 w-4" />
                       Add Line
                     </Button>
                   </div>

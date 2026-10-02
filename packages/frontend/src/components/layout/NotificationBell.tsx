@@ -41,9 +41,9 @@ export function NotificationBell() {
           ) : null}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[min(22rem,calc(100vw-2rem))] rounded-2xl p-1.5">
+      <DropdownMenuContent align="end" sideOffset={8} className="w-[min(22rem,calc(100vw-2rem))]">
         <div className="flex items-center justify-between px-3 py-2">
-          <DropdownMenuLabel className="p-0 text-base">Notifications</DropdownMenuLabel>
+          <DropdownMenuLabel className="p-0 text-sm font-bold text-foreground">Notifications</DropdownMenuLabel>
           {unread > 0 ? (
             <button type="button" onClick={() => markRead.mutate(undefined)} className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
               <CheckCheck className="h-3.5 w-3.5" /> Mark all read
@@ -55,7 +55,7 @@ export function NotificationBell() {
           {items.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">Nothing new. You’ll hear about vaccinations due, stock, cheques and approvals here.</p>
           ) : items.map((n) => (
-            <DropdownMenuItem key={n.id} onClick={() => open(n)} className={cn('flex items-start gap-3 rounded-xl px-3 py-2.5', !n.isRead && 'bg-muted/50')}>
+            <DropdownMenuItem key={n.id} onClick={() => open(n)} className={cn('items-start gap-3 py-2.5 font-normal', !n.isRead && 'bg-muted/50')}>
               <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.isRead ? 'bg-transparent' : TONE_DOT[n.tone])} aria-hidden="true" />
               <span className="min-w-0 flex-1">
                 <span className={cn('block text-sm', !n.isRead && 'font-semibold')}>{n.title ?? n.message}</span>

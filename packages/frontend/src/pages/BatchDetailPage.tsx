@@ -10,14 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +33,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { ArrowLeft, Plus, Activity, Skull, TrendingUp, Scale, Syringe, Calendar, Pencil, AlertTriangle, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const dailyRecordSchema = z.object({
   recordDate: z.string().min(1, 'Date is required'),
@@ -112,15 +107,6 @@ type MortalityFormValues = z.infer<typeof mortalitySchema>;
 type VaccinationFormValues = z.infer<typeof vaccinationSchema>;
 type ChickPlacementFormValues = z.infer<typeof chickPlacementSchema>;
 type EditBatchFormValues = z.infer<typeof editBatchSchema>;
-
-const BATCH_STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-info-soft text-info',
-  growing: 'bg-success-soft text-success',
-  ready_for_sale: 'bg-warning-soft text-warning',
-  sold: 'bg-muted text-foreground',
-  culled: 'bg-danger-soft text-danger',
-  closed: 'bg-foreground text-background',
-};
 
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -425,14 +411,12 @@ export default function BatchDetailPage() {
             <h1 className="text-3xl font-extrabold tracking-tight text-foreground">{batch.batchCode}</h1>
             <p className="text-sm text-muted-foreground">{batch.siteName} / Cage {batch.cageNumber}</p>
           </div>
-          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium capitalize ${BATCH_STATUS_COLORS[batch.status] ?? ''}`}>
-            {batch.status.replace(/_/g, ' ')}
-          </span>
+          <StatusBadge status={batch.status} />
         </div>
         <div className="flex gap-2">
           {batch.status !== 'closed' && hasPermission('batches:update') && (
             <Button variant="outline" onClick={handleOpenEditBatch}>
-              <Pencil className="h-4 w-4 mr-2" />
+              <Pencil className="h-4 w-4" />
               Edit
             </Button>
           )}
@@ -441,7 +425,7 @@ export default function BatchDetailPage() {
           )}
           {isActive && hasPermission('daily_records:create') && (
             <Button variant="destructive" onClick={() => setShowMortality(true)}>
-              <AlertTriangle className="h-4 w-4 mr-2" />
+              <AlertTriangle className="h-4 w-4" />
               Record Mortality
             </Button>
           )}
@@ -455,19 +439,19 @@ export default function BatchDetailPage() {
           )}
           {isActive && hasPermission('daily_records:create') && (
             <Button variant="outline" onClick={handleOpenDailyRecord}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Daily Record
             </Button>
           )}
           {isActive && hasPermission('vaccinations:create') && (
             <Button variant="outline" onClick={() => setShowAddVax(true)}>
-              <Syringe className="h-4 w-4 mr-2" />
+              <Syringe className="h-4 w-4" />
               Vaccination
             </Button>
           )}
           {batch.status !== 'closed' && hasPermission('batches:update') && (
             <Button variant="outline" onClick={handleOpenChickPlacement}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Chick Placement
             </Button>
           )}
@@ -686,7 +670,7 @@ export default function BatchDetailPage() {
                     <TableHead>Water (L)</TableHead>
                     <TableHead>Avg Weight (g)</TableHead>
                     <TableHead>Temp</TableHead>
-                    {(hasPermission('daily_records:update') || hasPermission('batches:update')) && <TableHead className="w-[50px]" />}
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -702,13 +686,12 @@ export default function BatchDetailPage() {
                       <TableCell>{record.waterConsumption ?? '--'}</TableCell>
                       <TableCell>{record.averageWeight ?? '--'}</TableCell>
                       <TableCell>{record.temperature ? `${record.temperature}°C` : '--'}</TableCell>
-                      {(hasPermission('daily_records:update') || hasPermission('batches:update')) && (
-                        <TableCell>
-                          <Button variant="ghost" size="icon" onClick={() => handleOpenEditRecord(record)}>
-                            <Pencil className="h-3 w-3" />
-                          </Button>
-                        </TableCell>
-                      )}
+                      <TableActionsCell>
+                        <RowActions
+                          label={`record for ${new Date(record.recordDate).toLocaleDateString()}`}
+                          actions={[{ label: 'Edit', icon: Pencil, hidden: !(hasPermission('daily_records:update') || hasPermission('batches:update')), onSelect: () => handleOpenEditRecord(record) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { Download, FileText, Truck } from 'lucide-react';
+import { Download, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { usePayables, useSupplierStatement } from '@/hooks/useFinance';
 import { downloadCsv } from '@/lib/generatePayslips';
 import { cn, formatCurrency } from '@/lib/utils';
 import { StatCard } from './ReportBits';
+import { RowActions } from '@/components/ui/row-actions';
 
 const BUCKETS = [
   { key: 'current', label: 'Not yet due', tone: '' },
@@ -50,12 +51,12 @@ export function PayablesTab() {
               <TableHead>Supplier</TableHead>
               {BUCKETS.map((b) => <TableHead key={b.key} className="text-right">{b.label}</TableHead>)}
               <TableHead className="text-right">Total</TableHead>
-              <TableHead className="w-[120px]" />
+              <TableActionsHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {ageing.suppliers.map((s) => (
-              <TableRow key={s.supplierId}>
+              <TableRow key={s.supplierId} onOpen={() => setStatementFor({ id: s.supplierId, name: s.supplierName })}>
                 <TableCell>
                   <p className="font-semibold">{s.supplierName}</p>
                   <p className="text-xs text-muted-foreground">
@@ -70,9 +71,9 @@ export function PayablesTab() {
                   </TableCell>
                 ))}
                 <TableCell className="text-right font-bold tabular-nums">{formatCurrency(s.totalOwed)}</TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="outline" onClick={() => setStatementFor({ id: s.supplierId, name: s.supplierName })}><FileText className="h-4 w-4" /> Statement</Button>
-                </TableCell>
+                <TableActionsCell>
+                  <RowActions label={s.supplierName} openLabel="Open statement for" open={() => setStatementFor({ id: s.supplierId, name: s.supplierName })} />
+                </TableActionsCell>
               </TableRow>
             ))}
           </TableBody>

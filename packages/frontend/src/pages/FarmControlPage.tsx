@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ShieldCheck, Factory, LockKeyhole, MapPinned, Plus } from 'lucide-react';
+import { Banknote, Check, ShieldCheck, Factory, LockKeyhole, MapPinned, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
 import { parseApiError } from '@/lib/api';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useSites } from '@/hooks/useSites';
@@ -31,6 +31,8 @@ import {
   useInventorySuppliers,
 } from '@/hooks/useInventoryManagement';
 import { useCreatePeriodLock, usePeriodLocks, useReleasePeriodLock, useTreasuryAccounts } from '@/hooks/useTreasury';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type SiteConsumptionForm = {
   siteId: string;
@@ -302,16 +304,16 @@ export default function FarmControlPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Farm Control</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Farm control</h1>
         <p className="text-sm text-muted-foreground">Approvals, service workflows, site consumptions, and close controls.</p>
       </div>
 
       <Tabs defaultValue="approvals" className="space-y-4">
         <TabsList>
           <TabsTrigger value="approvals" className="gap-2"><ShieldCheck className="h-4 w-4" />Approvals</TabsTrigger>
-          <TabsTrigger value="service-workflows" className="gap-2"><Factory className="h-4 w-4" />Service Workflows</TabsTrigger>
-          <TabsTrigger value="site-consumption" className="gap-2"><MapPinned className="h-4 w-4" />Site Consumption</TabsTrigger>
-          <TabsTrigger value="period-locks" className="gap-2"><LockKeyhole className="h-4 w-4" />Period Locks</TabsTrigger>
+          <TabsTrigger value="service-workflows" className="gap-2"><Factory className="h-4 w-4" />Service workflows</TabsTrigger>
+          <TabsTrigger value="site-consumption" className="gap-2"><MapPinned className="h-4 w-4" />Site consumption</TabsTrigger>
+          <TabsTrigger value="period-locks" className="gap-2"><LockKeyhole className="h-4 w-4" />Period locks</TabsTrigger>
         </TabsList>
 
         <TabsContent value="approvals" className="space-y-4">
@@ -319,7 +321,7 @@ export default function FarmControlPage() {
             <CardHeader><CardTitle>Pending Contracts</CardTitle></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader><TableRow><TableHead>Contract</TableHead><TableHead>Supplier</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Contract</TableHead><TableHead>Supplier</TableHead><TableHead>Status</TableHead><TableActionsHead /></TableRow></TableHeader>
                 <TableBody>
                   {contracts.length === 0 ? (
                     <TableRow><TableCell colSpan={4} className="h-20 text-center text-sm text-muted-foreground">No pending contracts.</TableCell></TableRow>
@@ -327,13 +329,16 @@ export default function FarmControlPage() {
                     <TableRow key={contract.id}>
                       <TableCell>{contract.contractCode} - {contract.contractTitle}</TableCell>
                       <TableCell>{contract.supplierName}</TableCell>
-                      <TableCell>{contract.status}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleReviewContract(contract.id, 'active')}>Approve</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleReviewContract(contract.id, 'rejected')}>Reject</Button>
-                        </div>
-                      </TableCell>
+                      <TableCell><StatusBadge status={contract.status} /></TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label="this request"
+                          actions={[
+                            { label: 'Approve', icon: Check, primary: true, onSelect: () => handleReviewContract(contract.id, 'active') },
+                            { label: 'Reject', icon: X, primary: true, destructive: true, onSelect: () => handleReviewContract(contract.id, 'rejected') },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -345,7 +350,7 @@ export default function FarmControlPage() {
             <CardHeader><CardTitle>Pending Supplier Invoices</CardTitle></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Supplier</TableHead><TableHead>Due Date</TableHead><TableHead>Match</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Supplier</TableHead><TableHead>Due Date</TableHead><TableHead>Match</TableHead><TableActionsHead /></TableRow></TableHeader>
                 <TableBody>
                   {supplierInvoices.length === 0 ? (
                     <TableRow><TableCell colSpan={5} className="h-20 text-center text-sm text-muted-foreground">No pending invoices.</TableCell></TableRow>
@@ -355,12 +360,15 @@ export default function FarmControlPage() {
                       <TableCell>{invoice.supplierName}</TableCell>
                       <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
                       <TableCell><InvoiceMatchBadge invoice={invoice} /></TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleReviewInvoice(invoice.id, 'approved')}>Approve</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleReviewInvoice(invoice.id, 'rejected')}>Reject</Button>
-                        </div>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label="this request"
+                          actions={[
+                            { label: 'Approve', icon: Check, primary: true, onSelect: () => handleReviewInvoice(invoice.id, 'approved') },
+                            { label: 'Reject', icon: X, primary: true, destructive: true, onSelect: () => handleReviewInvoice(invoice.id, 'rejected') },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -381,7 +389,7 @@ export default function FarmControlPage() {
           <Card>
             <CardContent className="pt-6">
               <Table>
-                <TableHeader><TableRow><TableHead>Workflow</TableHead><TableHead>Supplier</TableHead><TableHead>Allocation</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Workflow</TableHead><TableHead>Supplier</TableHead><TableHead>Allocation</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Amount</TableHead><TableActionsHead /></TableRow></TableHeader>
                 <TableBody>
                   {serviceWorkOrders.length === 0 ? (
                     <TableRow><TableCell colSpan={6} className="h-20 text-center text-sm text-muted-foreground">No service workflows yet.</TableCell></TableRow>
@@ -390,27 +398,28 @@ export default function FarmControlPage() {
                       <TableCell>{workOrder.workOrderCode} - {workOrder.title}</TableCell>
                       <TableCell>{workOrder.supplierName || '--'}</TableCell>
                       <TableCell>{workOrder.allocationType}{workOrder.batchCode ? ` / ${workOrder.batchCode}` : workOrder.siteName ? ` / ${workOrder.siteName}` : ''}</TableCell>
-                      <TableCell>{workOrder.status}</TableCell>
+                      <TableCell><StatusBadge status={workOrder.status} /></TableCell>
                       <TableCell className="text-right">Rs. {Number(workOrder.totalAmount).toFixed(2)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          {workOrder.status === 'pending_approval' ? (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => handleReviewWorkOrder(workOrder.id, 'approved')}>Approve</Button>
-                              <Button size="sm" variant="outline" onClick={() => handleReviewWorkOrder(workOrder.id, 'rejected')}>Reject</Button>
-                            </>
-                          ) : null}
-                          {workOrder.status === 'approved' ? (
-                            <Button size="sm" variant="outline" onClick={() => {
-                              setSelectedWorkOrderId(workOrder.id);
-                              setSettlementForm((prev) => ({ ...prev, paymentDate: workOrder.serviceDate }));
-                              setShowSettleDialog(true);
-                            }}>
-                              Settle
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={`workflow ${workOrder.workOrderCode}`}
+                          actions={[
+                            { label: 'Approve', icon: Check, primary: true, hidden: workOrder.status !== 'pending_approval', onSelect: () => handleReviewWorkOrder(workOrder.id, 'approved') },
+                            { label: 'Reject', icon: X, primary: true, destructive: true, hidden: workOrder.status !== 'pending_approval', onSelect: () => handleReviewWorkOrder(workOrder.id, 'rejected') },
+                            {
+                              label: 'Settle',
+                              icon: Banknote,
+                              primary: true,
+                              hidden: workOrder.status !== 'approved',
+                              onSelect: () => {
+                                setSelectedWorkOrderId(workOrder.id);
+                                setSettlementForm((prev) => ({ ...prev, paymentDate: workOrder.serviceDate }));
+                                setShowSettleDialog(true);
+                              },
+                            },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -462,7 +471,7 @@ export default function FarmControlPage() {
           <Card>
             <CardContent className="pt-6">
               <Table>
-                <TableHeader><TableRow><TableHead>Lock</TableHead><TableHead>Scope</TableHead><TableHead>Period</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Lock</TableHead><TableHead>Scope</TableHead><TableHead>Period</TableHead><TableHead>Status</TableHead><TableActionsHead /></TableRow></TableHeader>
                 <TableBody>
                   {periodLocks.length === 0 ? (
                     <TableRow><TableCell colSpan={5} className="h-20 text-center text-sm text-muted-foreground">No period locks configured.</TableCell></TableRow>
@@ -471,14 +480,13 @@ export default function FarmControlPage() {
                       <TableCell>{lock.lockCode}</TableCell>
                       <TableCell>{lock.scope}</TableCell>
                       <TableCell>{lock.periodStart} to {lock.periodEnd}</TableCell>
-                      <TableCell>{lock.status}</TableCell>
-                      <TableCell className="text-right">
-                        {lock.status === 'active' ? (
-                          <Button size="sm" variant="outline" onClick={() => handleReleaseLock(lock.id)}>
-                            Release
-                          </Button>
-                        ) : null}
-                      </TableCell>
+                      <TableCell><StatusBadge status={lock.status} /></TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={`lock ${lock.lockCode}`}
+                          actions={[{ label: 'Release', icon: LockKeyhole, primary: true, hidden: lock.status !== 'active', onSelect: () => handleReleaseLock(lock.id) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

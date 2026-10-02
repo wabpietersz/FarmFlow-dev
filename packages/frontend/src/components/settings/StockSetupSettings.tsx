@@ -19,6 +19,7 @@ import {
 import { useCreateStockLocation, useStockLocations, useUpdateStockLocation, type StockLocation } from '@/hooks/useStock';
 import { useFinanceCategories } from '@/hooks/useFinance';
 import { getApiErrorMessage } from '@/lib/api';
+import { RowActions } from '@/components/ui/row-actions';
 
 const CATEGORY_LABELS: Record<string, string> = { feed: 'Feed & raw materials', health: 'Medicine & vaccines', operations: 'Farm supplies', assets: 'Equipment' };
 
@@ -90,7 +91,7 @@ export function ItemTypesSettings({ canEdit }: { canEdit: boolean }) {
                 <p className="font-bold">{type.typeName}</p>
                 <p className="text-sm text-muted-foreground">{CATEGORY_LABELS[type.category] ?? type.category} · counted in {type.defaultUnit}</p>
               </div>
-              {canEdit ? <Button variant="ghost" size="icon" aria-label={`Edit ${type.typeName}`} onClick={() => open(type)}><Pencil className="h-4 w-4" /></Button> : null}
+              <RowActions label={type.typeName} actions={[{ label: 'Edit', icon: Pencil, hidden: !canEdit, onSelect: () => open(type) }]} />
             </div>
             <div className="flex flex-wrap gap-1.5">
               {type.isFeed ? <Badge variant="info">Feed mill</Badge> : null}
@@ -189,7 +190,7 @@ export function StoresSettings({ canEdit }: { canEdit: boolean }) {
               <p className="font-bold">{store.name}</p>
               <p className="text-sm text-muted-foreground">{LOCATION_LABELS[store.locationType] ?? store.locationType}{store.status !== 'active' ? ' · inactive' : ''}</p>
             </div>
-            {canEdit ? <Button variant="ghost" size="icon" aria-label={`Edit ${store.name}`} onClick={() => setDraft({ id: store.id, name: store.name, status: store.status })}><Pencil className="h-4 w-4" /></Button> : null}
+            <RowActions label={store.name} actions={[{ label: 'Edit', icon: Pencil, hidden: !canEdit, onSelect: () => setDraft({ id: store.id, name: store.name, status: store.status }) }]} />
           </div>
         ))}
       </div>

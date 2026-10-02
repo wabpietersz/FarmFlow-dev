@@ -151,6 +151,16 @@
   --radius-2xl: 1.5rem;
 }
 
+/* A bare `border` class uses the theme border colour, not the text colour. */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::file-selector-button {
+    border-color: var(--border);
+  }
+}
+
 body {
   margin: 0;
   color: var(--foreground);

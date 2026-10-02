@@ -17,9 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -43,13 +41,8 @@ import { ArrowLeft, Plus, Trash2, Banknote, TrendingUp, TrendingDown, DollarSign
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
-
-const PAYROLL_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-muted text-foreground',
-  reviewed: 'bg-info-soft text-info',
-  approved: 'bg-warning-soft text-warning',
-  paid: 'bg-success-soft text-success',
-};
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const NEXT_STATUS_LABELS: Record<string, { label: string; action: string }> = {
   draft: { label: 'reviewed', action: 'Mark as Reviewed' },
@@ -332,11 +325,9 @@ export default function PayrollDetailPage() {
             {payroll.designation ?? ''} — {new Date(payroll.payPeriod).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
           </p>
         </div>
-        <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium capitalize ${PAYROLL_STATUS_COLORS[payroll.status] ?? ''}`}>
-          {payroll.status}
-        </span>
+        <StatusBadge status={payroll.status} tone={payroll.status === 'approved' ? 'warning' : undefined} />
         <Button variant="outline" onClick={downloadPayslip} disabled={!payslipRow}>
-          <FileText className="h-4 w-4 mr-2" />
+          <FileText className="h-4 w-4" />
           Payslip
         </Button>
         {hasPermission('payroll:update') && (
@@ -356,7 +347,7 @@ export default function PayrollDetailPage() {
             onClick={() => setShowDeleteConfirm(true)}
             disabled={deletePayrollMutation.isPending}
           >
-            <Trash2 className="h-4 w-4 mr-2" />
+            <Trash2 className="h-4 w-4" />
             {deletePayrollMutation.isPending ? 'Deleting...' : 'Delete Draft'}
           </Button>
         )}
@@ -497,7 +488,7 @@ export default function PayrollDetailPage() {
           <CardTitle>Allowances ({formatCurrency(totalAllowances)})</CardTitle>
           {hasPermission('payroll:update') && canEdit && (
             <Button size="sm" onClick={() => { allowanceForm.reset(); setShowAddAllowance(true); }}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Add Allowance
             </Button>
           )}
@@ -512,7 +503,7 @@ export default function PayrollDetailPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Remarks</TableHead>
-                  {canEdit && hasPermission('payroll:update') && <TableHead className="w-[50px]" />}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -521,13 +512,12 @@ export default function PayrollDetailPage() {
                     <TableCell className="font-medium">{a.allowanceType}</TableCell>
                     <TableCell>{formatCurrency(Number(a.amount))}</TableCell>
                     <TableCell className="text-muted-foreground">{a.remarks ?? '--'}</TableCell>
-                    {canEdit && hasPermission('payroll:update') && (
-                      <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => handleRemoveAllowance(a.id)}>
-                          <Trash2 className="h-4 w-4 text-danger" />
-                        </Button>
-                      </TableCell>
-                    )}
+                    <TableActionsCell>
+                      <RowActions
+                        label={`allowance ${a.allowanceType}`}
+                        actions={[{ label: 'Remove', icon: Trash2, destructive: true, hidden: !(canEdit && hasPermission('payroll:update')), onSelect: () => handleRemoveAllowance(a.id) }]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -542,7 +532,7 @@ export default function PayrollDetailPage() {
           <CardTitle>Deductions ({formatCurrency(totalDeductions)})</CardTitle>
           {hasPermission('payroll:update') && canEdit && (
             <Button size="sm" onClick={() => { deductionForm.reset(); setShowAddDeduction(true); }}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Add Deduction
             </Button>
           )}
@@ -557,7 +547,7 @@ export default function PayrollDetailPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Remarks</TableHead>
-                  {canEdit && hasPermission('payroll:update') && <TableHead className="w-[50px]" />}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -566,13 +556,12 @@ export default function PayrollDetailPage() {
                     <TableCell className="font-medium">{d.deductionType}</TableCell>
                     <TableCell>{formatCurrency(Number(d.amount))}</TableCell>
                     <TableCell className="text-muted-foreground">{d.remarks ?? '--'}</TableCell>
-                    {canEdit && hasPermission('payroll:update') && (
-                      <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => handleRemoveDeduction(d.id)}>
-                          <Trash2 className="h-4 w-4 text-danger" />
-                        </Button>
-                      </TableCell>
-                    )}
+                    <TableActionsCell>
+                      <RowActions
+                        label={`deduction ${d.deductionType}`}
+                        actions={[{ label: 'Remove', icon: Trash2, destructive: true, hidden: !(canEdit && hasPermission('payroll:update')), onSelect: () => handleRemoveDeduction(d.id) }]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -850,7 +839,7 @@ export default function PayrollDetailPage() {
                     <TableHead>Category</TableHead>
                     <TableHead>Default</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="w-[80px]" />
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -863,19 +852,13 @@ export default function PayrollDetailPage() {
                           ? formatCurrency(Number(template.defaultAmount))
                           : '--'}
                       </TableCell>
-                      <TableCell>{template.isActive ? 'Active' : 'Inactive'}</TableCell>
-                      <TableCell>
-                        {template.isActive && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeactivateTemplate(template.id)}
-                            disabled={deleteTemplateMutation.isPending}
-                          >
-                            <Trash2 className="h-4 w-4 text-danger" />
-                          </Button>
-                        )}
-                      </TableCell>
+                      <TableCell><StatusBadge status={template.isActive ? 'active' : 'inactive'} /></TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={`template ${template.name}`}
+                          actions={[{ label: 'Deactivate', icon: Trash2, destructive: true, hidden: !template.isActive, disabled: deleteTemplateMutation.isPending, onSelect: () => handleDeactivateTemplate(template.id) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

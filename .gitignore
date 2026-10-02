@@ -52,3 +52,4 @@ important.md
 *.tgz
 .cache/
 test.txt
+.logs

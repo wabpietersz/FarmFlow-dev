@@ -52,14 +52,35 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+/** Elements inside a row that handle their own clicks; clicking them never opens the row. */
+const ROW_INTERACTIVE = 'a, button, input, select, textarea, label, [role="menu"], [role="menuitem"], [role="dialog"], [data-row-stop]'
+
+/**
+ * Pass `onOpen` when the row has a detail view: the whole row becomes the way in.
+ * Pair it with <RowActions open={...}> in the last cell so keyboard users get the same route.
+ */
+function TableRow({
+  className,
+  onOpen,
+  onClick,
+  ...props
+}: React.ComponentProps<"tr"> & { onOpen?: () => void }) {
   return (
     <tr
       data-slot="table-row"
+      data-clickable={onOpen ? "" : undefined}
       className={cn(
         "hover:bg-muted/60 data-[state=selected]:bg-muted border-b border-border transition-colors",
+        onOpen && "cursor-pointer",
         className
       )}
+      onClick={(event) => {
+        onClick?.(event)
+        if (!onOpen || event.defaultPrevented) return
+        if ((event.target as HTMLElement).closest(ROW_INTERACTIVE)) return
+        if (window.getSelection()?.toString()) return
+        onOpen()
+      }}
       {...props}
     />
   )
@@ -91,6 +112,24 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   )
 }
 
+/** Header for the actions column: always last, right-aligned, no visible label. */
+function TableActionsHead({ className, ...props }: React.ComponentProps<"th">) {
+  return (
+    <TableHead className={cn("w-px text-right", className)} {...props}>
+      <span className="sr-only">Actions</span>
+    </TableHead>
+  )
+}
+
+/** Cell for the actions column. Put a single <RowActions> inside. */
+function TableActionsCell({ className, children, ...props }: React.ComponentProps<"td">) {
+  return (
+    <TableCell className={cn("w-px py-1.5 text-right", className)} {...props}>
+      <div className="flex items-center justify-end gap-1.5">{children}</div>
+    </TableCell>
+  )
+}
+
 function TableCaption({
   className,
   ...props
@@ -112,5 +151,7 @@ export {
   TableHead,
   TableRow,
   TableCell,
+  TableActionsHead,
+  TableActionsCell,
   TableCaption,
 }

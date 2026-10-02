@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useBatches, useCreateBatch } from '@/hooks/useBatches';
 import { useSites } from '@/hooks/useSites';
@@ -8,14 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +38,9 @@ import { BatchHistory } from '@/components/batches/BatchHistory';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Egg, Eye } from 'lucide-react';
+import { Plus, Egg } from 'lucide-react';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { toast } from 'sonner';
 
 const createBatchFormSchema = z.object({
@@ -60,17 +55,9 @@ const createBatchFormSchema = z.object({
 
 type CreateBatchFormValues = z.infer<typeof createBatchFormSchema>;
 
-const BATCH_STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-info-soft text-info',
-  growing: 'bg-success-soft text-success',
-  ready_for_sale: 'bg-warning-soft text-warning',
-  sold: 'bg-muted text-foreground',
-  culled: 'bg-danger-soft text-danger',
-  closed: 'bg-foreground text-background',
-};
-
 export default function BatchesPage() {
   const { hasPermission } = useAuthStore();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -127,7 +114,7 @@ export default function BatchesPage() {
         <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Batches</h1>
         {hasPermission('batches:create') && (
           <Button onClick={() => setShowCreateDialog(true)}>
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="h-4 w-4" />
             New Batch
           </Button>
         )}
@@ -174,7 +161,7 @@ export default function BatchesPage() {
               </p>
               {hasPermission('batches:create') && !statusFilter && (
                 <Button onClick={() => setShowCreateDialog(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
+                  <Plus className="h-4 w-4" />
                   New Batch
                 </Button>
               )}
@@ -190,20 +177,13 @@ export default function BatchesPage() {
                     <TableHead>Birds</TableHead>
                     <TableHead>Placement</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="w-[50px]" />
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {batchList.map((batch) => (
-                    <TableRow key={batch.id}>
-                      <TableCell>
-                        <Link
-                          to={`/batches/${batch.id}`}
-                          className="font-medium text-foreground hover:underline"
-                        >
-                          {batch.batchCode}
-                        </Link>
-                      </TableCell>
+                    <TableRow key={batch.id} onOpen={() => navigate(`/batches/${batch.id}`)}>
+                      <TableCell className="font-semibold">{batch.batchCode}</TableCell>
                       <TableCell className="text-muted-foreground">{batch.siteName ?? '--'}</TableCell>
                       <TableCell className="hidden sm:table-cell text-muted-foreground">{batch.cageNumber ?? '--'}</TableCell>
                       <TableCell>{batch.chicksPlaced.toLocaleString()}</TableCell>
@@ -211,17 +191,11 @@ export default function BatchesPage() {
                         {new Date(batch.placementDate).toLocaleDateString()}
                       </TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${BATCH_STATUS_COLORS[batch.status] ?? ''}`}>
-                          {batch.status.replace(/_/g, ' ')}
-                        </span>
+                        <StatusBadge status={batch.status} />
                       </TableCell>
-                      <TableCell>
-                        <Button asChild variant="ghost" size="icon">
-                          <Link to={`/batches/${batch.id}`}>
-                            <Eye className="h-4 w-4" />
-                          </Link>
-                        </Button>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions label={`batch ${batch.batchCode}`} open={`/batches/${batch.id}`} />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

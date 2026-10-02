@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Package, ShoppingCart, Truck, Plus, Pencil, Factory, Eye, FileText, Receipt, ScanSearch, Warehouse, ClipboardList } from 'lucide-react';
+import { Banknote, Package, PackageCheck, Send, ShoppingCart, Truck, Plus, Pencil, Factory, FileText, Receipt, ScanSearch, Warehouse, ClipboardList } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/authStore';
@@ -63,14 +63,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type SupplierForm = {
   supplierName: string;
@@ -474,7 +469,7 @@ function PurchaseOrderDetailDialogContent({
                 <p className="font-semibold">{detail.purchaseOrder.orderCode}</p>
                 <p className="text-sm text-muted-foreground">{detail.purchaseOrder.supplierName || '--'}</p>
               </div>
-              <Badge variant="outline">{detail.purchaseOrder.status}</Badge>
+              <StatusBadge status={detail.purchaseOrder.status} />
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-3 text-sm">
               <div>
@@ -534,7 +529,7 @@ function PurchaseOrderDetailDialogContent({
                       <TableCell>{new Date(payment.paymentDate).toLocaleDateString()}</TableCell>
                       <TableCell>{payment.paymentMethod.replace('_', ' ')}</TableCell>
                       <TableCell>{payment.financeAccountName || `Account #${payment.financeAccountId}`}</TableCell>
-                      <TableCell><Badge variant="outline">{payment.paymentStatus}</Badge></TableCell>
+                      <TableCell><StatusBadge status={payment.paymentStatus} /></TableCell>
                       <TableCell className="text-right font-medium">Rs. {Number(payment.amount).toFixed(2)}</TableCell>
                       <TableCell>{payment.treasuryTransactionId ? `Txn #${payment.treasuryTransactionId}` : '--'}</TableCell>
                     </TableRow>
@@ -571,7 +566,7 @@ function PurchaseOrderDetailDialogContent({
                       <TableCell className="font-medium">{invoice.invoiceCode}</TableCell>
                       <TableCell>{invoice.invoiceReference}</TableCell>
                       <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
-                      <TableCell><Badge variant="outline">{invoice.status}</Badge></TableCell>
+                      <TableCell><StatusBadge status={invoice.status} /></TableCell>
                       <TableCell className="text-right">Rs. {Number(invoice.invoiceAmount).toFixed(2)}</TableCell>
                       <TableCell className="text-right">Rs. {Number(invoice.balanceDue ?? 0).toFixed(2)}</TableCell>
                     </TableRow>
@@ -672,7 +667,7 @@ function SupplierPaymentHistoryDialogContent({
                   <TableCell>{new Date(payment.paymentDate).toLocaleDateString()}</TableCell>
                   <TableCell>{payment.paymentMethod.replace('_', ' ')}</TableCell>
                   <TableCell>{payment.financeAccountName || `Account #${payment.financeAccountId}`}</TableCell>
-                  <TableCell><Badge variant="outline">{payment.paymentStatus}</Badge></TableCell>
+                  <TableCell><StatusBadge status={payment.paymentStatus} /></TableCell>
                   <TableCell className="text-right">Rs. {Number(payment.amount).toFixed(2)}</TableCell>
                   <TableCell>
                     {payment.treasuryTransactionId ? `Txn #${payment.treasuryTransactionId}` : '--'}
@@ -773,7 +768,7 @@ function SupplierContractDetailDialogContent({
                   <TableRow key={po.id}>
                     <TableCell className="font-medium">{po.orderCode}</TableCell>
                     <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                    <TableCell><Badge variant={po.status === 'pending_approval' ? 'warning' : 'outline'} className="capitalize">{po.status.replace(/_/g, ' ')}</Badge></TableCell>
+                    <TableCell><StatusBadge status={po.status} /></TableCell>
                     <TableCell className="text-right">Rs. {Number(po.totalCost).toFixed(2)}</TableCell>
                   </TableRow>
                 ))}
@@ -801,7 +796,7 @@ function SupplierContractDetailDialogContent({
                     <TableCell className="font-medium">{invoice.invoiceCode}</TableCell>
                     <TableCell>{invoice.invoiceReference}</TableCell>
                     <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
-                    <TableCell><Badge variant="outline">{invoice.status}</Badge></TableCell>
+                    <TableCell><StatusBadge status={invoice.status} /></TableCell>
                     <TableCell className="text-right">Rs. {Number(invoice.invoiceAmount).toFixed(2)}</TableCell>
                   </TableRow>
                 ))}
@@ -875,7 +870,7 @@ function SupplierInvoiceDetailDialogContent({
                     <TableCell className="font-medium">{allocation.paymentCode}</TableCell>
                     <TableCell>{new Date(allocation.paymentDate).toLocaleDateString()}</TableCell>
                     <TableCell>{allocation.paymentMethod.replace('_', ' ')}</TableCell>
-                    <TableCell><Badge variant="outline">{allocation.paymentStatus}</Badge></TableCell>
+                    <TableCell><StatusBadge status={allocation.paymentStatus} /></TableCell>
                     <TableCell>{allocation.treasuryTransactionId ? `Txn #${allocation.treasuryTransactionId}` : '--'}</TableCell>
                     <TableCell className="text-right">Rs. {Number(allocation.allocatedAmount).toFixed(2)}</TableCell>
                   </TableRow>
@@ -1308,11 +1303,11 @@ export default function InventoryManagementPage() {
           <TabsTrigger value="inventory" className="gap-2"><Package className="h-4 w-4" />Inventory</TabsTrigger>
           <TabsTrigger value="stores" className="gap-2"><Warehouse className="h-4 w-4" />Stores</TabsTrigger>
           <TabsTrigger value="requisitions" className="gap-2"><ClipboardList className="h-4 w-4" />Requests</TabsTrigger>
-          <TabsTrigger value="purchase-orders" className="gap-2"><ShoppingCart className="h-4 w-4" />Purchase Orders</TabsTrigger>
-          <TabsTrigger value="contracts" className="gap-2"><FileText className="h-4 w-4" />Contracts</TabsTrigger>
+          <TabsTrigger value="purchase-orders" className="gap-2"><ShoppingCart className="h-4 w-4" />Purchase orders</TabsTrigger>
           <TabsTrigger value="supplier-invoices" className="gap-2"><Receipt className="h-4 w-4" />Invoices</TabsTrigger>
-          <TabsTrigger value="traceability" className="gap-2"><ScanSearch className="h-4 w-4" />Traceability</TabsTrigger>
           <TabsTrigger value="suppliers" className="gap-2"><Truck className="h-4 w-4" />Suppliers</TabsTrigger>
+          <TabsTrigger value="contracts" className="gap-2"><FileText className="h-4 w-4" />Contracts</TabsTrigger>
+          <TabsTrigger value="traceability" className="gap-2"><ScanSearch className="h-4 w-4" />Traceability</TabsTrigger>
         </TabsList>
 
         <TabsContent value="stores">
@@ -1350,7 +1345,7 @@ export default function InventoryManagementPage() {
                     <TableHead>Quantity</TableHead>
                     <TableHead>Cost/Unit</TableHead>
                     <TableHead>Stock</TableHead>
-                    <TableHead className="w-[180px] text-right">Actions</TableHead>
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1361,10 +1356,10 @@ export default function InventoryManagementPage() {
                       </TableCell>
                     </TableRow>
                   ) : inventoryItems.map((item) => (
-                    <TableRow key={item.id}>
+                    <TableRow key={item.id} onOpen={() => { setSelectedInventoryItemId(item.id); setShowInventoryDetail(true); }}>
                       <TableCell>
                         <div>
-                          <p className="font-medium">{item.ingredientName}</p>
+                          <p className="font-semibold">{item.ingredientName}</p>
                           <p className="text-xs text-muted-foreground">{item.itemCode || 'No item code'}</p>
                         </div>
                       </TableCell>
@@ -1378,29 +1373,15 @@ export default function InventoryManagementPage() {
                       <TableCell>{Number(item.quantity).toLocaleString()} {item.unit}</TableCell>
                       <TableCell>Rs. {Number(item.costPerUnit).toFixed(2)}</TableCell>
                       <TableCell>
-                        <Badge variant={item.lowStock ? 'destructive' : 'outline'}>
-                          {item.lowStock ? 'Low' : 'OK'}
-                        </Badge>
+                        <StatusBadge status={item.lowStock ? 'low' : 'ok'} label={item.lowStock ? 'Low' : 'OK'} tone={item.lowStock ? 'danger' : undefined} />
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            onClick={() => {
-                              setSelectedInventoryItemId(item.id);
-                              setShowInventoryDetail(true);
-                            }}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {hasPermission('feed_inventory:update') ? (
-                            <Button variant="outline" size="icon" onClick={() => openEditInventoryItem(item)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={item.ingredientName}
+                          open={() => { setSelectedInventoryItemId(item.id); setShowInventoryDetail(true); }}
+                          actions={[{ label: 'Edit', icon: Pencil, hidden: !hasPermission('feed_inventory:update'), onSelect: () => openEditInventoryItem(item) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1435,7 +1416,7 @@ export default function InventoryManagementPage() {
                     <TableHead>Order Date</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Total</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1446,70 +1427,52 @@ export default function InventoryManagementPage() {
                       </TableCell>
                     </TableRow>
                   ) : purchaseOrders.map((po) => (
-                    <TableRow key={po.id}>
-                      <TableCell className="font-medium">{po.orderCode}</TableCell>
+                    <TableRow key={po.id} onOpen={() => { setSelectedPurchaseOrderId(po.id); setShowPurchaseOrderDetailDialog(true); }}>
+                      <TableCell className="font-semibold">{po.orderCode}</TableCell>
                       <TableCell>{po.supplierName}</TableCell>
                       <TableCell>{new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                      <TableCell><Badge variant={po.status === 'pending_approval' ? 'warning' : 'outline'} className="capitalize">{po.status.replace(/_/g, ' ')}</Badge></TableCell>
+                      <TableCell><StatusBadge status={po.status} /></TableCell>
                       <TableCell>Rs. {Number(po.totalCost).toFixed(2)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          {po.status === 'draft' ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={async () => {
+                      <TableActionsCell>
+                        <RowActions
+                          label={`purchase order ${po.orderCode}`}
+                          open={() => { setSelectedPurchaseOrderId(po.id); setShowPurchaseOrderDetailDialog(true); }}
+                          actions={[
+                            {
+                              label: 'Submit',
+                              icon: Send,
+                              hidden: po.status !== 'draft',
+                              onSelect: async () => {
                                 try {
                                   await updatePurchaseOrderStatus.mutateAsync({ id: po.id, status: 'submitted' });
                                   toast.success('Purchase order submitted');
                                 } catch (error) {
                                   parseApiError(error, 'Failed to submit purchase order');
                                 }
-                              }}
-                            >
-                              Submit
-                            </Button>
-                          ) : null}
-                          {['submitted', 'partially_received'].includes(po.status) ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedPurchaseOrderId(po.id);
-                                setShowReceiveDialog(true);
-                              }}
-                            >
-                              Receive
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedPurchaseOrderId(po.id);
-                              setShowPurchaseOrderDetailDialog(true);
-                            }}
-                          >
-                            View
-                          </Button>
-                          {hasPermission('feed_inventory:update') ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
+                              },
+                            },
+                            {
+                              label: 'Receive stock',
+                              icon: PackageCheck,
+                              hidden: !['submitted', 'partially_received'].includes(po.status),
+                              onSelect: () => { setSelectedPurchaseOrderId(po.id); setShowReceiveDialog(true); },
+                            },
+                            {
+                              label: 'Pay supplier',
+                              icon: Banknote,
+                              hidden: !hasPermission('feed_inventory:update'),
+                              onSelect: () => {
                                 setSelectedSupplierPaymentTarget({ supplierId: po.supplierId, purchaseOrderId: po.id });
                                 setSupplierPaymentForm((prev) => ({
                                   ...prev,
                                   amount: Number(po.totalCost).toFixed(2),
                                 }));
                                 setShowSupplierPaymentDialog(true);
-                              }}
-                            >
-                              Pay
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
+                              },
+                            },
+                          ]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1541,7 +1504,7 @@ export default function InventoryManagementPage() {
                     <TableHead>Contact</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1552,30 +1515,19 @@ export default function InventoryManagementPage() {
                       </TableCell>
                     </TableRow>
                   ) : suppliers.map((supplier) => (
-                    <TableRow key={supplier.id}>
-                      <TableCell className="font-medium">{supplier.supplierName}</TableCell>
+                    <TableRow key={supplier.id} onOpen={() => { setSelectedSupplierHistoryId(supplier.id); setShowSupplierHistoryDialog(true); }}>
+                      <TableCell className="font-semibold">{supplier.supplierName}</TableCell>
                       <TableCell>{supplier.contactPerson || supplier.phoneNumber || '--'}</TableCell>
                       <TableCell>{supplier.email || '--'}</TableCell>
-                      <TableCell><Badge variant="outline">{supplier.status}</Badge></TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedSupplierHistoryId(supplier.id);
-                              setShowSupplierHistoryDialog(true);
-                            }}
-                          >
-                            Payments
-                          </Button>
-                          {hasPermission('feed_inventory:update') ? (
-                            <Button variant="outline" size="icon" onClick={() => openEditSupplier(supplier)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
+                      <TableCell><StatusBadge status={supplier.status} /></TableCell>
+                      <TableActionsCell>
+                        <RowActions
+                          label={supplier.supplierName}
+                          open={() => { setSelectedSupplierHistoryId(supplier.id); setShowSupplierHistoryDialog(true); }}
+                          openLabel="Open payments for"
+                          actions={[{ label: 'Edit', icon: Pencil, hidden: !hasPermission('feed_inventory:update'), onSelect: () => openEditSupplier(supplier) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1620,7 +1572,7 @@ export default function InventoryManagementPage() {
                     <TableHead>Validity</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Linked POs</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1629,10 +1581,10 @@ export default function InventoryManagementPage() {
                       <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">No supplier contracts found.</TableCell>
                     </TableRow>
                   ) : contracts.map((contract) => (
-                    <TableRow key={contract.id}>
+                    <TableRow key={contract.id} onOpen={() => { setSelectedContractId(contract.id); setShowContractDetailDialog(true); }}>
                       <TableCell>
                         <div>
-                          <p className="font-medium">{contract.contractCode}</p>
+                          <p className="font-semibold">{contract.contractCode}</p>
                           <p className="text-xs text-muted-foreground">{contract.contractTitle}</p>
                         </div>
                       </TableCell>
@@ -1642,16 +1594,11 @@ export default function InventoryManagementPage() {
                         {new Date(contract.validFrom).toLocaleDateString()}
                         {contract.validTo ? ` to ${new Date(contract.validTo).toLocaleDateString()}` : ''}
                       </TableCell>
-                      <TableCell><Badge variant="outline">{contract.status}</Badge></TableCell>
+                      <TableCell><StatusBadge status={contract.status} /></TableCell>
                       <TableCell className="text-right">{contract.linkedPurchaseOrderCount ?? 0}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => {
-                          setSelectedContractId(contract.id);
-                          setShowContractDetailDialog(true);
-                        }}>
-                          View
-                        </Button>
-                      </TableCell>
+                      <TableActionsCell>
+                        <RowActions label={`contract ${contract.contractCode}`} open={() => { setSelectedContractId(contract.id); setShowContractDetailDialog(true); }} />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1688,7 +1635,7 @@ export default function InventoryManagementPage() {
                       <TableHead>Match</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                       <TableHead className="text-right">Balance Due</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableActionsHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1697,50 +1644,43 @@ export default function InventoryManagementPage() {
                         <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">No supplier invoices found.</TableCell>
                       </TableRow>
                     ) : supplierInvoices.map((invoice) => (
-                      <TableRow key={invoice.id}>
+                      <TableRow key={invoice.id} onOpen={() => { setSelectedSupplierInvoiceId(invoice.id); setShowSupplierInvoiceDetailDialog(true); }}>
                         <TableCell>
                           <div>
-                            <p className="font-medium">{invoice.invoiceCode}</p>
+                            <p className="font-semibold">{invoice.invoiceCode}</p>
                             <p className="text-xs text-muted-foreground">{invoice.invoiceReference}</p>
                           </div>
                         </TableCell>
                         <TableCell>{invoice.supplierName}</TableCell>
                         <TableCell>{invoice.purchaseOrderCode || '--'}</TableCell>
                         <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
-                        <TableCell><Badge variant="outline">{invoice.status}</Badge></TableCell>
+                        <TableCell><StatusBadge status={invoice.status} /></TableCell>
                         <TableCell><InvoiceMatchBadge invoice={invoice} /></TableCell>
                         <TableCell className="text-right">Rs. {Number(invoice.invoiceAmount).toFixed(2)}</TableCell>
                         <TableCell className="text-right">Rs. {Number(invoice.balanceDue ?? 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={() => {
-                              setSelectedSupplierInvoiceId(invoice.id);
-                              setShowSupplierInvoiceDetailDialog(true);
-                            }}>
-                              View
-                            </Button>
-                            {hasPermission('inventory:update') && Number(invoice.balanceDue ?? 0) > 0 ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedSupplierPaymentTarget({
-                                    supplierId: invoice.supplierId,
-                                    purchaseOrderId: invoice.purchaseOrderId ?? null,
-                                    supplierInvoiceId: invoice.id,
-                                  });
-                                  setSupplierPaymentForm((prev) => ({
-                                    ...prev,
-                                    amount: Number(invoice.balanceDue ?? 0).toFixed(2),
-                                  }));
-                                  setShowSupplierPaymentDialog(true);
-                                }}
-                              >
-                                Pay
-                              </Button>
-                            ) : null}
-                          </div>
-                        </TableCell>
+                        <TableActionsCell>
+                          <RowActions
+                            label={`invoice ${invoice.invoiceCode}`}
+                            open={() => { setSelectedSupplierInvoiceId(invoice.id); setShowSupplierInvoiceDetailDialog(true); }}
+                            actions={[{
+                              label: 'Pay supplier',
+                              icon: Banknote,
+                              hidden: !(hasPermission('inventory:update') && Number(invoice.balanceDue ?? 0) > 0),
+                              onSelect: () => {
+                                setSelectedSupplierPaymentTarget({
+                                  supplierId: invoice.supplierId,
+                                  purchaseOrderId: invoice.purchaseOrderId ?? null,
+                                  supplierInvoiceId: invoice.id,
+                                });
+                                setSupplierPaymentForm((prev) => ({
+                                  ...prev,
+                                  amount: Number(invoice.balanceDue ?? 0).toFixed(2),
+                                }));
+                                setShowSupplierPaymentDialog(true);
+                              },
+                            }]}
+                          />
+                        </TableActionsCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -2014,7 +1954,7 @@ export default function InventoryManagementPage() {
                         <TableHead>Remaining</TableHead>
                         <TableHead>Cost/Unit</TableHead>
                         <TableHead>PO</TableHead>
-                        <TableHead className="text-right">Trace</TableHead>
+                        <TableActionsHead />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -2025,20 +1965,15 @@ export default function InventoryManagementPage() {
                           </TableCell>
                         </TableRow>
                       ) : inventoryDetail.lots.map((lot) => (
-                        <TableRow key={lot.id}>
-                          <TableCell>{lot.lotCode}</TableCell>
+                        <TableRow key={lot.id} onOpen={() => { setSelectedLotTraceId(lot.id); setShowLotTraceDialog(true); }}>
+                          <TableCell className="font-semibold">{lot.lotCode}</TableCell>
                           <TableCell>{Number(lot.receivedQuantity).toLocaleString()} {inventoryDetail.item.unit}</TableCell>
                           <TableCell>{Number(lot.remainingQuantity).toLocaleString()} {inventoryDetail.item.unit}</TableCell>
                           <TableCell>Rs. {Number(lot.costPerUnit).toFixed(2)}</TableCell>
                           <TableCell>{lot.poOrderCode || '--'}</TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="outline" size="sm" onClick={() => {
-                              setSelectedLotTraceId(lot.id);
-                              setShowLotTraceDialog(true);
-                            }}>
-                              Trace
-                            </Button>
-                          </TableCell>
+                          <TableActionsCell>
+                            <RowActions label={`lot ${lot.lotCode}`} openLabel="Trace" open={() => { setSelectedLotTraceId(lot.id); setShowLotTraceDialog(true); }} />
+                          </TableActionsCell>
                         </TableRow>
                       ))}
                     </TableBody>

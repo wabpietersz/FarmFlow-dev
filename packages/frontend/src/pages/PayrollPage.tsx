@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useEmployees } from '@/hooks/useEmployees';
 import {
@@ -19,9 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -30,7 +28,7 @@ import {
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Eye, Banknote, AlertTriangle, Trash2, CalendarDays, HandCoins, Landmark, ListChecks, type LucideIcon } from 'lucide-react';
+import { Plus, Banknote, AlertTriangle, Trash2, CalendarDays, HandCoins, Landmark, ListChecks, type LucideIcon } from 'lucide-react';
 import { PayMonthPanel } from '@/components/payroll/PayMonthPanel';
 import { calculateRowTotals } from '@/lib/payrollPreview';
 import { LoansPanel } from '@/components/payroll/LoansPanel';
@@ -39,13 +37,8 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { formatCurrency } from '@/lib/utils';
 import { parseApiError } from '@/lib/api';
-
-const PAYROLL_STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-muted text-foreground',
-  reviewed: 'bg-info-soft text-info',
-  approved: 'bg-warning-soft text-warning',
-  paid: 'bg-success-soft text-success',
-};
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type EditableAllowance = PayrollAllowanceInput & { included: boolean };
 type EditableDeduction = PayrollDeductionInput & { included: boolean };
@@ -107,6 +100,7 @@ const PAYROLL_VIEWS: Array<{ key: string; label: string; icon: LucideIcon }> = [
 
 export default function PayrollPage() {
   const { hasPermission } = useAuthStore();
+  const navigate = useNavigate();
   const epfRate = useStatutoryRates().data?.data?.epfEmployeeRate ?? 8;
 
   const [page, setPage] = useState(1);
@@ -397,7 +391,7 @@ export default function PayrollPage() {
                 onClick={openCreateDialog}
                 disabled={employeesError || employeesLoading || activeEmployees.length === 0}
               >
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-4 w-4" />
                 New Payroll
               </Button>
             </>
@@ -500,13 +494,13 @@ export default function PayrollPage() {
                           <TableHead>Gross</TableHead>
                           <TableHead>Net</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="w-[50px]" />
+                          <TableActionsHead />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {payrollList.map((record) => (
-                          <TableRow key={record.id}>
-                            <TableCell className="font-medium">{record.employeeName ?? '--'}</TableCell>
+                          <TableRow key={record.id} onOpen={() => navigate(`/payroll/${record.id}`)}>
+                            <TableCell className="font-semibold">{record.employeeName ?? '--'}</TableCell>
                             <TableCell className="text-muted-foreground">
                               {new Date(record.payPeriod).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })}
                             </TableCell>
@@ -521,31 +515,25 @@ export default function PayrollPage() {
                             <TableCell>{formatCurrency(Number(record.grossSalary))}</TableCell>
                             <TableCell className="font-medium">{formatCurrency(Number(record.netSalary))}</TableCell>
                             <TableCell>
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${PAYROLL_STATUS_COLORS[record.status] ?? ''}`}>
-                                {record.status}
-                              </span>
+                              <StatusBadge status={record.status} tone={record.status === 'approved' ? 'warning' : undefined} />
                             </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1">
-                                <Button asChild variant="ghost" size="icon">
-                                  <Link to={`/payroll/${record.id}`}><Eye className="h-4 w-4" /></Link>
-                                </Button>
-                                {hasPermission('payroll:delete') && record.status === 'draft' && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => setDeleteTarget({
-                                      id: record.id,
-                                      employeeName: record.employeeName ?? `Employee ${record.employeeId}`,
-                                    })}
-                                    disabled={deletePayrollMutation.isPending && deletingPayrollId === record.id}
-                                  >
-                                    <Trash2 className="h-4 w-4 text-danger" />
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
+                            <TableActionsCell>
+                              <RowActions
+                                label={`payslip for ${record.employeeName ?? `employee ${record.employeeId}`}`}
+                                open={`/payroll/${record.id}`}
+                                actions={[{
+                                  label: 'Delete',
+                                  icon: Trash2,
+                                  destructive: true,
+                                  hidden: !(hasPermission('payroll:delete') && record.status === 'draft'),
+                                  disabled: deletePayrollMutation.isPending && deletingPayrollId === record.id,
+                                  onSelect: () => setDeleteTarget({
+                                    id: record.id,
+                                    employeeName: record.employeeName ?? `Employee ${record.employeeId}`,
+                                  }),
+                                }]}
+                              />
+                            </TableActionsCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -599,7 +587,7 @@ export default function PayrollPage() {
               {previewMutation.isPending ? 'Loading...' : 'Reload Rows'}
             </Button>
             <Button type="button" variant="outline" onClick={handleRunPrecheck} disabled={precheckMutation.isPending}>
-              <AlertTriangle className="mr-2 h-4 w-4" />
+              <AlertTriangle className="h-4 w-4" />
               {precheckMutation.isPending ? 'Checking...' : 'Run Pre-check'}
             </Button>
             <p className="text-sm text-muted-foreground ml-auto">

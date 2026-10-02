@@ -9,14 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -32,13 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Form,
   FormControl,
@@ -57,8 +43,6 @@ import {
   Search,
   Copy,
   Check,
-  MoreHorizontal,
-  Pencil,
   KeyRound,
   UserX,
   UserCheck,
@@ -66,6 +50,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { sendPasswordResetEmailToUser } from '@/lib/firebase';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const createUserSchema = z.object({
   email: z.string().email('Valid email is required'),
@@ -94,16 +80,6 @@ const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.FeedMillOperator]: 'Feed Mill Operator',
   [UserRole.FarmWorker]: 'Farm Worker',
   [UserRole.Viewer]: 'Viewer',
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  system_admin: 'bg-danger-soft text-danger',
-  farm_manager: 'bg-info-soft text-info',
-  accountant: 'bg-success-soft text-success',
-  supervisor: 'bg-warning-soft text-warning',
-  feed_mill_operator: 'bg-secondary text-secondary-foreground',
-  farm_worker: 'bg-muted text-foreground',
-  viewer: 'bg-muted text-foreground',
 };
 
 /**
@@ -295,7 +271,7 @@ export default function UserManagementPage({ embedded = false }: { embedded?: bo
       <div className={embedded ? 'flex justify-end' : 'flex items-center justify-between'}>
         {embedded ? null : <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Users</h1>}
         <Button onClick={() => setShowCreateDialog(true)}>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="h-4 w-4" />
           Register User
         </Button>
       </div>
@@ -340,76 +316,43 @@ export default function UserManagementPage({ embedded = false }: { embedded?: bo
                   <TableHead className="hidden sm:table-cell">Site</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Last Login</TableHead>
-                  <TableHead className="w-[50px]">Actions</TableHead>
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.fullName}</TableCell>
+                  <TableRow key={user.id} onOpen={() => setEditingUser(user)}>
+                    <TableCell className="font-semibold">{user.fullName}</TableCell>
                     <TableCell className="text-muted-foreground">{user.email}</TableCell>
                     <TableCell>
-                      <span
-                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${ROLE_COLORS[user.userRole] ?? ''}`}
-                      >
+                      <Badge variant="outline">
                         {ROLE_LABELS[user.userRole as UserRole] ?? user.userRole}
-                      </span>
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell text-muted-foreground">
                       {user.siteName ?? 'All Sites'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                        {user.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
+                      <StatusBadge status={user.isActive ? 'active' : 'inactive'} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground">
                       {user.lastLogin
                         ? new Date(user.lastLogin).toLocaleDateString()
                         : 'Never'}
                     </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setEditingUser(user)}>
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Edit User
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleResendResetLink(user)}>
-                            <KeyRound className="h-4 w-4 mr-2" />
-                            Send Password Reset
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {user.id !== currentUser?.id && (
-                            <DropdownMenuItem
-                              onClick={() => handleToggleActive(user)}
-                              className={
-                                user.isActive
-                                  ? 'text-destructive focus:text-destructive'
-                                  : 'text-success focus:text-success'
-                              }
-                            >
-                              {user.isActive ? (
-                                <>
-                                  <UserX className="h-4 w-4 mr-2" />
-                                  Deactivate
-                                </>
-                              ) : (
-                                <>
-                                  <UserCheck className="h-4 w-4 mr-2" />
-                                  Activate
-                                </>
-                              )}
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+                    <TableActionsCell>
+                      <RowActions
+                        label={user.fullName}
+                        open={() => setEditingUser(user)}
+                        openLabel="Edit"
+                        actions={[
+                          { label: 'Send password reset', icon: KeyRound, onSelect: () => handleResendResetLink(user) },
+                          user.isActive
+                            ? { label: 'Deactivate', icon: UserX, destructive: true, hidden: user.id === currentUser?.id, onSelect: () => handleToggleActive(user) }
+                            : { label: 'Activate', icon: UserCheck, hidden: user.id === currentUser?.id, onSelect: () => handleToggleActive(user) },
+                        ]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -678,12 +621,12 @@ export default function UserManagementPage({ embedded = false }: { embedded?: bo
             {resetLink ? <Button onClick={handleCopyLink}>
               {copiedLink ? (
                 <>
-                  <Check className="h-4 w-4 mr-2" />
+                  <Check className="h-4 w-4" />
                   Copied
                 </>
               ) : (
                 <>
-                  <Copy className="h-4 w-4 mr-2" />
+                  <Copy className="h-4 w-4" />
                   Copy Link
                 </>
               )}

@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { Download, FileText, Wallet } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { AgeingBucket } from '@farmflow/shared';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { useBuyerStatement, useReceivablesAgeing } from '@/hooks/useSales';
 import { generateStatementPDF } from '@/lib/generateStatement';
 import { cn, formatCurrency } from '@/lib/utils';
+import { RowActions } from '@/components/ui/row-actions';
 
 const BUCKETS: Array<{ key: AgeingBucket; label: string; tone: string }> = [
   { key: 'current', label: 'Not yet due', tone: 'text-foreground' },
@@ -22,6 +23,7 @@ const BUCKETS: Array<{ key: AgeingBucket; label: string; tone: string }> = [
 
 /** Who owes money, and how late it is. Click a buyer for their statement. */
 export function ReceivablesTab() {
+  const navigate = useNavigate();
   const { data, isLoading } = useReceivablesAgeing();
   const [statementBuyer, setStatementBuyer] = useState<{ id: number; name: string } | null>(null);
   const ageing = data?.data;
@@ -61,16 +63,16 @@ export function ReceivablesTab() {
               <TableHead>Buyer</TableHead>
               {BUCKETS.map((bucket) => <TableHead key={bucket.key} className="text-right">{bucket.label}</TableHead>)}
               <TableHead className="text-right">Total owed</TableHead>
-              <TableHead className="w-[120px]" />
+              <TableActionsHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {ageing.buyers.map((buyer) => {
               const overLimit = buyer.creditLimit != null && buyer.totalOwed > buyer.creditLimit;
               return (
-                <TableRow key={buyer.buyerId}>
+                <TableRow key={buyer.buyerId} onOpen={() => navigate(`/buyers/${buyer.buyerId}`)}>
                   <TableCell>
-                    <Link to={`/buyers/${buyer.buyerId}`} className="font-semibold hover:underline">{buyer.buyerName}</Link>
+                    <p className="font-semibold">{buyer.buyerName}</p>
                     <p className="text-xs text-muted-foreground">
                       {buyer.creditTerms ? `${buyer.creditTerms}-day terms` : 'Pay on delivery'}
                       {buyer.creditLimit != null ? ` · limit ${formatCurrency(buyer.creditLimit)}` : ''}
@@ -84,11 +86,13 @@ export function ReceivablesTab() {
                     </TableCell>
                   ))}
                   <TableCell className="text-right font-bold tabular-nums">{formatCurrency(buyer.totalOwed)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => setStatementBuyer({ id: buyer.buyerId, name: buyer.buyerName })}>
-                      <FileText className="h-4 w-4" /> Statement
-                    </Button>
-                  </TableCell>
+                  <TableActionsCell>
+                    <RowActions
+                      label={`buyer ${buyer.buyerName}`}
+                      open={`/buyers/${buyer.buyerId}`}
+                      actions={[{ label: 'Statement', icon: FileText, onSelect: () => setStatementBuyer({ id: buyer.buyerId, name: buyer.buyerName }) }]}
+                    />
+                  </TableActionsCell>
                 </TableRow>
               );
             })}

@@ -55,7 +55,7 @@ Work through the sections **in order**. Each one uses what the previous one crea
    - Pay for the chicks through Money if the screen offers it: category *Day-old Chicks*, Main Current Account.
 2. Open the batch → **Today's check.** Record today's mortality (e.g. 12, cause "Heat"), feed used and an average weight.
    - [ ] Check: live birds = 5,000 − deaths, and actual vs target weight shows against the growth curve.
-3. **Farms → Health & houses → Tasks.** The batch should have health tasks from the vaccination programme. Mark one vaccination **Done** (it uses Newcastle vaccine).
+3. **Farms → Health & care → Tasks.** The batch should have health tasks from the vaccination programme. Mark one vaccination **Done** (it uses Newcastle vaccine).
    - [ ] Check: vaccine stock in the **Main Farm store** goes down first (the farm's own store is used before Main store).
 4. **Home:** the to-do list shows overdue/due health tasks and "expiring stock".
 

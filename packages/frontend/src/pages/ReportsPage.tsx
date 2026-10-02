@@ -73,19 +73,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency, formatCurrencyCompact } from '@/lib/utils';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-3)', 'var(--chart-5)', 'var(--danger)'];
-
-const STATUS_COLORS: Record<string, string> = {
-  placement: 'bg-info-soft text-info',
-  growing: 'bg-success-soft text-success',
-  ready_for_sale: 'bg-warning-soft text-warning',
-  sold: 'bg-muted text-foreground',
-  culled: 'bg-danger-soft text-danger',
-  completed: 'bg-success-soft text-success',
-  pending: 'bg-info-soft text-info',
-  cancelled: 'bg-danger-soft text-danger',
-};
 
 function getDefaultDateRange() {
   const end = new Date();
@@ -301,9 +291,7 @@ function BatchPerformanceTab() {
                       <TableCell className="text-right">{formatPercent(batch.mortalityRate)}</TableCell>
                       <TableCell className="text-right">{batch.fcr > 0 ? batch.fcr.toFixed(2) : '--'}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[batch.status] ?? 'bg-muted text-foreground'}`}>
-                          {batch.status.replace(/_/g, ' ')}
-                        </span>
+                        <StatusBadge status={batch.status} />
                       </TableCell>
                     </TableRow>
                   ))}

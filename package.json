@@ -23,7 +23,13 @@
     "db:seed": "npm run db:seed -w packages/backend",
     "db:seed:treasury-sample": "npm run db:seed:treasury-sample -w packages/backend",
     "db:reset": "npm run db:reset -w packages/backend",
+    "db:testdata": "npm run db:testdata -w packages/backend --",
+    "db:testdata:signins": "npm run db:testdata:signins -w packages/backend --",
+    "dev:backend:testdata": "DATABASE_URL=postgresql://farmflow:farmflow_dev@localhost:5432/farmflow_uat npm run dev -w packages/backend",
     "start": "./start-dev.sh",
+    "start:test": "./scripts/env.sh test",
+    "start:clean": "./scripts/env.sh clean",
+    "stop": "./scripts/env.sh stop",
     "dev": "npm run build:shared && concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
   },

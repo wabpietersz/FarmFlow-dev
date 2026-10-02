@@ -48,7 +48,7 @@ export default function FarmCarePage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Health & houses</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Health &amp; care</h1>
         <p className="mt-1 text-muted-foreground">Vaccinations due, houses being cleaned, vet visits and the programmes behind them.</p>
       </header>
       <Tabs value={params.get('tab') ?? 'due'} onValueChange={(tab) => setParams({ tab }, { replace: true })}>

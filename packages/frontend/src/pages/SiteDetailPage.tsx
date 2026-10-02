@@ -5,16 +5,8 @@ import { useSiteDetail, useUpdateSite, useCreateCage, useUpdateCage } from '@/ho
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -43,6 +35,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, ArrowLeft, MapPin, Building2, Warehouse, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const createCageFormSchema = z.object({
   cageNumber: z.string().min(1, 'Cage number is required').max(50),
@@ -64,15 +58,6 @@ const editSiteFormSchema = z.object({
 type CreateCageFormValues = z.infer<typeof createCageFormSchema>;
 type EditCageFormValues = z.infer<typeof editCageFormSchema>;
 type EditSiteFormValues = z.infer<typeof editSiteFormSchema>;
-
-const cageStatusVariant = (status: string) => {
-  switch (status) {
-    case 'empty': return 'secondary' as const;
-    case 'occupied': return 'default' as const;
-    case 'maintenance': return 'destructive' as const;
-    default: return 'outline' as const;
-  }
-};
 
 export default function SiteDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -197,7 +182,7 @@ export default function SiteDetailPage() {
         </div>
         {hasPermission('sites:update') && (
           <Button variant="outline" onClick={handleOpenEditSite}>
-            <Pencil className="h-4 w-4 mr-2" />
+            <Pencil className="h-4 w-4" />
             Edit Site
           </Button>
         )}
@@ -244,7 +229,7 @@ export default function SiteDetailPage() {
           <CardTitle>Cages</CardTitle>
           {hasPermission('sites:create') && (
             <Button size="sm" onClick={() => setShowAddCage(true)}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4" />
               Add Cage
             </Button>
           )}
@@ -263,18 +248,16 @@ export default function SiteDetailPage() {
                   <TableHead>Capacity</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Current Batch</TableHead>
-                  {hasPermission('sites:update') && <TableHead className="w-[80px]" />}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {siteCages.map((cage) => (
                   <TableRow key={cage.id}>
-                    <TableCell className="font-medium">{cage.cageNumber}</TableCell>
+                    <TableCell className="font-semibold">{cage.cageNumber}</TableCell>
                     <TableCell>{cage.capacity.toLocaleString()}</TableCell>
                     <TableCell>
-                      <Badge variant={cageStatusVariant(cage.status)} className="capitalize">
-                        {cage.status}
-                      </Badge>
+                      <StatusBadge status={cage.status} />
                     </TableCell>
                     <TableCell>
                       {cage.currentBatch ? (
@@ -291,13 +274,12 @@ export default function SiteDetailPage() {
                         <span className="text-muted-foreground">--</span>
                       )}
                     </TableCell>
-                    {hasPermission('sites:update') && (
-                      <TableCell>
-                        <Button variant="ghost" size="sm" onClick={() => handleEditCage(cage)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    )}
+                    <TableActionsCell>
+                      <RowActions
+                        label={`cage ${cage.cageNumber}`}
+                        actions={[{ label: 'Edit', icon: Pencil, hidden: !hasPermission('sites:update'), onSelect: () => handleEditCage(cage) }]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>

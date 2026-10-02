@@ -10,11 +10,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { useCostCentres, useFinanceCategories, useMoneyLedger, useRetagLedgerEntry } from '@/hooks/useFinance';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { EMPTY_FINANCE_TAGS, FinanceTagFields, type FinanceTagValue } from './FinanceTagFields';
+import { RowActions } from '@/components/ui/row-actions';
 
 const ALL = 'all';
 const PAGE_SIZE = 50;
@@ -155,12 +156,12 @@ export function MoneyLedgerTab({ accounts, canManage, onOpenTransaction }: Money
                     <TableHead>Counterparty / note</TableHead>
                     <TableHead className="text-right">In</TableHead>
                     <TableHead className="text-right">Out</TableHead>
-                    {canManage ? <TableHead className="w-10" /> : null}
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {entries.map((entry) => (
-                    <TableRow key={entry.id} className="cursor-pointer" onClick={() => onOpenTransaction(entry.treasuryTransactionId)}>
+                    <TableRow key={entry.id} onOpen={() => onOpenTransaction(entry.treasuryTransactionId)}>
                       <TableCell className="whitespace-nowrap">
                         <p>{new Date(entry.valueDate).toLocaleDateString()}</p>
                         <p className="text-xs text-muted-foreground">{entry.transactionCode}</p>
@@ -192,15 +193,13 @@ export function MoneyLedgerTab({ accounts, canManage, onOpenTransaction }: Money
                       <TableCell className="text-right tabular-nums">
                         {entry.entryDirection === 'outflow' ? formatCurrency(Number(entry.amount)) : ''}
                       </TableCell>
-                      {canManage ? (
-                        <TableCell onClick={(event) => event.stopPropagation()}>
-                          {entry.categoryType !== 'transfer' ? (
-                            <Button variant="ghost" size="icon" aria-label="Re-tag this line" onClick={() => openRetag(entry)}>
-                              <Tag className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                        </TableCell>
-                      ) : null}
+                      <TableActionsCell>
+                        <RowActions
+                          label={`transaction ${entry.transactionCode}`}
+                          open={() => onOpenTransaction(entry.treasuryTransactionId)}
+                          actions={[{ label: 'Re-tag', icon: Tag, hidden: !canManage || entry.categoryType === 'transfer', onSelect: () => openRetag(entry) }]}
+                        />
+                      </TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>

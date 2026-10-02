@@ -31,9 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -52,6 +50,7 @@ import { toast } from 'sonner';
 import DocumentList from '@/components/documents/DocumentList';
 import { getApiErrorMessage, parseApiError } from '@/lib/api';
 import type { CreateCompensationRevisionRequest, PayType } from '@farmflow/shared';
+import { RowActions } from '@/components/ui/row-actions';
 
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -331,7 +330,7 @@ export default function EmployeeDetailPage() {
         {hasPermission('employees:update') && (
           <Button asChild>
             <Link to={`/employees/${id}/edit`}>
-              <Pencil className="h-4 w-4 mr-2" />
+              <Pencil className="h-4 w-4" />
               Edit
             </Link>
           </Button>
@@ -367,7 +366,7 @@ export default function EmployeeDetailPage() {
           <CardTitle>Emergency Contacts</CardTitle>
           {hasPermission('employees:update') && (
             <Button size="sm" variant="outline" onClick={() => setContactDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
+              <Plus className="h-4 w-4" />
               Add
             </Button>
           )}
@@ -382,22 +381,21 @@ export default function EmployeeDetailPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Relationship</TableHead>
                   <TableHead>Phone</TableHead>
-                  {hasPermission('employees:update') && <TableHead className="w-[50px]" />}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {emergencyContacts.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell>{c.contactName}</TableCell>
+                    <TableCell className="font-semibold">{c.contactName}</TableCell>
                     <TableCell>{c.relationship}</TableCell>
                     <TableCell>{c.phoneNumber}</TableCell>
-                    {hasPermission('employees:update') && (
-                      <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => handleDeleteContact(c.id)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    )}
+                    <TableActionsCell>
+                      <RowActions
+                        label={`contact ${c.contactName}`}
+                        actions={[{ label: 'Remove', icon: Trash2, destructive: true, hidden: !hasPermission('employees:update'), onSelect: () => handleDeleteContact(c.id) }]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -411,7 +409,7 @@ export default function EmployeeDetailPage() {
           <CardTitle>Bank Details</CardTitle>
           {hasPermission('employees:update') && !bankDetails && (
             <Button size="sm" variant="outline" onClick={() => setBankDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
+              <Plus className="h-4 w-4" />
               Add
             </Button>
           )}
@@ -436,11 +434,11 @@ export default function EmployeeDetailPage() {
                     });
                     setBankDialogOpen(true);
                   }}>
-                    <Pencil className="h-4 w-4 mr-1" />
+                    <Pencil className="h-4 w-4" />
                     Edit
                   </Button>
                   <Button size="sm" variant="destructive" onClick={handleDeleteBank}>
-                    <Trash2 className="h-4 w-4 mr-1" />
+                    <Trash2 className="h-4 w-4" />
                     Remove
                   </Button>
                 </div>
@@ -461,7 +459,7 @@ export default function EmployeeDetailPage() {
             )}
             {hasPermission('employees:update') && (
               <Button size="sm" variant="outline" onClick={openNewRevisionDialog}>
-                <Plus className="h-4 w-4 mr-1" />
+                <Plus className="h-4 w-4" />
                 Add Revision
               </Button>
             )}
@@ -553,7 +551,7 @@ export default function EmployeeDetailPage() {
                           </Badge>
                           {canEditOrDelete && (
                             <Button size="sm" variant="outline" onClick={() => openEditRevisionDialog(revision)}>
-                              <Pencil className="h-4 w-4 mr-1" />
+                              <Pencil className="h-4 w-4" />
                               Edit
                             </Button>
                           )}
@@ -564,7 +562,7 @@ export default function EmployeeDetailPage() {
                               onClick={() => handleDeleteRevision(revision.id)}
                               disabled={deleteCompensationRevision.isPending}
                             >
-                              <Trash2 className="h-4 w-4 mr-1" />
+                              <Trash2 className="h-4 w-4" />
                               Delete
                             </Button>
                           )}
@@ -802,7 +800,7 @@ export default function EmployeeDetailPage() {
                       isActive: true,
                     })}
                   >
-                    <Plus className="h-4 w-4 mr-1" />
+                    <Plus className="h-4 w-4" />
                     Add Component
                   </Button>
                 </div>
@@ -892,7 +890,7 @@ export default function EmployeeDetailPage() {
                         </div>
                         <div className="flex justify-end pt-1">
                           <Button type="button" size="sm" variant="ghost" onClick={() => componentsFieldArray.remove(index)}>
-                            <Trash2 className="h-4 w-4 mr-1" />
+                            <Trash2 className="h-4 w-4" />
                             Remove
                           </Button>
                         </div>

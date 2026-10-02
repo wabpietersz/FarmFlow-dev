@@ -15,6 +15,7 @@ import { useBatches } from '@/hooks/useBatches';
 import { useBuyers, useSaleBookings, useSaveBooking } from '@/hooks/useSales';
 import { getApiErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
+import { RowActions } from '@/components/ui/row-actions';
 
 const STATUS: Record<SaleBooking['status'], { label: string; variant: 'info' | 'success' | 'secondary' }> = {
   booked: { label: 'Booked', variant: 'info' },
@@ -107,8 +108,13 @@ export function BookingsTab({ canBook, onMakeSale }: { canBook: boolean; onMakeS
                 {canBook && booking.status === 'booked' ? (
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => onMakeSale(booking)}><ShoppingCart className="h-4 w-4" /> Make the sale</Button>
-                    <Button size="sm" variant="outline" onClick={() => setEditing(booking)}><Pencil className="h-4 w-4" /> Change</Button>
-                    <Button size="sm" variant="ghost" onClick={() => cancel(booking)}><X className="h-4 w-4" /> Cancel</Button>
+                    <RowActions
+                      label="this booking"
+                      actions={[
+                        { label: 'Edit', icon: Pencil, onSelect: () => setEditing(booking) },
+                        { label: 'Cancel booking', icon: X, destructive: true, onSelect: () => cancel(booking) },
+                      ]}
+                    />
                   </div>
                 ) : null}
               </div>

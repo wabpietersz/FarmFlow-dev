@@ -24,7 +24,7 @@ FarmFlow runs a two-farm broiler business with its own feed mill: batches, feed,
 
 **Every day:** open the batch and go to **Today's check**. Record deaths (with a cause), feed, water, weight and temperature. It works offline and syncs when you're back online. The check also shows actual weight against the target curve.
 
-**Health:** Farms → Health & houses.
+**Health:** Farms → Health & care.
 - **Tasks**: mark a vaccination **Done**. This records it and takes the vaccine from the farm's own store first. Or **Skip** it, with a reason.
 - **Vet visits**, **programmes** (day-by-day health plans), **growth curves**, and **house turnaround** (the cleaning checklist between batches).
 

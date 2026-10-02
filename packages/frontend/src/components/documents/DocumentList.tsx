@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Upload, Download, Trash2, FileText, Image, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
+import { RowActions } from '@/components/ui/row-actions';
 
 interface DocumentListProps {
   entityType: string;
@@ -88,7 +89,7 @@ export default function DocumentList({ entityType, entityId, title = 'Documents'
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadMutation.isPending}
             >
-              <Upload className="h-4 w-4 mr-2" />
+              <Upload className="h-4 w-4" />
               {uploadMutation.isPending ? 'Uploading...' : 'Upload'}
             </Button>
           </>
@@ -104,7 +105,7 @@ export default function DocumentList({ entityType, entityId, title = 'Documents'
             {docs.map((doc) => {
               const Icon = fileTypeIcon(doc.fileType);
               return (
-                <div key={doc.id} className="flex items-center justify-between p-3 border rounded-md">
+                <div key={doc.id} className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-4 py-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <Icon className="h-5 w-5 text-muted-foreground shrink-0" />
                     <div className="min-w-0">
@@ -115,26 +116,14 @@ export default function DocumentList({ entityType, entityId, title = 'Documents'
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => handleDownload(doc.id)}
-                      disabled={downloadMutation.isPending}
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    {hasPermission('employees:delete') && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-destructive"
-                        onClick={() => handleDelete(doc.id, doc.fileName)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <RowActions
+                      label={doc.fileName}
+                      actions={[
+                        { label: 'Download', icon: Download, disabled: downloadMutation.isPending, onSelect: () => handleDownload(doc.id) },
+                        { label: 'Delete', icon: Trash2, destructive: true, hidden: !hasPermission('employees:delete'), disabled: deleteMutation.isPending, onSelect: () => handleDelete(doc.id, doc.fileName) },
+                      ]}
+                    />
                   </div>
                 </div>
               );

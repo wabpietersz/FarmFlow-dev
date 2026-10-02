@@ -2,14 +2,13 @@ import { useMemo, useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CostCentre, FinanceCategory } from '@farmflow/shared';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import {
   useCostCentres,
   useCreateCostCentre,
@@ -19,6 +18,8 @@ import {
   useUpdateFinanceCategory,
 } from '@/hooks/useFinance';
 import { getApiErrorMessage } from '@/lib/api';
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 const TYPE_LABELS: Record<string, string> = {
   income: 'Income',
@@ -113,42 +114,39 @@ export function FinanceSetupTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Type</TableHead>
                   <TableHead>Report group</TableHead>
                   <TableHead>Status</TableHead>
-                  {canManage ? <TableHead className="w-10" /> : null}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {categories.map((category: FinanceCategory) => (
                   <TableRow key={category.id}>
                     <TableCell>
-                      <p className="font-medium">{category.name}</p>
+                      <p className="font-semibold">{category.name}</p>
                       <p className="text-xs text-muted-foreground">{category.code}{category.isSystem ? ' · system' : ''}</p>
                     </TableCell>
                     <TableCell>{TYPE_LABELS[category.categoryType] ?? category.categoryType}</TableCell>
                     <TableCell>{category.reportGroup}</TableCell>
                     <TableCell>
-                      <Badge variant={category.status === 'active' ? 'secondary' : 'outline'}>{category.status}</Badge>
+                      <StatusBadge status={category.status} />
                     </TableCell>
-                    {canManage ? (
-                      <TableCell>
-                        {category.categoryType !== 'transfer' && category.categoryType !== 'suspense' ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Edit ${category.name}`}
-                            onClick={() => setCategoryForm({
-                              id: category.id,
-                              code: category.code,
-                              name: category.name,
-                              categoryType: category.categoryType as CategoryForm['categoryType'],
-                              reportGroup: category.reportGroup,
-                              status: category.status,
-                            })}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        ) : null}
-                      </TableCell>
-                    ) : null}
+                    <TableActionsCell>
+                      <RowActions
+                        label={category.name}
+                        actions={[{
+                          label: 'Edit',
+                          icon: Pencil,
+                          hidden: !canManage || category.categoryType === 'transfer' || category.categoryType === 'suspense',
+                          onSelect: () => setCategoryForm({
+                            id: category.id,
+                            code: category.code,
+                            name: category.name,
+                            categoryType: category.categoryType as CategoryForm['categoryType'],
+                            reportGroup: category.reportGroup,
+                            status: category.status,
+                          }),
+                        }]}
+                      />
+                    </TableActionsCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -171,7 +169,7 @@ export function FinanceSetupTab({ canManage }: { canManage: boolean }) {
         </CardHeader>
         <CardContent className="space-y-2">
           {centres.map((centre: CostCentre) => (
-            <div key={centre.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
+            <div key={centre.id} className="flex min-h-14 items-center justify-between rounded-2xl border px-4 py-2">
               <div>
                 <p className="font-medium">{centre.name}</p>
                 <p className="text-xs text-muted-foreground">
@@ -179,16 +177,7 @@ export function FinanceSetupTab({ canManage }: { canManage: boolean }) {
                   {centre.status !== 'active' ? ' · inactive' : ''}
                 </p>
               </div>
-              {canManage && !centre.siteId ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Edit ${centre.name}`}
-                  onClick={() => setCentreForm({ id: centre.id, code: centre.code, name: centre.name, centreType: centre.centreType as CentreForm['centreType'], status: centre.status })}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              ) : null}
+              <RowActions label={centre.name} actions={[{ label: 'Edit', icon: Pencil, hidden: !canManage || !!centre.siteId, onSelect: () => setCentreForm({ id: centre.id, code: centre.code, name: centre.name, centreType: centre.centreType as CentreForm['centreType'], status: centre.status }) }]} />
             </div>
           ))}
         </CardContent>

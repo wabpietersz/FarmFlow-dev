@@ -1,30 +1,16 @@
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CreditCard, DollarSign, FileText, Wallet } from 'lucide-react';
 import { useBuyer } from '@/hooks/useSales';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableActionsHead, TableActionsCell } from '@/components/ui/table';
 import { formatCurrency } from '@/lib/utils';
-
-const RECEIPT_STATUS_COLORS: Record<string, string> = {
-  completed: 'bg-success-soft text-success',
-  pending: 'bg-warning-soft text-warning',
-  bounced: 'bg-danger-soft text-danger',
-};
-
-function formatReceiptStatus(status: string) {
-  switch (status) {
-    case 'pending':
-      return 'Pending';
-    case 'bounced':
-      return 'Bounced';
-    default:
-      return 'Completed';
-  }
-}
+import { RowActions } from '@/components/ui/row-actions';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 export default function BuyerDetailPage() {
+  const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading } = useBuyer(id);
 
@@ -168,17 +154,17 @@ export default function BuyerDetailPage() {
                     <TableHead>Date</TableHead>
                     <TableHead>Total</TableHead>
                     <TableHead>Outstanding</TableHead>
+                    <TableActionsHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {salesHistory.map((sale) => (
-                    <TableRow key={sale.id}>
-                      <TableCell className="font-medium">
-                        <Link to={`/sales/${sale.id}`} className="hover:underline">{sale.saleCode}</Link>
-                      </TableCell>
+                    <TableRow key={sale.id} onOpen={() => navigate(`/sales/${sale.id}`)}>
+                      <TableCell className="font-semibold">{sale.saleCode}</TableCell>
                       <TableCell>{new Date(sale.saleDate).toLocaleDateString()}</TableCell>
                       <TableCell>{formatCurrency(Number(sale.totalAmount))}</TableCell>
                       <TableCell>{formatCurrency(sale.outstandingBalance ?? 0)}</TableCell>
+                      <TableActionsCell><RowActions label={`sale ${sale.saleCode}`} open={`/sales/${sale.id}`} /></TableActionsCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -225,9 +211,7 @@ export default function BuyerDetailPage() {
                       <TableCell>{formatCurrency(receipt.appliedAmount)}</TableCell>
                       <TableCell>{formatCurrency(receipt.unappliedAmount)}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${RECEIPT_STATUS_COLORS[receipt.paymentStatus] ?? 'bg-muted text-foreground'}`}>
-                          {formatReceiptStatus(receipt.paymentStatus)}
-                        </span>
+                        <StatusBadge status={receipt.paymentStatus} />
                       </TableCell>
                     </TableRow>
                   ))}
